@@ -8,6 +8,7 @@ import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader,
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import type { ChartConfig } from "@/components/ui/chart";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
 import { TooltipRow } from "@/components/ui/tooltip-surface";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Area, AreaChart as RechartsArea, Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
@@ -432,9 +433,11 @@ export function Models({ data, money }: { data: UsageReport | null; money: (v: n
                          <p className="mono text-sm truncate">
                           {displayModel(m)}
                         </p>
-                        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track">
-                          <div className="h-full origin-left rounded-full bg-accent transition-[width] duration-1000 ease-[cubic-bezier(.16,1,.3,1)]" style={{ width: `${Math.round((mv / max) * 100)}%` }} />
-                        </div>
+                        <Progress
+                          value={Math.round((mv / max) * 100)}
+                          aria-label={`${displayModel(m)} relative token volume`}
+                          className="mt-1.5 w-full [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-track]]:bg-track [&_[data-slot=progress-indicator]]:bg-accent [&_[data-slot=progress-indicator]]:transition-transform [&_[data-slot=progress-indicator]]:duration-1000"
+                        />
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="mono font-bold">{fmt(mv)}</p>

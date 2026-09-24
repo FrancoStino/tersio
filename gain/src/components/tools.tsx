@@ -3,6 +3,7 @@
 // by command, sortable, paged, with honest gaps (–) for unmetered rows.
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { fmt, fmtMs, fmtShort } from "@/lib/format";
 import type { UsageReport } from "@/lib/data";
@@ -129,9 +130,11 @@ export function Tools({ data }: { data: UsageReport | null }) {
                   {r.avgMs === null ? "–" : fmtMs(r.avgMs)}
                 </TableCell>
                 <TableCell className="min-w-32 py-2.5">
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-track">
-                    <div className="h-full origin-left rounded-full bg-accent transition-[width] duration-1000 ease-[cubic-bezier(.16,1,.3,1)]" style={{ width: r.count ? `${Math.round((r.count / max) * 100)}%` : "0" }} />
-                  </div>
+                  <Progress
+                    value={r.count ? Math.round((r.count / max) * 100) : 0}
+                    aria-label={`${r.name} share of executions`}
+                    className="w-full [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-track]]:bg-track [&_[data-slot=progress-indicator]]:bg-accent [&_[data-slot=progress-indicator]]:transition-transform [&_[data-slot=progress-indicator]]:duration-1000"
+                  />
                 </TableCell>
               </TableRow>
             ))}
