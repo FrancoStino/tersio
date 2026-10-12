@@ -1,4 +1,4 @@
-![Banner](/assets/Banner.webp)
+![Banner](./docs/Banner.webp)
 
 # ✂️ Tersio — Token Saver OMP & Usage Tracker
 
@@ -80,27 +80,6 @@ Prompt overhead is included in [docs/BENCHMARK.md](./docs/BENCHMARK.md) with a f
 The Command tools dashboard reports weighted RTK command-output savings and OMP-specific adoption from executed Bash records. It does not estimate provider billing.
 Upstream Ponytail's fair agentic benchmark reports 54% less code, 22% fewer tokens, 20% lower cost, and 100% retained safety. RTK estimates command-output tokens, not bill savings. Caveman and Ponytail compliance varies by model. Measure your own sessions with `tersio usage` and the dashboard.
 
-## 📈 Dashboard
-
-`tersio dashboard --open` serves a local dashboard (127.0.0.1 only) that charts your own savings from `~/.tersio/usage.db`. Three views:
-
-**Live feed and savings.** Token throughput, cost, savings bento, and recent activity — the top of the dashboard.
-
-![Dashboard: live token feed, cost, savings, and activity](/assets/GainHero.webp)
-
-**Top models and recent requests.** Per-model cost breakdown plus the last requests with elapsed time and token speed.
-
-![Dashboard: top models with per-model cost, recent requests with elapsed time and token speed](/assets/GainModels.webp)
-
-**Command tools.** Token savings, average rate, and timing per shell tool.
-
-![Dashboard: command tools with token savings, average rate, and timing](/assets/GainTools.webp)
-
-### Measurement references
-
-- **[EcoLogits](https://github.com/mlco2/ecologits)** informs Tersio's local CO₂ and energy estimates. Tersio ports the model to TypeScript; EcoLogits is not a runtime dependency.
-- **[Tokscale](https://github.com/junhoyeo/tokscale)** informs Tersio's Input, Output, Cache Read, and Cache Write accounting from local OMP sessions. Tokscale is a reference, not a runtime dependency.
-
 ## 🖥️ CLI
 
 | Command | Purpose |
@@ -149,28 +128,32 @@ Shared, and identical for every host:
 | Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, and the display currency |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
+| `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
+| Model prices | `~/.tersio/prices.json` is a cache of LiteLLM's feed, refreshed in the background. `~/.tersio/prices.local.json` is yours: one entry per model id, keyed as the transcript spells it or with a `*` prefix to cover every gateway prefix. It wins over the feed, and it is how a gateway model the feed keys under another provider gets its real rate. `tersio usage` prints an `Unpriced (heaviest first)` line naming the model keys to add. |
+| Price sources | The cost the host itself reported wins over every rate card: it is the only figure from the party that billed. A recorded zero is a real zero, not a missing value — omp flags a request it could not price in a separate field, so a zero is a free model. A model counts as host-priced only when every one of its messages carried a cost. Then `prices.local.json`, then the LiteLLM cache, then a default table the report labels as a guess. |
+| Data snapshots | `~/.tersio/backups/` — one directory per snapshot with a `manifest.json`; six are kept |
 
 Per host, written by `tersio install --host <omp|pi|opencode>`:
 
 | Host | Extensions | Ponytail |
 |---|---|---|
-| Oh My Pi | `~/.omp/agent/extensions/{caveman-session,rtk-session,combo-toggle,tersio-commands,ai-addons-updater}/` | nested plugin dependency under `~/.omp/plugins/node_modules/`, one Plugins row |
-| pi | `~/.pi/agent/extensions/{caveman-session,rtk-session,rtk-filter,combo-toggle,tersio-commands,ai-addons-updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `npm:@dietrichgebert/ponytail`, installed as a pi package |
+| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — the plugin manifest (`omp.extensions`) owns every mode extension, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring, which `config.yml` registers by path | nested plugin dependency under `~/.omp/plugins/node_modules/`, one Plugins row |
+| pi | `~/.pi/agent/extensions/{caveman,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `npm:@dietrichgebert/ponytail`, installed as a pi package |
 | OpenCode | `~/.config/opencode/plugins/tersio/` — registered in `opencode.json` plugins, so there is nothing else to register | bundled with Tersio; no separate package |
 
-All three hosts carry the same `shared/` and `lib/` modules and the same mode extensions from the same sources.
+All three hosts carry the same `shared/` modules and the same mode extensions from the same sources.
 
-The installer writes `<file>.bak` before replacing an extension source; the updater keeps `rtk.bak` / `rule.md.bak` and restores them if the replacement fails validation. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
+omp merges the plugin manifest with the extension dir it discovers by default, so Tersio installs its extensions in one place per host. An install removes the copies an older build left in `~/.omp/agent/extensions/`, because a second copy of the same file would load twice and one of them cannot resolve its own rule bodies.
+
+The installer writes `<file>.bak` before replacing an extension source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
+
+Settings -> **Data** covers the snapshots that can put this machine's data back. A restore never deletes and a delete never touches the live data; each asks first and names the files it moves. Files a snapshot does not hold are left alone.
 
 An OMP install also registers the package in `~/.omp/plugins`, so it shows under OMP **Settings → Plugins**. Active modes reassert after Ponytail's prompt block on every top-level turn, including after history compaction.
 
 ## 🛠️ Troubleshooting
 
 **Ponytail or Combo command missing on OMP:** confirm `~/.omp/plugins/package.json` lists `@krtclcdy/tersio`, then run `tersio install`, restart OMP, and check `tersio doctor`. A damaged tree is repaired by `tersio doctor --fix extensions`.
-
-**Commands missing on pi:** check the `Hosts` section of `tersio doctor` — it reports whether pi is installed and where. Then run `tersio install --host pi` and restart pi.
-
-**Commands missing on OpenCode:** run `tersio install --host opencode` and restart OpenCode.
 
 **RTK missing or not executable:** run `tersio install`, then `tersio doctor`. On Linux/macOS: `chmod +x ~/.bun/bin/rtk`.
 

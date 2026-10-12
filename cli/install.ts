@@ -1,5 +1,5 @@
 // cli/install.ts — install flow and all setup steps.
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +8,7 @@ import {
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
   allowUnverified, applyUpdate, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
   ponytailDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
-  dashboardExport, dashboardPort,
+  dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
   execP, parseJsonObject, readPluginsPackage,
   writeIfChanged,
@@ -27,11 +27,11 @@ import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
   CAVEMAN_REMOTE_ULTRA, CAVEMAN_REMOTE_MEGACAVE, RTK_RELEASE_API, RtkRelease, RtkReleaseAsset, fetchJson, findFile, findHoistedPackage, httpsGet,
   findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
-} from '../extensions/lib/utils.ts';
+} from '../extensions/shared/utils.ts';
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { OPENCODE_SERVER_SHIM, filesUnder, sourcePath } from './manifest.ts';
+import { filesUnder, rootFiles, sourcePath } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
@@ -239,6 +239,37 @@ async function extractRtkArchive(archivePath: string, extractDir: string): Promi
   return false;
 }
 
+// The agent tree keeps only rtk's own wiring file. Every Tersio extension loads from the
+// OMP plugin manifest, which omp merges with the extension dir it discovers by default, so a
+// copy left in the agent tree loads a second time. `caveman-session` was never written here
+// after the plugin registration shipped, so an old install holds a set that cannot resolve
+// its own rule bodies.
+const RETIRED_OMP_AGENT_DIRS = [
+  'caveman-session',
+  'rtk-session',
+  'rtk-filter',
+  'combo-toggle',
+  'tersio-commands',
+  'ai-addons-updater',
+  'shared',
+  'lib',
+];
+
+/** Drop the copies an older OMP install left in the agent tree, keeping rtk's `rtk.ts`. */
+async function stepRetireAgentCopies(extDir: string, options: InstallOptions): Promise<void> {
+  const stale = RETIRED_OMP_AGENT_DIRS.filter((dir) => existsSync(path.join(extDir, dir)));
+  if (stale.length === 0) {
+    if (!options.quiet) console.log('  Retired agent copies — none');
+    return;
+  }
+  if (!options.quiet) console.log(`  Retired agent copies — remove ${stale.join(', ')}`);
+  if (options.dryRun) {
+    if (verbose) sayTagged(`  [dry-run] would remove ${stale.map((d) => path.join(extDir, d)).join(', ')}`);
+    return;
+  }
+  await Promise.all(stale.map((dir) => fs.rm(path.join(extDir, dir), { recursive: true, force: true })));
+}
+
 // The binary is machine-wide; hosts without a hook only rebind. `tersio update` still refreshes it.
 async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 'pi' | 'opencode' = 'omp'): Promise<void> {
   const binDest = path.join(binDir, RTK_BINARY_NAME);
@@ -351,20 +382,19 @@ async function copySources(extDir: string, files: Array<[string, string]>, skipL
 
 async function stepSharedSessionState(extDir: string, options: WriteOptions): Promise<void> {
   if (!options.quiet) console.log('  Shared files — sync session bridge');
-  const shared = [...filesUnder('shared'), ...filesUnder('lib')];
-  await copySources(extDir, shared, 'shared/session-state.js', options);
+  await copySources(extDir, filesUnder('shared'), 'shared/session-state.js', options);
 }
 
 
 async function stepRtkSession(extDir: string, options: WriteOptions): Promise<void> {
   if (!options.quiet) console.log('  RTK session — install session mode');
-  await copySources(extDir, filesUnder('rtk-session'), 'rtk-session/index.ts', options);
+  await copySources(extDir, filesUnder('rtk'), 'rtk/session.ts', options);
 }
 
 // pi's built-in grep and glob never reach the bash hook, so this one filters their output.
 async function stepRtkFilter(extDir: string, options: WriteOptions): Promise<void> {
   if (!options.quiet) console.log('  RTK filter — install built-in tool output filtering');
-  await copySources(extDir, filesUnder('rtk-filter'), 'rtk-filter/index.ts', options);
+  await copySources(extDir, filesUnder('rtk'), 'rtk/filter.ts', options);
 }
 
 // rule.md ships with the package; the other bodies track upstream skills.
@@ -377,11 +407,11 @@ const CAVEMAN_RULES: ReadonlyArray<[name: string, remote: string | null]> = [
 
 async function stepCaveman(extDir: string, options: WriteOptions): Promise<void> {
   if (!options.quiet) console.log('  Caveman — install session mode and rule bodies');
-  const cavemanDir = path.join(extDir, 'caveman-session');
+  const cavemanDir = path.join(extDir, 'caveman');
   if (!options.dryRun) await fs.mkdir(cavemanDir, { recursive: true });
 
   for (const [name, remote] of CAVEMAN_RULES) {
-    const bundled = await readTextIfExists(sourcePath(`caveman-session/${name}`));
+    const bundled = await readTextIfExists(sourcePath(`caveman/${name}`));
     let rule = bundled;
     if (remote && !options.dryRun) {
       try {
@@ -404,7 +434,7 @@ async function stepCaveman(extDir: string, options: WriteOptions): Promise<void>
     }
   }
 
-  await copySources(extDir, filesUnder('caveman-session').filter(([, to]) => to.endsWith('index.ts')), 'caveman-session/index.ts', options);
+  await copySources(extDir, filesUnder('caveman').filter(([, to]) => to.endsWith('index.ts')), 'caveman/index.ts', options);
 
   // Renamed body: drop the stale copy an older install left behind.
   if (!options.dryRun) await fs.rm(path.join(cavemanDir, 'rule-wenyan.md'), { force: true });
@@ -412,16 +442,16 @@ async function stepCaveman(extDir: string, options: WriteOptions): Promise<void>
 
 async function stepTersioCommands(extDir: string, options: WriteOptions): Promise<void> {
   if (!options.quiet) console.log('  Tersio commands — install /tersio root command');
-  await copySources(extDir, filesUnder('tersio-commands'), 'tersio-commands/index.ts', options);
+  await copySources(extDir, filesUnder('commands'), 'commands/index.ts', options);
 }
 
 async function stepUpdater(extDir: string, options: WriteOptions): Promise<void> {
-  await copySources(extDir, filesUnder('ai-addons-updater'), 'ai-addons-updater/index.ts', options);
+  await copySources(extDir, filesUnder('updater'), 'updater/index.ts', options);
 }
 
 async function stepCombo(extDir: string, options: InstallOptions): Promise<void> {
   if (!options.quiet) console.log('  Combo — install preset switch');
-  await copySources(extDir, filesUnder('combo-toggle'), 'combo-toggle/index.ts', options);
+  await copySources(extDir, filesUnder('combo'), 'combo/index.ts', options);
 }
 
 // The tree ships no node_modules, so the full ruleset rides along as files.
@@ -456,17 +486,15 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
   const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   if (!options.quiet) console.log(`  OpenCode — write the plugin tree (${dir})`);
   await stepSharedSessionState(dir, options);
-  await copySources(dir, filesUnder('rtk-session'), 'rtk-session/index.ts', options);
+  await copySources(dir, filesUnder('rtk'), 'rtk/session.ts', options);
   await stepRtkFilter(dir, options);
-  await copySources(dir, filesUnder('caveman-session'), 'caveman-session/index.ts', options);
+  await copySources(dir, filesUnder('caveman'), 'caveman/index.ts', options);
   await stepCombo(dir, options);
-  await copySources(dir, filesUnder('tersio-commands'), 'tersio-commands/index.ts', options);
+  await copySources(dir, filesUnder('commands'), 'commands/index.ts', options);
   await stepUpdater(dir, options);
-  await copySources(dir, filesUnder('opencode'), 'opencode/server.ts', options);
   await stepPonytailBundle(dir, options);
-  // The loader resolves <pluginDir>/server.ts, so mirror the entry at the tree root.
-  await writeIfChanged(path.join(dir, 'server.ts'), OPENCODE_SERVER_SHIM, options);
-  if (!options.dryRun) await fs.rm(path.join(dir, 'opencode', 'index.ts'), { force: true }).catch(() => {});
+  // The loader resolves <pluginDir>/server.ts, and the entry is that file: copy it in place.
+  await copySources(dir, rootFiles(), 'server.ts', options);
 
   const configPath = path.join(HOME, '.config', 'opencode', 'opencode.json');
   let config: Record<string, unknown> = {};
@@ -605,7 +633,7 @@ async function runCommandMenu(): Promise<void> {
       closeRL();
       break;
     case 'dashboard':
-      await runDashboard({ port: dashboardPort, open: true, exportFile: dashboardExport });
+      await runDashboard({ port: dashboardPort, open: true, exportFile: dashboardExport, currency });
       closeRL();
       break;
     case 'reset':
@@ -658,8 +686,8 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
 
   if (!options.quiet) console.log(`  Pi — write the extension tree (${extDir})`);
   await stepSharedSessionState(extDir, options);
-  // OMP loads rtk-session from its plugin manifest, so only the pi tree copies it.
-  await copySources(extDir, filesUnder('rtk-session'), 'rtk-session/index.ts', options);
+  // OMP loads rtk/session.ts from its plugin manifest, so only the pi tree copies it.
+  await copySources(extDir, filesUnder('rtk'), 'rtk/session.ts', options);
   await stepRtkFilter(extDir, options);
   await stepCaveman(extDir, options);
   await stepCombo(extDir, options);
@@ -867,17 +895,28 @@ async function runInstall(): Promise<void> {
     return;
   }
 
-  await capture('shared', () => stepSharedSessionState(userExtDir, installOptions));
   let selfPlugin = false;
   await capture('self-plugin', async () => { selfPlugin = await stepSelfPlugin(OMP_PLUGINS_DIR, installOptions); });
   await capture('ponytail', () => stepPonytail(OMP_PLUGINS_DIR, installOptions));
   await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions));
-  await capture('rtk session', () => stepRtkSession(userExtDir, installOptions));
-  await capture('rtk filter', () => stepRtkFilter(userExtDir, installOptions));
-  await capture('caveman', () => stepCaveman(path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions'), installOptions));
-  await capture('combo', () => stepCombo(userExtDir, installOptions));
-  await capture('commands', () => stepTersioCommands(userExtDir, installOptions));
-  await capture('updater', () => stepUpdater(userExtDir, installOptions));
+
+  // A real install registers the plugin before it writes, so the OMP plugin manifest owns
+  // every mode extension. A dry run previews that same destination. A registration that
+  // failed is the one fallback: the agent tree then carries the tree so an offline install
+  // still loads its add-ons, and the retired copies stay untouched.
+  const pluginExtDir = path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions');
+  const ownsTree = selfPlugin || dryRun;
+  const extDir = ownsTree ? pluginExtDir : userExtDir;
+  if (!quiet) console.log(`  Add-ons load from: ${ownsTree ? 'the OMP plugin manifest' : 'the agent tree (plugin registration failed)'}`);
+
+  await capture('shared', () => stepSharedSessionState(extDir, installOptions));
+  await capture('rtk session', () => stepRtkSession(extDir, installOptions));
+  await capture('rtk filter', () => stepRtkFilter(extDir, installOptions));
+  await capture('caveman', () => stepCaveman(extDir, installOptions));
+  await capture('combo', () => stepCombo(extDir, installOptions));
+  await capture('commands', () => stepTersioCommands(extDir, installOptions));
+  await capture('updater', () => stepUpdater(extDir, installOptions));
+  if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
   if (selfPlugin) await capture('settings', () => writePluginSettings(profile, installOptions));
 
   if (quiet) {

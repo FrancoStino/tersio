@@ -1,7 +1,7 @@
 // Shared usage ledger: append-only JSON lines, read by the CLI, `/tersio`, and the Dashboard. Best-effort; corrupt lines are skipped on read.
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from '../lib/utils.ts';
+import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
 import { execFileSync } from 'node:child_process';
 
 export type UsageKind = 'command' | 'toggle' | 'install' | 'update' | 'rtk-audit';
@@ -89,6 +89,14 @@ export interface SessionTokens {
   byTool: Record<string, number>;
   byModelMessages: Record<string, number>;
   byHost: Record<string, Record<string, TokenBreakdown>>;
+  /** Model -> agent kind (`main`, `subagent`), so a subagent's work reads apart from its root's. */
+  byAgent: Record<string, Record<string, TokenBreakdown>>;
+  /** Model -> agent kind -> message count, so a share can read requests beside the tokens. */
+  byAgentMessages: Record<string, Record<string, number>>;
+  /** Model -> cost the host reported, over the messages that carried one. */
+  byModelMeasured: Record<string, number>;
+  /** Model -> messages that carried a cost. Compare to `byModelMessages` before trusting the sum. */
+  byModelCostMessages: Record<string, number>;
   costMeasured: number;
   recent: RecentRequest[];
 }
@@ -292,15 +300,25 @@ export interface SessionAccum {
   byTool: Record<string, number>;
   byModelMessages: Record<string, number>;
   byHost: Record<string, Record<string, TokenBreakdown>>;
+  /** Model -> agent kind (`main`, `subagent`), so a subagent's work reads apart from its root's. */
+  byAgent: Record<string, Record<string, TokenBreakdown>>;
+  /** Model -> agent kind -> message count. */
+  byAgentMessages: Record<string, Record<string, number>>;
+  /** Model -> cost the host itself reported, summed over the messages that carried one. */
+  byModelMeasured: Record<string, number>;
+  /** Model -> messages that carried a cost. Compare to `byModelMessages` before trusting the sum. */
+  byModelCostMessages: Record<string, number>;
   totals: TokenBreakdown;
   messages: number;
   costMeasured: number;
   recent: RecentRequest[];
+  /** Oldest timestamp held in `recent`, so the list stays bounded instead of growing with the store. */
+  recentFloor: number;
 }
 export function newSessionAccum(): SessionAccum {
-  return { byModel: {}, byDay: {}, byDayModel: {}, byTool: {}, byModelMessages: {}, byHost: {}, totals: zeroBreakdown(), messages: 0, costMeasured: 0, recent: [] };
+  return { byModel: {}, byDay: {}, byDayModel: {}, byTool: {}, byModelMessages: {}, byHost: {}, byAgent: {}, byAgentMessages: {}, byModelMeasured: {}, byModelCostMessages: {}, totals: zeroBreakdown(), messages: 0, costMeasured: 0, recent: [], recentFloor: Number.POSITIVE_INFINITY };
 }
-export function ingestSessionRow(accum: SessionAccum, model: string, usage: Record<string, unknown>, ts: string | number | undefined, durMs?: unknown, run?: { st: RunStatus; code?: number; note?: string }, toolNames?: string[], host?: string, id?: string): boolean {
+export function ingestSessionRow(accum: SessionAccum, model: string, usage: Record<string, unknown>, ts: string | number | undefined, durMs?: unknown, run?: { st: RunStatus; code?: number; note?: string }, toolNames?: string[], host?: string, id?: string, agent?: string): boolean {
   const watermark = readResetWatermark();
   const ms = ts === undefined ? NaN : typeof ts === 'number' ? ts : Date.parse(ts);
   if (watermark > 0 && (!Number.isFinite(ms) || ms < watermark)) return false;
@@ -314,10 +332,30 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
     hs[host] ??= zeroBreakdown();
     addInto(hs[host], usage);
   }
+  if (agent) {
+    const as = (accum.byAgent[key] ??= {});
+    as[agent] ??= zeroBreakdown();
+    addInto(as[agent], usage);
+    const am = (accum.byAgentMessages[key] ??= {});
+    am[agent] = (am[agent] ?? 0) + 1;
+  }
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
   if (Number.isFinite(ms)) {
     const outcome = run ?? { st: 'completed' as RunStatus };
-    accum.recent.push({ m: key, i: num(usage.input), o: num(usage.output), t: ms, d: durOf(durMs), h: host, cr: num(usage.cacheRead), cw: num(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
+    // The store holds every message ever recorded, but only the newest few are ever read. Skip
+    // anything older than the floor, and re-read the floor when the list is full, so a 50k-row
+    // store costs 2000 rows of memory instead of 50k.
+    if (accum.recent.length < RECENT_LIMIT || ms >= accum.recentFloor) {
+      accum.recent.push({ m: key, i: num(usage.input), o: num(usage.output), t: ms, d: durOf(durMs), h: host, cr: num(usage.cacheRead), cw: num(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
+      if (accum.recent.length > RECENT_LIMIT) {
+        let drop = 0;
+        for (let k = 1; k < accum.recent.length; k += 1) if (accum.recent[k].t < accum.recent[drop].t) drop = k;
+        accum.recent.splice(drop, 1);
+        accum.recentFloor = accum.recent.reduce((lo, r) => Math.min(lo, r.t), Number.POSITIVE_INFINITY);
+      } else if (ms < accum.recentFloor) {
+        accum.recentFloor = ms;
+      }
+    }
   }
   const day = ts !== undefined ? dayKey(ts) : null;
   if (day) {
@@ -331,7 +369,11 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
   }
   accum.messages += 1;
   const measured = costOf(usage);
-  if (measured !== undefined) accum.costMeasured += measured;
+  if (measured !== undefined) {
+    accum.costMeasured += measured;
+    accum.byModelMeasured[key] = (accum.byModelMeasured[key] ?? 0) + measured;
+    accum.byModelCostMessages[key] = (accum.byModelCostMessages[key] ?? 0) + 1;
+  }
   for (const name of toolNames ?? []) accum.byTool[name] = (accum.byTool[name] ?? 0) + 1;
   return true;
 }
@@ -428,14 +470,14 @@ export function processOpencodeFile(accum: SessionAccum, text: string, file?: st
   const parsed = classifyOpencodeMessage(obj as OpencodeMessage);
   if (!parsed) return;
   const id = file ? path.basename(file).replace(/\.[^.]+$/, '') || undefined : undefined;
-  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', id);
+  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', id, 'main');
 }
 
 // One v2 message row into the shared accum. The msg id is the row primary key.
 export function ingestOpencodeDbRow(accum: SessionAccum, row: OpencodeDbRow): void {
   const parsed = classifyOpencodeMessage(row.row);
   if (!parsed) return;
-  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', row.id);
+  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', row.id, 'main');
 }
 
 // Fold `:free`/`-free` suffixes and case variants into one chart key.
@@ -560,10 +602,10 @@ export function importSessionTokens(): SessionTokens {
       set codexProvider(v: string | null) { codexProvider = v; },
       get codexModel() { return codexModel; },
       set codexModel(v: string | null) { codexModel = v; },
-    }, text, hostOfSessionFile(file));
+    }, text, hostOfSessionFile(file), agentOfSessionText(text));
   }
   accum.recent.sort((a, b) => b.t - a.t);
-  return { messages: accum.messages, totals: accum.totals, byModel: accum.byModel, byDay: accum.byDay, byDayModel: accum.byDayModel, byTool: accum.byTool, byModelMessages: accum.byModelMessages, byHost: accum.byHost, costMeasured: accum.costMeasured, recent: accum.recent.slice(0, RECENT_LIMIT) };
+  return { messages: accum.messages, totals: accum.totals, byModel: accum.byModel, byDay: accum.byDay, byDayModel: accum.byDayModel, byTool: accum.byTool, byModelMessages: accum.byModelMessages, byHost: accum.byHost, byAgent: accum.byAgent, byAgentMessages: accum.byAgentMessages, byModelMeasured: accum.byModelMeasured, byModelCostMessages: accum.byModelCostMessages, costMeasured: accum.costMeasured, recent: accum.recent.slice(0, RECENT_LIMIT) };
 }
 
 // Which agent wrote a session file, from the directory it sits in.
@@ -573,6 +615,21 @@ export function hostOfSessionFile(file: string): string {
   if (norm.includes('/.codex/')) return 'codex';
   if (norm.includes('/opencode/')) return 'opencode';
   return 'pi';
+}
+
+// Which agent ran a session file, from its own `session` row: a transcript with a parent
+// session is a subagent's, and everything else is the main agent. The row is the host's own
+// record, so a mirrored transcript carries the same answer as the stats database.
+export function agentOfSessionText(text: string): string {
+  if (!text.includes('parentSession')) return 'main';
+  for (const line of text.split('\n')) {
+    if (!line.includes('parentSession')) continue;
+    try {
+      const row = JSON.parse(line) as { type?: unknown; parentSession?: unknown };
+      if (row.type === 'session' && typeof row.parentSession === 'string' && row.parentSession !== '') return 'subagent';
+    } catch { /* skip a corrupt line */ }
+  }
+  return 'main';
 }
 
 const adoptionFileCache = new Map<string, { size: number; mtimeMs: number; counts: { bashCalls: number; eligibleCalls: number; rtkCalls: number } }>();
@@ -645,7 +702,7 @@ export function readRtkAdoption(): RtkAdoption {
   const missedCalls = Math.max(0, eligibleCalls - rtkCalls);
   return { sessions, bashCalls, eligibleCalls, rtkCalls, missedCalls, adoptionPct: eligibleCalls ? (rtkCalls / eligibleCalls) * 100 : 0 };
 }
-export function processSessionText(accum: SessionAccum, state: { codexProvider: string | null; codexModel?: string | null }, text: string, host?: string): void {
+export function processSessionText(accum: SessionAccum, state: { codexProvider: string | null; codexModel?: string | null }, text: string, host?: string, agent?: string): void {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -664,11 +721,11 @@ export function processSessionText(accum: SessionAccum, state: { codexProvider: 
         const base = parsed.provider ? `codex/${parsed.provider}` : (state.codexProvider ? `codex/${state.codexProvider}` : 'codex');
         // The provider alone told you nothing about which model ran.
         const model = state.codexModel ? `${base}/${state.codexModel}` : base;
-        ingestSessionRow(accum, model, parsed.usage ?? {}, row.timestamp, parsed.durMs, { st: 'completed' as RunStatus }, undefined, host ?? 'codex', rid);
+        ingestSessionRow(accum, model, parsed.usage ?? {}, row.timestamp, parsed.durMs, { st: 'completed' as RunStatus }, undefined, host ?? 'codex', rid, agent);
         continue;
       }
       if (parsed.kind !== 'assistant_row' || !parsed.model || !parsed.usage) continue;
-      ingestSessionRow(accum, parsed.model, parsed.usage, row.timestamp, parsed.durMs, parsed.run, parsed.tools, host, rid);
+      ingestSessionRow(accum, parsed.model, parsed.usage, row.timestamp, parsed.durMs, parsed.run, parsed.tools, host, rid, agent);
     } catch { /* skip corrupt lines */ }
   }
 }
@@ -706,17 +763,32 @@ export function leadBinary(command: unknown): string {
 }
 
 // --- Pricing lives in ./pricing.ts (live LiteLLM cache + fallback table) ---
-import { DEFAULT_PRICE, canonicalPriceId, priceFor, refreshPricesIfStale } from './pricing.ts';
+import { DEFAULT_PRICE, PRICE_TIERS_FIRM, canonicalPriceId, priceFor, pricesOverridePath, refreshPricesIfStale, type PriceHit, type PriceTier } from './pricing.ts';
 import { co2GramsFor, energyWhFor } from './carbon.ts';
 import type { ModelPrice } from './pricing.ts';
 
-export { DEFAULT_PRICE, priceFor, refreshPricesIfStale };
+export { DEFAULT_PRICE, PRICE_TIERS_FIRM, priceFor, pricesOverridePath, refreshPricesIfStale };
 export { co2GramsFor, energyWhFor };
-export type { ModelPrice };
+export type { PriceHit, PriceTier, ModelPrice };
 
-export function usdCost(t: TokenBreakdown, model?: string): { usd: number; priced: boolean; buckets: { input: number; output: number; cacheRead: number; cacheWrite: number } } {
-  const { price, known } = model ? priceFor(model) : { price: DEFAULT_PRICE, known: false };
+/**
+ * Price one model's tokens. `measured` is the cost the host reported for those tokens; it outranks
+ * every rate card, because it is the only figure from the party that billed. Pass undefined rather
+ * than 0 for a cost nobody reported: `costOf` keeps the two apart.
+ */
+export function usdCost(t: TokenBreakdown, model?: string, measured?: number): { usd: number; priced: boolean; tier: PriceTier; buckets: { input: number; output: number; cacheRead: number; cacheWrite: number } } {
   const m = 1 / 1_000_000;
+  if (measured !== undefined) {
+    // Only a bare total arrives, so it attributes to input, the largest bucket for every model here.
+    return {
+      usd: measured,
+      priced: true,
+      tier: 'measured',
+      buckets: { input: measured, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+  }
+  const hit: PriceHit = model ? priceFor(model) : { price: DEFAULT_PRICE, known: false, live: false, tier: 'default' };
+  const price = hit.price;
   const buckets = {
     input: t.input * price.input * m,
     output: t.output * price.output * m,
@@ -725,7 +797,10 @@ export function usdCost(t: TokenBreakdown, model?: string): { usd: number; price
   };
   return {
     usd: buckets.input + buckets.output + buckets.cacheRead + buckets.cacheWrite,
-    priced: model ? known : false,
+    // A tier the caller cannot stand behind is not a price. `tail` and `default` are estimates,
+    // and a report that sums them beside measured cost reads as a bill it is not.
+    priced: PRICE_TIERS_FIRM.includes(hit.tier),
+    tier: hit.tier,
     buckets,
   };
 }

@@ -19,7 +19,7 @@ The default one-liner installs the CLI and runs the setup menus (scope + Combo p
 curl -fsSL https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.sh | sh
 ```
 
-All three hosts load the same tree from their own directory: `~/.omp/agent/extensions`, `~/.pi/agent/extensions`, `~/.config/opencode/plugins/tersio`. `tersio update` without `--host` refreshes OMP.
+Each host loads its extensions from one place, so the same file never loads twice: `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` for OMP, `~/.pi/agent/extensions`, `~/.config/opencode/plugins/tersio`. The OMP agent tree keeps rtk's own `extensions/rtk.ts` wiring, which `config.yml` registers. `tersio update` without `--host` refreshes OMP.
 
 ## Requirements
 
@@ -57,11 +57,14 @@ The `Hosts` section reports each host and the command that adds it:
 
 ```text
 Hosts
-  ✅ OMP: ok plugin @krtclcdy/tersio 2.23.0
-  ✅ Pi: ok npm:@krtclcdy/tersio 2.23.0
+  ✅ Oh My Pi: ok package @krtclcdy/tersio 2.25.4
+  ✅ Pi: ok extensions @krtclcdy/tersio 2.25.4
+  ✅ OpenCode: ok extensions @krtclcdy/tersio 2.25.4
 ```
 
-A host you do not use prints `not installed` with its install command and is not counted as a problem.
+`extensions` means the tree install wrote the files into the host's own directory; `package` means the host registered the npm package. A host you do not use prints `not installed` with its install command and is not counted as a problem.
+
+OpenCode reports the same way as the other two. `tersio doctor --fix extensions` repairs a tree any host left half-written, and it also writes the OpenCode plugin tree and registers it in `opencode.json` when OpenCode is present.
 
 ## Also installed
 

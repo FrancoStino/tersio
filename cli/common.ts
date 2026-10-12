@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { findPackageRoot, readTextIfExists } from '../extensions/lib/utils.ts';
+import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
 import { parseCurrencyFlag, readStoredCurrency } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 
@@ -371,7 +371,7 @@ export {
   removePonytail, keepPonytail, removeRtk,
   comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, rtkDefaultFlag, diagScheduleFlag, profileFlagsGiven,
   subagentMarkerFlags, subagentMarkersGiven,
-  debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey, EXTENSIONS_KEY_RE,
+  debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,
   ensurePonytailConfigValue, readPluginsPackage, relTime,

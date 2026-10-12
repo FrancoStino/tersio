@@ -6,7 +6,103 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { ChartContainer } from "@/components/ui/chart";
 import { Bar, BarChart, XAxis, YAxis } from "recharts";
 import { TooltipSurface } from "@/components/ui/tooltip-surface";
+import { Badge } from "@/components/ui/badge";
+import { ProviderMark, VendorMark } from "@/components/brand";
 import { Icon } from "./icon";
+import { displayModel, errorRateTone, pct } from "@/lib/format";
+
+/**
+ * One chip for an error rate. The severity sits in the chip and the figure stays in ink, so a
+ * tinted number never drops under AA on either panel. A quiet rate keeps a neutral chip, since a
+ * green 0.0% reads as a problem solved rather than as nothing to see.
+ */
+const ERROR_CHIP = {
+  none: "border-line text-dim",
+  ok: "border-transparent bg-accent-soft",
+  warn: "border-[var(--warn-border)] bg-[var(--warn-soft)]",
+  bad: "border-[var(--danger-border)] bg-[var(--danger-soft)]",
+} as const;
+
+export function ErrorRateBadge({ rate, title }: { rate: number; title?: string }) {
+  const chip = rate > 0 ? ERROR_CHIP[errorRateTone(rate)] : ERROR_CHIP.none;
+  return (
+    <Badge variant="outline" className={cn("mono px-1.5 text-[10px] tabular-nums", chip)} title={title}>
+      {pct(rate)}
+    </Badge>
+  );
+}
+/**
+ * The glyph a tool name carries. A tool is not a model, so it never borrows a vendor mark: the
+ * shell tools read as a terminal, the file tools read as their own verb, and an unknown name
+ * falls back to a wrench rather than to a provider logo.
+ */
+const TOOL_ICONS: ReadonlyArray<readonly [string, string]> = [
+  ["bash", "terminal"],
+  ["ash", "terminal"],
+  ["gash", "terminal"],
+  [".edit", "terminal"],
+  ["edit", "square-pen"],
+  ["read", "book-open"],
+  ["write", "file-plus"],
+  ["create", "file-plus"],
+  ["patch", "file-pen"],
+  ["grep", "search"],
+  ["glob", "file-search"],
+  ["find", "folder-search"],
+  ["task", "network"],
+  ["subagent", "network"],
+  ["todo", "list-todo"],
+  ["wait", "timer"],
+  ["goal", "target"],
+  ["ask", "message-circle"],
+  ["eval", "play"],
+  ["evalse", "play"],
+  ["value", "play"],
+  ["browser", "globe"],
+  ["web_search", "globe"],
+  ["hub", "network"],
+  ["yield", "corner-down-right"],
+  ["brep", "copy"],
+];
+
+/** The lucide glyph for a tool name, from the map above or the wrench fallback. */
+export function toolIcon(tool: string | undefined): string {
+  const name = (tool ?? "").trim().toLowerCase();
+  return TOOL_ICONS.find(([key]) => key === name)?.[1] ?? "wrench";
+}
+
+/**
+ * One table cell for a provider. The row already names the provider, so the cell carries its mark
+ * and its name alone: a model beneath it would invent a second row's subject.
+ */
+export function ProviderCell({ provider }: { provider: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <ProviderMark provider={provider} tiny />
+      <span className="mono min-w-0 truncate" title={provider}>{provider || "unknown provider"}</span>
+    </span>
+  );
+}
+/**
+ * One table cell for a model, with the provider beneath it. The request log is the reference, so
+ * every table that names a model reads the same: the author's mark beside the model, and the
+ * routing service's mark and name under it.
+ */
+export function ModelCell({ model, provider }: { model: string; provider: string }) {
+  const name = displayModel(model);
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <VendorMark model={model} tiny />
+      <span className="min-w-0">
+        <span className="mono block truncate" title={`${name}${provider ? ` (${provider})` : ""}`}>{name}</span>
+        <span className="flex items-center gap-1.5 text-[11px] text-dim">
+          <ProviderMark provider={provider} tiny />
+          <span className="truncate">{provider || "unknown provider"}</span>
+        </span>
+      </span>
+    </span>
+  );
+}
 
 export function EmptyState({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
@@ -109,7 +205,7 @@ export function PerPage({
         if (n !== value) onPick(n);
       }}
     >
-      <SelectTrigger size="sm" aria-label={label}>
+      <SelectTrigger size="sm" aria-label={label} className="h-[26px]!">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -117,6 +213,40 @@ export function PerPage({
           {options.map((n) => (
             <SelectItem key={n} value={String(n)}>
               {n} / page
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** One choice from a list, drawn with the shadcn select. Never a native `<select>`. */
+export function Picker({
+  options,
+  value,
+  onPick,
+  label,
+  className,
+}: {
+  options: ReadonlyArray<{ value: string; label: string }>;
+  value: string;
+  onPick: (value: string) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => { if (next !== value) onPick(next as string); }}>
+      <SelectTrigger size="sm" aria-label={label} className={cn("text-xs", className)}>
+        {/* The label, not the value: base-ui resolves a value to its item text only once the
+            popup has mounted, so a closed trigger would otherwise print the raw key. */}
+        <span className="truncate">{options.find((option) => option.value === value)?.label ?? value}</span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
             </SelectItem>
           ))}
         </SelectGroup>

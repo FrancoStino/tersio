@@ -36,9 +36,13 @@ function relativeSpecs(body: string): string[] {
 }
 
 // Compiled .js is gitignored; the tracked source of truth is always the .ts.
+// A Vite asset import carries a query (`./mark.svg?raw`), and its target is still that file.
 function candidates(source: string, spec: string): string[] {
-  const stem = path.posix.join(path.posix.dirname(source), spec).replace(/\.(ts|tsx|js|jsx)$/, "");
-  return [`${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`];
+  const bare = spec.replace(/\?.*$/, "");
+  const stem = path.posix.join(path.posix.dirname(source), bare);
+  if (/\.(svg|png|webp|css|json)$/.test(bare)) return [stem];
+  const noExt = stem.replace(/\.(ts|tsx|js|jsx)$/, "");
+  return [`${noExt}.ts`, `${noExt}.tsx`, `${noExt}/index.ts`];
 }
 
 test("tracked sources only import git-tracked files", () => {
@@ -85,4 +89,19 @@ test("package exports a loadable opencode server entrypoint", () => {
   // The export points at gitignored dist/ output; its tracked source is the .ts beside it.
   const tracked = (entry as string).replace(/^\.\//, "").replace(/^dist\//, "").replace(/\.js$/, ".ts");
   expect(existsSync(path.join(root, tracked)), `${tracked} must exist for a fresh checkout`).toBe(true);
+});
+
+// Recharts animates in JS on mount, which a CSS kill-switch cannot stop. A moving ticker or
+// donut makes a byte comparison of two captures drift, so the entrance animation stays off.
+test("no dashboard chart re-enables a recharts entrance animation", () => {
+  const offenders: string[] = [];
+  for (const file of trackedFiles()) {
+    if (!file.startsWith("dashboard/app/src/") || !/\.tsx?$/.test(file)) continue;
+    const body = readFileSync(path.join(root, file), "utf8");
+    if (/isAnimationActive=\{true\}/.test(body) || /isAnimationActive=\{!false\}/.test(body)) {
+      offenders.push(file);
+    }
+  }
+  expect(offenders, `set isAnimationActive={false}; a JS entrance animation moves the chart ` +
+      `between two captures of the same page:\n${offenders.join("\n")}`).toEqual([]);
 });

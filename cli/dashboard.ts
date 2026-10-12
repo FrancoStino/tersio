@@ -6,11 +6,7 @@ import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { clearUsageLedger, markReset, readUsage } from '../extensions/shared/usage-ledger.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { summarizeUsage } from './usage.ts';
-import { backupUsageDb, deleteUsageBackup, listUsageBackups, restoreUsageBackup, usageDbPath } from '../extensions/shared/usage-store.ts';
-import type { UsageReport } from './usage.ts';
 import { isCurrencyCode } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import {
@@ -22,12 +18,18 @@ import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
-import { findPackageRoot, resolveRtkBinary } from '../extensions/lib/utils.ts';
+import { findPackageRoot, resolveRtkBinary } from '../extensions/shared/utils.ts';
+import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from './backups.ts';
+import { readBackupSchedule } from '../extensions/shared/usage-store.ts';
+import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
+import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
 
 export interface DashboardOptions {
   port: number;
   open: boolean;
   exportFile: string | null;
+  /** The resolved display currency: --currency, then the stored default, then USD. */
+  currency: CurrencyCode;
 }
 
 const DASHBOARD_DIST = path.join(findPackageRoot(path.dirname(fileURLToPath(import.meta.url))), 'dashboard', 'dist');
@@ -59,8 +61,52 @@ async function brandDataUri(): Promise<string> {
   return `data:image/webp;base64,${brand.toString('base64')}`;
 }
 
-function dataJson(): string {
-  return JSON.stringify(summarizeUsage(readUsage()));
+/** The range a page opens on, matching the reference dashboard. */
+const DEFAULT_AGENT_RANGE: RangeKey = '24h';
+
+/** The omp aggregate spawns a sqlite3 process per query group, so a repeat poll reuses it. */
+const AGENT_REFRESH_MS = 5000;
+
+let agentMemo: { range: RangeKey; view: AgentView; stamp: string; at: number; value: AgentStats } | null = null;
+
+function fileStamp(file: string): string {
+  try {
+    const stat = statSync(file);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return '-';
+  }
+}
+
+/** Reads the omp databases, unless the same window and view were read recently and nothing moved. */
+function agentStats(range: RangeKey, view: AgentView = 'all'): AgentStats {
+  const stamp = `${fileStamp(statsDbPath())}|${fileStamp(agentDbPath())}`;
+  const held = agentMemo;
+  if (held && held.range === range && held.view === view && held.stamp === stamp && Date.now() - held.at < AGENT_REFRESH_MS) {
+    return held.value;
+  }
+  const value = readAgentStats(range, view);
+  agentMemo = { range, view, stamp, at: Date.now(), value };
+  return value;
+}
+
+/** `?range=` on any of the omp routes; an unknown value falls back to the default. */
+function queryParam(url: string, name: string): string | null {
+  return (url.split('?')[1] ?? '').split('&').find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1) ?? null;
+}
+
+function rangeFrom(url: string): RangeKey {
+  const raw = queryParam(url, 'range');
+  return isRangeKey(raw) ? raw : DEFAULT_AGENT_RANGE;
+}
+
+function viewFrom(url: string): AgentView {
+  const raw = queryParam(url, 'view');
+  return isAgentView(raw) ? raw : 'all';
+}
+
+function agentJson(range: RangeKey, view: AgentView): string {
+  return JSON.stringify({ range, view, agent: agentStats(range, view) });
 }
 
 // Runs outside any agent session, so it reports the persisted defaults.
@@ -390,56 +436,6 @@ async function saveDashboardCurrency(raw: unknown): Promise<CurrencyCode | null>
   return code;
 }
 
-// The store is a SQLite file, which nothing outside this box can read. Flatten it into a format a spreadsheet, a script, or another tool can take instead.
-type ExportFormat = 'json' | 'jsonl' | 'csv';
-export const EXPORT_FORMATS: ExportFormat[] = ['json', 'jsonl', 'csv'];
-
-export function exportRows(report: UsageReport): Record<string, string | number | undefined>[] {
-  return report.recent.map((r) => ({
-    timestamp: new Date(r.t).toISOString(),
-    local: new Date(r.t).toLocaleString(),
-    agent: r.h ?? 'pi',
-    model: r.m,
-    input: r.i,
-    output: r.o,
-    cacheRead: r.cr ?? 0,
-    cacheWrite: r.cw ?? 0,
-    costUsd: r.usd,
-    elapsedMs: r.d,
-    status: r.st,
-  }));
-}
-
-export function csvCell(v: unknown): string {
-  const s = v === undefined || v === null ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export function exportBody(format: ExportFormat, report: UsageReport): { body: string; type: string } {
-  const stamp = new Date().toISOString().slice(0, 10);
-  if (format === 'json') {
-    return { body: JSON.stringify({ exportedAt: new Date().toISOString(), version: report.version, source: report.source, report }, null, 2), type: 'application/json' };
-  }
-  const rows = exportRows(report);
-  if (format === 'jsonl') {
-    return { body: rows.map((r) => JSON.stringify(r)).join('\n') + '\n', type: 'application/x-ndjson' };
-  }
-  const cols = Object.keys(rows[0] ?? { timestamp: '', agent: '' });
-  const head = cols.join(',');
-  const body = [head, ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\n') + '\n';
-  return { body, type: 'text/csv; charset=utf-8' };
-}
-
-function serveExport(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const format = ((req.url || '').split('?')[1] || '').match(/format=([a-z]+)/)?.[1] as ExportFormat | undefined;
-  const fmt: ExportFormat = format && EXPORT_FORMATS.includes(format) ? format : 'json';
-  const { body, type } = exportBody(fmt, summarizeUsage(readUsage()));
-  res.writeHead(200, {
-    'Content-Type': type,
-    'Content-Disposition': `attachment; filename="tersio-usage-${new Date().toISOString().slice(0, 10)}.${fmt === 'jsonl' ? 'ndjson' : fmt}"`,
-  });
-  res.end(body);
-}
 
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -474,63 +470,82 @@ function parseOwnJson(json: string, field: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-async function exportDashboard(exportFile: string): Promise<void> {
+async function exportDashboard(exportFile: string, currency: CurrencyCode): Promise<void> {
   requireDashboardBundle();
   const [bundle, icon] = await Promise.all([readSegment(DASHBOARD_INDEX), brandDataUri()]);
+  // The bundle is minified, so the brand fetch reaches the file as `fetch(\`brand.webp\`)` or
+  // `fetch("brand.webp")` depending on the bundler's quote choice. Match either, or the exported
+  // card silently loses its mark. `atob` returns one char per byte, and a Blob encodes a string
+  // as UTF-8, so the bytes go through a Uint8Array first: a webp is binary and every byte at or
+  // above 0x80 would otherwise double and corrupt the image.
+  const b64 = icon.split(',')[1] ?? '';
+  // atob yields one char per byte; a Blob encodes a string as UTF-8, so the bytes pass through a
+  // Uint8Array or every byte at or above 0x80 doubles and the webp comes out corrupt.
+  const brandBytes = `(() => { const c = atob(${JSON.stringify(b64)}); const v = new Uint8Array(c.length); for (let i = 0; i < c.length; i++) v[i] = c.charCodeAt(i); return v; })()`;
   const inline = bundle
-    .replace('window.__TERSIO_SNAP = null;', () => `window.__TERSIO_SNAP = ${escapeInline(JSON.stringify({ data: parseOwnJson(dataJson(), 'usage data'), health: parseOwnJson(healthJson(), 'health'), doctor: getDoctorReport(false) }))};`)
-    .replace(/href="brand\.webp"/g, () => `href="${icon}"`)
-    .replace(/src="brand\.webp"/g, () => `src="${icon}"`)
-    .replace('fetch("brand.webp")', () => `Promise.resolve({ ok: true, blob: async () => new Blob([atob("${icon.split(',')[1]}")], { type: "image/webp" }) })`);
+    .replace('window.__TERSIO_SNAP = null;', () => `window.__TERSIO_SNAP = ${escapeInline(JSON.stringify({ currency, agent: agentStats(DEFAULT_AGENT_RANGE), health: parseOwnJson(healthJson(), 'health'), doctor: getDoctorReport(false) }))};`)
+    // A mark reaches the bundle three ways: an HTML attribute in `index.html`, and a JSX prop
+    // esbuild compiled with a backtick. Match any of `"`, `'`, and `` ` ``, or an exported file
+    // keeps a bare reference that file:// cannot resolve.
+    .replace(/((?:src|href)[=:][ \t]*)([`"'])brand\.webp\2/g, (_all, head: string, quote: string) => `${head}${quote}${icon}${quote}`)
+    .replace(/fetch\(([`"])brand\.webp\1\)/g, () => `Promise.resolve({ ok: true, blob: async () => new Blob([${brandBytes}], { type: "image/webp" }) })`);
   await fs.writeFile(exportFile, inline, 'utf8');
   console.log(`[ok] Dashboard exported → ${exportFile}`);
 }
 
 async function runDashboard(options: DashboardOptions): Promise<void> {
   if (options.exportFile) {
-    await exportDashboard(options.exportFile);
+    await exportDashboard(options.exportFile, options.currency);
     return;
   }
   requireDashboardBundle();
   const server = http.createServer(async (req, res) => {
-    if (req.url === '/reset' && req.method === 'POST') {
-      const rows = clearUsageLedger();
-      markReset();
+    if (req.url === '/api/data' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, rows }));
+      res.end(JSON.stringify({
+        dir: backupDir(),
+        keep: BACKUP_KEEP,
+        sources: dataSources(),
+        backups: listDataBackups(),
+        schedule: readBackupSchedule(),
+        bytes: backupDiskBytes(),
+      }));
       return;
     }
-    if (req.url === '/backups' && req.method === 'GET') {
-      const rows = listUsageBackups().map((b) => ({ file: path.basename(b.file), mtime: b.mtime, size: b.size }));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ backups: rows }));
-      return;
-    }
-    if (req.url === '/backups/create' && req.method === 'POST') {
+    if (req.url === '/api/data' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
       try {
-        backupUsageDb(usageDbPath());
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch {
+        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
+      } catch { body = {}; }
+      const action = String(body.action ?? '');
+      const name = String(body.name ?? '');
+      // A missing sqlite3, or a locked file, is a 500 with a message rather than a silent no-op.
+      try {
+        if (action === 'create') {
+          const made = await createDataBackup();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, name: made.name, files: made.files.length }));
+          return;
+        }
+        if (action === 'restore') {
+          const ok = await restoreDataBackup(name);
+          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          return;
+        }
+        if (action === 'delete') {
+          const ok = await deleteDataBackup(name);
+          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          return;
+        }
+      } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'backup failed' }));
+        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'backup failed' }));
+        return;
       }
-      return;
-    }
-    if (req.url === '/backups/delete' && req.method === 'POST') {
-      let file = '';
-      try { file = String((JSON.parse(await readBody(req)) as { file?: unknown }).file ?? ''); } catch { file = ''; }
-      const ok = deleteUsageBackup(file);
-      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(ok ? { ok: true, file } : { ok: false, error: 'unknown backup' }));
-      return;
-    }
-    if (req.url === '/backups/restore' && req.method === 'POST') {
-      let file = '';
-      try { file = String((JSON.parse(await readBody(req)) as { file?: unknown }).file ?? ''); } catch { file = ''; }
-      const ok = restoreUsageBackup(file);
-      res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(ok ? { ok: true, file } : { ok: false, error: 'unknown backup' }));
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
       return;
     }
     if (req.url === '/settings' && req.method === 'GET') {
@@ -542,6 +557,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           rtkDefault: profile.rtkDefault,
           ponytailDefault: profile.ponytailDefault,
           backupSchedule: profile.backupSchedule,
+          currency: options.currency,
         }));
       });
       return;
@@ -576,13 +592,34 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       }
       return;
     }
-    if (req.url === '/data.json') {
+    if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(dataJson());
+      res.end(agentJson(rangeFrom(req.url), viewFrom(req.url)));
+      return;
+    }
+    if (req.url?.startsWith('/api/agent/session')) {
+      const file = decodeURIComponent(queryParam(req.url, 'file') ?? '');
+      const body = file ? readSessionTrace(file) : {
+        sessionFile: '', project: '', title: '', cwd: '', startedAt: 0, endedAt: 0,
+        tracks: [], markers: [], summary: {
+          wallMs: 0, modelMs: 0, toolMs: 0, idleMs: 0, turns: 0, requests: 0, toolCalls: 0, agents: 0,
+          totalTokens: 0, costUsd: 0,
+        },
+        toolStats: [], truncated: false,
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+      return;
+    }
+    if (req.url?.startsWith('/api/agent/entry')) {
+      const file = decodeURIComponent(queryParam(req.url, 'file') ?? '');
+      const entry = decodeURIComponent(queryParam(req.url, 'entry') ?? '');
+      const body = file && entry ? readAgentRequestEntry(file, entry) : emptyRequestEntry();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
       return;
     }
     if (req.url?.startsWith('/export')) {
-      serveExport(req, res);
       return;
     }
     if (req.url === '/health') {

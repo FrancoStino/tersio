@@ -1,0 +1,293 @@
+import { expect, test } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+import {
+  readCavemanDefault,
+  readComboDefault,
+  readPluginSettings,
+  readRtkDefault,
+} from "../../extensions/shared/plugin-settings.ts";
+import { cliEnv, withHome } from "../helpers/env.ts";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const installer = path.join(root, "dist", "tersio.js");
+
+// Session defaults live in ~/.tersio/settings.json; call sites still pass the
+// package-keyed shape the old lock file used.
+function writeLock(home: string, settings: Record<string, unknown>): void {
+  const dir = path.join(home, ".tersio");
+  mkdirSync(dir, { recursive: true });
+  const values = (settings["@krtclcdy/tersio"] ?? settings) as Record<string, unknown>;
+  writeFileSync(path.join(dir, "settings.json"), JSON.stringify(values, null, 2), "utf8");
+}
+
+test("readPluginSettings seeds from the OMP lock an older install wrote", () => {
+  withHome((home) => {
+    const dir = path.join(home, ".omp", "plugins");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "omp-plugins.lock.json"), JSON.stringify({
+      plugins: {},
+      settings: { "@krtclcdy/tersio": { comboDefault: "max", cavemanDefault: "wenyan", rtkDefault: true } },
+    }), "utf8");
+    expect(readComboDefault()).toBe("max");
+    expect(readCavemanDefault()).toBe("wenyan");
+    expect(readRtkDefault()).toBe(true);
+  });
+});
+
+test("readPluginSettings prefers ~/.tersio/settings.json over the lock file", () => {
+  withHome((home) => {
+    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "medium" } });
+    const dir = path.join(home, ".omp", "plugins");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "omp-plugins.lock.json"), JSON.stringify({
+      plugins: {},
+      settings: { "@krtclcdy/tersio": { comboDefault: "max" } },
+    }), "utf8");
+    expect(readComboDefault()).toBe("medium");
+  });
+});
+
+test("readPluginSettings returns defaults when no lock file exists", () => {
+  withHome(() => {
+    expect(readComboDefault()).toBe("off");
+    expect(readCavemanDefault()).toBe("off");
+    expect(readRtkDefault()).toBe(false);
+    expect(readPluginSettings()).toEqual({});
+  });
+});
+
+test("readPluginSettings picks up values from ~/.tersio/settings.json", () => {
+  withHome((home) => {
+    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "max", cavemanDefault: "wenyan", rtkDefault: true } });
+    expect(readComboDefault()).toBe("max");
+    expect(readCavemanDefault()).toBe("wenyan");
+    expect(readRtkDefault()).toBe(true);
+  });
+});
+
+test("readPluginSettings ignores invalid values and other plugins", () => {
+  withHome((home) => {
+    writeLock(home, {
+      "other-plugin": { comboDefault: "max" },
+      "@krtclcdy/tersio": { comboDefault: "yolo", cavemanDefault: 42, rtkDefault: "yes" },
+    });
+    expect(readComboDefault()).toBe("off");
+    expect(readCavemanDefault()).toBe("off");
+    expect(readRtkDefault()).toBe(false);
+  });
+});
+
+test("readPluginSettings tolerates a corrupt lock file", () => {
+  withHome((home) => {
+    const dir = path.join(home, ".omp", "plugins");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "omp-plugins.lock.json"), "{ not json", "utf8");
+    expect(readComboDefault()).toBe("off");
+    expect(readPluginSettings()).toEqual({});
+  });
+});
+
+// --- Installer profile flags ---
+
+type RunResult = { status: number | null; stdout: string; stderr: string };
+
+function run(...args: string[]): RunResult {
+  // Missing home: user-scope dests never exist, so dry-run previews it all.
+  const missingHome = path.join(root, "test", "definitely-missing-home");
+  const result = spawnSync(process.execPath, [installer, ...args], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 15000,
+    env: cliEnv(missingHome),
+  });
+  return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
+}
+
+test("installer accepts session-default flags and reports them", () => {
+  const result = run("install", "--dry-run", "--yes", "--combo-default", "medium");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/Defaults: combo=medium/);
+  expect(result.stdout).toMatch(/RTK session — install session mode/);
+  expect(result.stdout).toMatch(/Tersio commands — install \/tersio root command/);
+});
+
+test("installer rejects invalid default values", () => {
+  const badCombo = run("install", "--dry-run", "--yes", "--combo-default", "ultra");
+  expect(badCombo.status).toBe(1);
+  expect(badCombo.stderr).toMatch(/Invalid --combo-default/);
+
+  const badRtk = run("install", "--dry-run", "--yes", "--rtk-default", "maybe");
+  expect(badRtk.status).toBe(1);
+  expect(badRtk.stderr).toMatch(/Invalid --rtk-default/);
+
+  const badCaveman = run("install", "--dry-run", "--yes", "--caveman-default", "max");
+  expect(badCaveman.status).toBe(1);
+  expect(badCaveman.stderr).toMatch(/Invalid --caveman-default/);
+});
+
+test("installer rejects removed project/both scopes", () => {
+  for (const scope of ["project", "both", "bogus"]) {
+    const bad = run("install", "--dry-run", "--yes", "--scope", scope);
+    expect(bad.status, scope).toBe(1);
+    expect(bad.stderr).toMatch(/Project scope was removed/);
+  }
+  const legacy = run("install", "--dry-run", "--yes", "--scope", "user");
+  expect(legacy.status, legacy.stderr).toBe(0);
+});
+
+test("installer dry-run installs every user-scope extension", () => {
+  const result = run("install", "--dry-run", "--yes");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/RTK session — install session mode/);
+  expect(result.stdout).toMatch(/Caveman — install session mode and rule bodies/);
+  expect(result.stdout).toMatch(/Tersio commands — install \/tersio root command/);
+  expect(result.stdout).not.toMatch(/mode reinforcement/i);
+});
+
+test("installer does not add manifest-owned extensions to config.yml", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-install-registrations-"));
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const result = spawnSync(process.execPath, [installer, "install", "--dry-run", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/would.*config\.yml.*(?:combo|ponytail)/i);
+  } finally {
+    if (previous.HOME === undefined) delete process.env.HOME;
+    else process.env.HOME = previous.HOME;
+    if (previous.USERPROFILE === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previous.USERPROFILE;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// --- Manifest feature/setting shape ---
+
+test("package manifest declares always-on extensions plus updater feature and settings", () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+    omp?: { extensions?: string[]; features?: Record<string, unknown>; settings?: Record<string, unknown> };
+  };
+  for (const ext of manifest.omp?.extensions ?? []) {
+    const compiled = path.join(root, ext);
+    expect(existsSync(compiled), `always-on entry exists: ${ext}`).toBeTruthy();
+  }
+  expect(manifest.omp?.extensions).toEqual([
+    "./extensions/caveman/index.ts",
+    "./extensions/rtk/session.ts",
+    "./extensions/rtk/filter.ts",
+    "./extensions/combo/index.ts",
+    "./extensions/commands/index.ts",
+  ]);
+  const features = manifest.omp?.features ?? {};
+  expect(Object.keys(features)).toEqual(["updater"]);
+  const updater = features.updater as { default?: boolean; extensions?: string[] };
+  expect(updater.default, "updater defaults on").toBe(true);
+  for (const ext of updater.extensions ?? []) {
+    const compiled = path.join(root, ext);
+    expect(existsSync(compiled), `updater entry exists: ${ext}`).toBeTruthy();
+  }
+  const settings = manifest.omp?.settings ?? {};
+
+  const combo = settings.comboDefault as { type?: string; values?: string[]; default?: string };
+  expect(combo.type).toBe("enum");
+  expect(combo.values).toEqual(["off", "medium", "balanced", "max"]);
+  expect(combo.default).toBe("off");
+
+  const rtk = settings.rtkDefault as { type?: string; default?: boolean };
+  expect(rtk.type).toBe("boolean");
+  expect(rtk.default).toBe(false);
+
+  const currency = settings.currency as { type?: string; values?: string[]; default?: string };
+  expect(currency.type).toBe("enum");
+  expect(currency.values).toEqual(["USD", "PHP", "EUR", "GBP", "JPY", "KRW", "SGD", "AUD", "CAD", "INR"]);
+  expect(currency.default).toBe("USD");
+});
+
+test("installer accepts --ponytail-default override and reports it", () => {
+  const result = run("install", "--dry-run", "--yes", "--ponytail-default", "full");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/ponytail=full/);
+});
+
+test("installer rejects review as a Ponytail default", () => {
+  const bad = run("install", "--dry-run", "--yes", "--ponytail-default", "review");
+  expect(bad.status).toBe(1);
+  expect(bad.stderr).toMatch(/Invalid --ponytail-default/);
+});
+
+test("update rejects an unknown host before doing anything", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-update-host-"));
+  try {
+    const result = spawnSync(process.execPath, [installer, "update", "--host", "codex", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/Invalid --host: codex/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("apply-update without flags preserves a customized per-mode default", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-preserve-custom-"));
+  try {
+    writeLock(home, {
+      "@krtclcdy/tersio": {
+        comboDefault: "balanced",
+        cavemanDefault: "full",
+        rtkDefault: true,
+        ponytailDefault: "ultra",
+      },
+    });
+    const result = spawnSync(process.execPath, [installer, "--apply-update", "--dry-run", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=ultra\)/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("apply-update without flags preserves stored combo defaults", () => {
+  // The clobber regression: `tersio update` delegates to --apply-update with
+  // no flags, so resolveProfile rebuilt from all-off and wiped the default.
+  const home = mkdtempSync(path.join(os.tmpdir(), "omp-preserve-test-"));
+  try {
+    writeLock(home, {
+      "@krtclcdy/tersio": {
+        comboDefault: "balanced",
+        cavemanDefault: "full",
+        rtkDefault: true,
+        ponytailDefault: "full",
+      },
+    });
+    const result = spawnSync(process.execPath, [installer, "--apply-update", "--dry-run", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full\)/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -1,0 +1,140 @@
+import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
+import { injectPromptText, onHostEvent, setExtensionLabel, stringArrayToolParams } from '../shared/host.ts';
+import { readRtkDefault } from '../shared/plugin-settings.ts';
+import { resolveRtkBinary } from '../shared/utils.ts';
+import { announceStatus } from '../shared/status.ts';
+import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
+
+const DEFAULT_ENABLED = false;
+
+function asBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (value === 'on' || value === 'true') return true;
+  if (value === 'off' || value === 'false') return false;
+  return null;
+}
+
+function resolveEnabled(entries: SessionEntry[] | null | undefined): boolean | null {
+  return lastCustomValue(entries, 'rtk-mode', (data) => asBoolean(data?.enabled));
+}
+
+function setRtkProcessEnabled(enabled: boolean): void {
+  if (enabled) delete process.env.RTK_DISABLED;
+  else process.env.RTK_DISABLED = '1';
+}
+
+// rtk's awareness contract: state the output contract, never tell the model to type `rtk`.
+const RTK_PROMPT = `RTK guidance active. Bash output, and large grep and glob results, are condensed to save tokens: every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code.`;
+
+export default function rtkSessionExtension(pi: ExtensionApi): void {
+  let enabled = DEFAULT_ENABLED;
+
+  function fail(text: string) {
+    return { isError: true as const, content: [{ type: 'text' as const, text }], details: { enabled } };
+  }
+
+
+  function setEnabled(next: unknown, ctx?: ExtensionCtx): void {
+    enabled = Boolean(next);
+    pi.appendEntry?.('rtk-mode', { enabled });
+    setSharedComboMode('rtk', enabled);
+    setRtkProcessEnabled(enabled);
+    announceStatus(ctx);
+  }
+
+  setExtensionLabel(pi, 'RTK session toggle');
+
+  // Live mirror: a /tersio or /combo switch publishes shared state — adopt it at once so the next turn and the rtk_run gate see it, no reload.
+  function syncFromShared(state: { rtk: string }): void {
+    enabled = state.rtk === 'on';
+    setRtkProcessEnabled(enabled);
+  }
+  setSharedComboListener('rtk', syncFromShared);
+  pi.registerCommand?.('rtk', {
+    description: 'Toggle RTK compact shell-output guidance for this session',
+    handler: async (args, ctx) => {
+      const arg = String(args || '').trim().toLowerCase();
+      if (!arg || arg === 'status') {
+        ctx?.ui?.notify?.(`RTK: ${enabled ? 'on' : 'off'}`, 'info');
+        return;
+      }
+      if (['on', 'enable', 'enabled', 'true'].includes(arg)) {
+        setEnabled(true, ctx);
+        return;
+      }
+      if (['off', 'disable', 'disabled', 'false'].includes(arg)) {
+        setEnabled(false, ctx);
+        return;
+      }
+      ctx?.ui?.notify?.('Usage: /rtk [on|off|status]', 'warning');
+    },
+  });
+
+  pi.registerTool?.({
+    name: 'rtk_run',
+    label: 'RTK Run',
+    description: 'Run the installed `rtk` binary for compact command output when RTK mode is enabled.',
+    parameters: stringArrayToolParams(pi, 'args', {
+      minItems: 1,
+      description: "Arguments passed to rtk, e.g. ['git','status'] or ['read','src/index.ts']",
+    }),
+    async execute(_toolCallId, params, signal, onUpdate, ctx) {
+      // A subagent's own flag sits at its start-up default, so honour shared state too.
+      if (!(enabled || getSharedComboState().rtk === 'on')) return fail('RTK mode is off. Run /rtk on for this session, or use bash explicitly.');
+      if (typeof pi.exec !== 'function') return fail('This host cannot run rtk.');
+      onUpdate?.({ content: [{ type: 'text', text: `rtk ${params.args.join(' ')}` }], details: { phase: 'start' } });
+      try {
+        // A GUI-launched host may lack ~/.bun/bin on PATH, so prefer the resolved path.
+        const result = await pi.exec(resolveRtkBinary() ?? 'rtk', params.args, { signal, cwd: ctx?.cwd || pi.cwd });
+        const text = [result.stdout, result.stderr].filter(Boolean).join('\n');
+        return {
+          isError: result.code !== 0,
+          content: [{ type: 'text', text: text || `rtk exited ${result.code}` }],
+          details: { code: result.code, killed: result.killed, enabled },
+        };
+      } catch (e) {
+        return fail(`rtk could not run: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  });
+
+  function restoreEnabled(ctx?: ExtensionCtx): void {
+    const entries = sessionEntries(ctx);
+    // A subagent's branch has no Tersio entries; reconciling it would wipe shared state.
+    if (hasModeState(entries)) reconcileSharedComboEntries(entries);
+    // Persisted session state wins; a fresh session falls back to the installer/user-configured default (off unless configured).
+    const persisted = resolveEnabled(entries);
+    enabled = typeof persisted === 'boolean' ? persisted : enabled || readRtkDefault();
+    setRtkProcessEnabled(enabled);
+    announceStatus(ctx);
+  }
+
+  // Start, resume, and branch all land here, so every session type shows it.
+  pi.on('session_start', async (_event, ctx) => {
+    restoreEnabled(ctx);
+  });
+
+  onHostEvent(pi, 'session_branch', async (_event, ctx) => {
+    restoreEnabled(ctx);
+  });
+
+  pi.on('session_tree', async (_event, ctx) => {
+    restoreEnabled(ctx);
+  });
+
+  onHostEvent(pi, 'session_switch', async (_event, ctx) => {
+    restoreEnabled(ctx);
+  });
+
+  onHostEvent(pi, 'session_compact', async (_event, ctx) => {
+    restoreEnabled(ctx);
+  });
+
+  pi.on<SystemPromptEvent>('before_agent_start', async (event) => {
+    const active = isOmpSubagentPrompt(event.systemPrompt) ? getSharedComboState().rtk === 'on' : enabled;
+    if (!active) return;
+    // Skip when already present, so a host that re-presents the prompt cannot stack it.
+    if (systemPromptIncludes(event.systemPrompt, RTK_PROMPT)) return;
+    return injectPromptText(pi, event, { text: RTK_PROMPT, sectionTag: 'rtk' });
+  });
+}

@@ -1,3 +1,28 @@
+## v2.25.5
+
+### Added
+ - A page-per-view dashboard: Overview, Models, Providers, Costs, Requests, Errors, Traces, Tools, Frustration, Projects, and Gain, each at its own web address.
+ - A flamegraph trace page with a searchable span list, a legend, and a zoomable timeline, plus the same spans read out as a transcript.
+ - A Data pane in Settings that snapshots everything Tersio keeps, lists the snapshots, and restores or deletes one. Both ask first and name the files involved.
+ - Your own price list at `~/.tersio/prices.local.json`. One entry per model, or one entry starting with `*` to cover every gateway that resells it.
+ - Brand marks ship inside the app, so no page fetches a logo at runtime and an exported file keeps its logos with the network off.
+
+### Changed
+ - Costs come from what the tool reported, instead of a public list that did not know most of the models in use. On this machine the old report said $373.49; the real figure is $71.23.
+ - Models the price list does not know now read as an estimate rather than a fact, so a total that is partly a guess says so.
+ - A subagent’s work reads apart from its root session, in both the usage report and the dashboard.
+ - Extensions install into one tree instead of two, which was loading some of them twice.
+ - The navbar shows the session-start modes and the three toggles, and a click opens Settings.
+
+### Fixed
+ - A free model reads as $0.00 instead of being billed at a default rate. About twenty free gateway models were affected.
+ - A layout gap on the model page where one tile sat alone in a row with an empty space beside it.
+ - A narrow window no longer overflows the top bar, and the rails and footers fit a phone.
+ - Two flaky tests: one read a price cache that existed on the developer’s machine but nowhere in CI, and the other could be killed mid-fetch on a loaded machine.
+
+### Removed
+ - The cache savings figure, which read 0.0% for nearly every model because the data it needed was never recorded.
+
 ## v2.25.4
  - Fixes an OMP crash on prompt injection: a `systemPrompt` array holding a non-string no longer throws `undefined is not an object (evaluating 'part.includes')` in the Caveman and Combo extensions. Non-string parts are dropped before the marker check.
  - Stops the pi install test from failing whenever upstream publishes a new Caveman body: `rule.md` still ships byte for byte, the two upstream-tracked bodies are checked for a usable body with its floor rules.

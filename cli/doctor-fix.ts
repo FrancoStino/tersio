@@ -7,16 +7,15 @@ import {
   dryRun, verbose,
   debug,
   execP, readPluginsPackage,
-  writeIfChanged,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
 import {
   RTK_RELEASE_API, RtkRelease, fetchJson, findFile, httpsGet,
   httpsDownload, parseChecksum, readTextIfExists, rtkPlatformSpec, sha256File,
-} from '../extensions/lib/utils.ts';
+} from '../extensions/shared/utils.ts';
 import { runLatestUpdate } from './update.ts';
-import { EXT_DIR, OPENCODE_SERVER_SHIM, TREE_FILES, sourcePath } from './manifest.ts';
+import { OPENCODE_ENTRY, TREE_FILES, syncTreeFiles, treeFilesFor } from './manifest.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 
 type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli';
@@ -24,31 +23,31 @@ type FixRequest = FixTarget | 'all';
 
 // A written tree is the install for both hosts now, so --fix restores it for whichever hosts have it, alongside the OMP package when that is present.
 async function fixExtensionTrees(): Promise<void> {
-  // The opencode entrypoint is foreign to pi/omp loaders: never copy it there, and remove strays.
-  const forHost = (id: string): string[] => TREE_FILES.filter((file) => id === 'opencode' || !file.startsWith('opencode/'));
-  const scrubOpencodeDir = async (dest: string): Promise<void> => {
-    const dir = path.join(dest, 'opencode');
-    if (!existsSync(dir)) return;
-    if (dryRun) { sayTagged(`  [dry-run] would remove foreign ${dir}`); return; }
-    await fs.rm(dir, { recursive: true, force: true });
-    sayTagged(`  [rm] foreign ${dir}`);
+  // The OpenCode entry is foreign to the pi and omp loaders: it imports @opencode/plugin, which
+  // those hosts do not carry. One shared filter, so a repair cannot drop it into the wrong tree.
+  const forHost = (id: string): readonly string[] => treeFilesFor(id as 'omp' | 'pi' | 'opencode');
+  // A tree from before the entry moved to the extensions root held a nested copy, and a repair
+  // written against the old filter may have left the entry at the root. Remove both strays.
+  const scrubOpencodeEntry = async (dest: string): Promise<void> => {
+    for (const target of [path.join(dest, OPENCODE_ENTRY), path.join(dest, 'opencode')]) {
+      if (!existsSync(target)) continue;
+      if (dryRun) { sayTagged(`  [dry-run] would remove foreign ${target}`); continue; }
+      await fs.rm(target, { recursive: true, force: true });
+      sayTagged(`  [rm] foreign ${target}`);
+    }
   };
   for (const host of detectHosts()) {
     const dest = hostExtensionsDir(host.id);
     // Repair a host whose tree is partly there: a half-written tree is exactly the case this runs for, and it reads as "not installed" to the detector.
     const present = forHost(host.id).filter((file) => existsSync(path.join(dest, file))).length;
     if (present === 0) {
-      if (host.id !== 'opencode') await scrubOpencodeDir(dest);
+      if (host.id !== 'opencode') await scrubOpencodeEntry(dest);
       continue;
     }
     await fs.mkdir(dest, { recursive: true });
-    for (const file of forHost(host.id)) {
-      const from = path.join(EXT_DIR, ...file.split('/'));
-      const text = await readTextIfExists(from);
-      if (text === null) sayTagged(`  [warn] bundled source missing: ${from}`);
-      else await writeIfChanged(path.join(dest, file), text, { dryRun, verbose });
-    }
-    if (host.id !== 'opencode') await scrubOpencodeDir(dest);
+    const missing = await syncTreeFiles(dest, forHost(host.id), { dryRun, verbose });
+    for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
+    if (host.id !== 'opencode') await scrubOpencodeEntry(dest);
     if (!dryRun) sayTagged(`  [ok] ${host.label} extension tree: ${dest}`);
   }
 }
@@ -59,10 +58,13 @@ async function fixOpencodeEntry(): Promise<void> {
   const { HOME } = await import('./common.ts');
   const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   const configPath = path.join(HOME, '.config', 'opencode', 'opencode.json');
-  const nested = path.join(dir, 'opencode', 'server.ts');
-  if (!(await readTextIfExists(nested))) return;
-  // The loader resolves <pluginDir>/server.ts, so mirror the entry at the tree root.
-  await writeIfChanged(path.join(dir, 'server.ts'), OPENCODE_SERVER_SHIM, { dryRun, verbose });
+  // The loader resolves <pluginDir>/server.ts, and the entry is that file. A tree from before the
+  // entry moved to the extensions root held a root shim that re-exported a nested copy, so the
+  // real entry is written in place and the stale nested tree is dropped.
+  const nested = path.join(dir, 'opencode');
+  const staleNested = (await readTextIfExists(path.join(nested, 'server.ts'))) !== null;
+  await syncTreeFiles(dir, TREE_FILES.filter((file) => !file.includes('/')), { dryRun, verbose });
+  if (staleNested && !dryRun) await fs.rm(nested, { recursive: true, force: true }).catch(() => {});
   if (dryRun) sayTagged(`  [dry-run] would remove the redundant rtk plugin entry`);
   else await fs.rm(path.join(HOME, '.config', 'opencode', 'plugins', 'rtk.ts'), { force: true }).catch(() => {});
   const raw = await readTextIfExists(configPath);
@@ -87,19 +89,14 @@ async function fixExtensions(pluginsDir: string): Promise<void> {
   await fs.mkdir(pluginExtDir, { recursive: true });
 
   // Rule bodies are never overwritten: they can be newer upstream fetches.
-  const ruleFile = (f: string) => /^caveman-session\/rule.*\.md$/.test(f);
-  for (const file of TREE_FILES) {
-    const dest = path.join(pluginExtDir, ...file.split('/'));
-    if (ruleFile(file) && existsSync(dest)) continue;
-    const text = await readTextIfExists(sourcePath(file));
-    if (text === null) sayTagged(`  [warn] bundled source missing: ${sourcePath(file)}`);
-    else await writeIfChanged(dest, text, { dryRun, verbose });
-  }
+  const ruleFile = (f: string): boolean => /^caveman\/rule.*\.md$/.test(f);
+  const missing = await syncTreeFiles(pluginExtDir, TREE_FILES, { dryRun, verbose }, (file: string) => ruleFile(file) && existsSync(path.join(pluginExtDir, ...file.split('/'))));
+  for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
 
   // Writing is not atomic, so re-read rather than assume the tree is whole.
   if (dryRun) return;
-  const missing = TREE_FILES.filter((file) => !existsSync(path.join(pluginExtDir, ...file.split('/'))));
-  if (missing.length > 0) sayTagged(`  [fail] tree incomplete: ${missing.join(', ')}`);
+  const stillMissing = TREE_FILES.filter((file) => !existsSync(path.join(pluginExtDir, ...file.split('/'))));
+  if (stillMissing.length > 0) sayTagged(`  [fail] tree incomplete: ${stillMissing.join(', ')}`);
   else sayTagged(`  [ok] extension tree: ${TREE_FILES.length} files`);
 }
 
@@ -117,7 +114,9 @@ async function fixRegistrations(agentDir: string, pluginsDir: string): Promise<v
   const rtkTs = path.join(extDir, 'rtk.ts');
   if ((await readTextIfExists(rtkTs)) !== null) await ensureRtkInConfig({ dryRun, verbose });
   const ponytailExtPath = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'pi-extension', 'index.js');
-  await removeExtensionFromConfig(configPath, path.join(extDir, 'combo-toggle', 'index.ts'), 'manifest-loaded combo', { dryRun, verbose });
+  // A tree from before the fold still names `combo-toggle`; both lines name the same module.
+  await removeExtensionFromConfig(configPath, path.join(extDir, 'combo', 'index.ts'), 'manifest-loaded combo', { dryRun, verbose });
+  await removeExtensionFromConfig(configPath, path.join(extDir, 'combo-toggle', 'index.ts'), 'retired manifest-loaded combo', { dryRun, verbose });
   await removeExtensionFromConfig(configPath, ponytailExtPath, 'manifest-loaded ponytail', { dryRun, verbose });
   await removeExtensionFromConfig(configPath, path.join(extDir, 'shared', 'mode-reinforcement.ts'), 'retired mode reinforcement', { dryRun, verbose });
   const pkgPath = path.join(pluginsDir, 'package.json');

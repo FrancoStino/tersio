@@ -1,5 +1,6 @@
 // cli/usage.ts — ledger + session-token usage report, tokscale-style.
 import {
+  PRICE_TIERS_FIRM,
   co2GramsFor,
   displayModelId,
   energyWhFor,
@@ -7,6 +8,7 @@ import {
   importSessionTokens,
   ledgerPath,
   priceFor,
+  pricesOverridePath,
   readResetWatermark,
   readRtkAdoption,
   readRtkRecallDiagnostics,
@@ -16,7 +18,7 @@ import {
   usdCost,
 } from '../extensions/shared/usage-ledger.ts';
 import type { RecentRequest, RtkAdoption, RtkRecallDiagnostics, SessionTokens, TokenBreakdown, UsageRow } from '../extensions/shared/usage-ledger.ts';
-import { resolveRtkBinary } from '../extensions/lib/utils.ts';
+import { resolveRtkBinary } from '../extensions/shared/utils.ts';
 import { readRtkGain } from '../extensions/shared/rtk-gain.ts';
 import type { RtkGain } from '../extensions/shared/rtk-gain.ts';
 import { readUsageDb, reparseGuardReport, syncUsageDb, usageDbPath } from '../extensions/shared/usage-store.ts';
@@ -43,6 +45,8 @@ export interface UsageReport {
   byModelBucketUsd: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }>;
   byModelMessages: Record<string, number>;
   byHost: Record<string, Record<string, TokenBreakdown>>;
+  /** Agent kind -> tokens and message count, so a subagent's work reads apart from its root's. */
+  byAgent: Record<string, { tokens: TokenBreakdown; msgs: number }>;
   byDay: Record<string, TokenBreakdown>;
   byDayModel: Record<string, Record<string, number>>;
   byTool: Array<[string, number]>;
@@ -52,6 +56,17 @@ export interface UsageReport {
   rtkRecall: RtkRecallDiagnostics;
   usd: number;
   priced: boolean;
+  /** Tokens priced by a tier that is not firm: another provider's rate, or the default table. */
+  estimatedUsd: number;
+  /** How many models resolved at each tier, so a reader can judge the estimate. */
+  priceTiers: Record<string, number>;
+  /**
+   * Ledger keys still priced by a guess, heaviest first, five at most. Keys rather than labels,
+   * because the key is what `prices.local.json` spells. One list covers every host.
+   */
+  weakModels: string[];
+  /** Models the host priced itself, so the reader knows whose figure that is. */
+  measuredModels: string[];
   savedUsd: number;
   costMeasured: number;
   co2g: number;
@@ -92,11 +107,13 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
   const source: UsageReport['source'] = stored ? (synced ? 'stored' : 'stored-stale') : 'live';
   const watermark = readResetWatermark();
   let usd = 0;
+  let estimatedUsd = 0;
   let priced = true;
   let savedUsd = 0;
   const byModelUsd: Record<string, number> = {};
   const byModelBucketUsd: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {};
   const byHost: Record<string, Record<string, TokenBreakdown>> = {};
+  const byAgent: Record<string, { tokens: TokenBreakdown; msgs: number }> = {};
   const byDayModel: Record<string, Record<string, number>> = {};
   let co2g = 0;
   let energyWh = 0;
@@ -108,9 +125,25 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
   };
   // Price by exact key first (gateways can differ), then fold every map under the display label.
   const folded = foldModelsByLabel(session.byModel, session.byModelMessages);
+  const priceTiers: Record<string, number> = {};
+  // Named in the loop so the list is built in one pass, then sorted by token volume below.
+  const weakModels: string[] = [];
+  const measuredModels: string[] = [];
   for (const [model, t] of Object.entries(session.byModel)) {
-    const c = usdCost(t, model);
+    // A model is measured only when the host priced every one of its messages; a partly measured
+    // model would read its unpriced messages as zero, which is the one error worse than a guess.
+    const covered = (session.byModelCostMessages[model] ?? 0) >= (session.byModelMessages[model] ?? 0);
+    const measured = covered ? session.byModelMeasured[model] : undefined;
+    const c = usdCost(t, model, measured);
     usd += c.usd;
+    priceTiers[c.tier] = (priceTiers[c.tier] ?? 0) + 1;
+    if (c.tier === 'measured') measuredModels.push(model);
+    // A tier that is not firm is an estimate, so it is kept out of the firm total rather than
+    // summed beside a measured cost that would make the whole figure read as a bill.
+    if (!PRICE_TIERS_FIRM.includes(c.tier)) {
+      estimatedUsd += c.usd;
+      weakModels.push(model);
+    }
     const label = displayModelId(model);
     byModelUsd[label] = (byModelUsd[label] ?? 0) + c.usd;
     byModelBucketUsd[label] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -119,6 +152,11 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
       byHost[label] ??= {};
       byHost[label][host] ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
       addTok(byHost[label][host], hb);
+    }
+    for (const [agent, ab] of Object.entries(session.byAgent[model] ?? {})) {
+      byAgent[agent] ??= { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, msgs: 0 };
+      addTok(byAgent[agent].tokens, ab);
+      byAgent[agent].msgs += session.byAgentMessages[model]?.[agent] ?? 0;
     }
     co2g += co2GramsFor(model, t.output);
     energyWh += energyWhFor(model, t.output);
@@ -133,6 +171,10 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
     }
   }
   const byTool = Object.entries(session.byTool).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  // Heaviest first, then capped to five: the line is guidance, not a dump of the model table.
+  const weakKeys = weakModels
+    .toSorted((a, b) => tokenTotal(session.byModel[b]) - tokenTotal(session.byModel[a]))
+    .slice(0, 5);
   return {
     total: rows.length,
     byKind,
@@ -146,6 +188,7 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
     byModelBucketUsd,
     byModelMessages: folded.byModelMessages,
     byHost,
+    byAgent,
     byDay: session.byDay,
     byDayModel,
     byTool,
@@ -158,6 +201,10 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
     rtkRecall: readRtkRecallDiagnostics(resolveRtkBinary()),
     usd,
     priced,
+    estimatedUsd,
+    priceTiers,
+    weakModels: weakKeys,
+    measuredModels,
     savedUsd,
     costMeasured: session.costMeasured,
     co2g,
@@ -171,6 +218,11 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US');
+}
+
+/** Every billed bucket, so a model sorts by how much of the estimate it carries. */
+function tokenTotal(t: TokenBreakdown): number {
+  return t.input + t.output + t.cacheRead + t.cacheWrite;
 }
 
 function fmtShort(n: number): string {
@@ -221,11 +273,33 @@ function printReport(report: UsageReport): void {
   }
   const t = report.tokens;
   const a = report.rtkAdoption;
+  // A tier that is not firm is named, so a figure that is partly a guess never reads as a bill.
+  const weak = ['tail', 'default'].reduce((sum, tier) => sum + (report.priceTiers[tier] ?? 0), 0);
+  const overridden = report.priceTiers.override ?? 0;
+  // The count stays in the cell; the names go on their own line below, because the cell is a
+  // fixed 118 columns and a list of model ids would be truncated to nothing.
+  const listed = report.weakModels.map((m) => displayModelId(m));
+  const measuredCount = report.measuredModels.length;
+  const costNote = weak > 0
+    ? ` · ${weak} model${weak === 1 ? '' : 's'} priced from another provider or the default table — add them to ${pricesOverridePath()}`
+    : overridden > 0
+      ? ` · ${overridden} model${overridden === 1 ? '' : 's'} priced from your override file`
+      : measuredCount > 0
+        ? ` · ${measuredCount} model${measuredCount === 1 ? '' : 's'} priced by the host`
+        : '';
   for (const l of textTable(['Metric', 'Value'], [
     ['Tokens', `${fmt(t.input)} in · ${fmt(t.output)} out · ${fmt(t.cacheRead)} cache read · ${fmt(t.cacheWrite)} cache write`],
-    ['Cost', `${formatCurrency(report.usd, report.currency)}${report.priced ? '' : ' (includes default pricing)'} · ~${formatCurrency(report.savedUsd, report.currency)} cache-saved (est.) · ~${report.co2g.toFixed(1)}g CO2 (est.)`],
+    ['Cost', `${formatCurrency(report.usd, report.currency)}${report.priced ? '' : ' (includes default pricing)'} · ~${formatCurrency(report.savedUsd, report.currency)} cache-saved (est.) · ~${report.co2g.toFixed(1)}g CO2 (est.)${costNote}`],
     ['RTK adoption', `${fmt(a.rtkCalls)}/${fmt(a.eligibleCalls)} eligible Bash calls use RTK (${a.adoptionPct.toFixed(1)}%) · ${fmt(a.missedCalls)} missed · recall ${report.rtkRecall.available ? `${report.rtkRecall.mode} (${report.rtkRecall.entries})` : 'unavailable'}`],
   ], [false, false], 118)) console.log(l);
+  if (measuredCount > 0) {
+    // Named, because a measured figure is only worth trusting when a reader sees whose it is.
+    console.log(`  Priced by the host: ${measuredCount} model${measuredCount === 1 ? '' : 's'}`);
+  }
+  if (weak > 0) {
+    // Heaviest first, one per host spelling, so the operator sees exactly what to write.
+    console.log(`  Unpriced (heaviest first): ${listed.join(', ')}`);
+  }
   const allModels = Object.entries(report.byModel).filter(([, b]) => b.input + b.output + b.cacheRead + b.cacheWrite > 0).sort((a, b) => (b[1].input + b[1].output) - (a[1].input + a[1].output));
   const models = allModels.slice(0, ROW_CAP);
   if (models.length) {
@@ -241,6 +315,18 @@ function printReport(report: UsageReport): void {
       console.log(l);
     }
     if (allModels.length > ROW_CAP) console.log(`  showing top ${ROW_CAP} of ${fmt(allModels.length)} models — full set in the dashboard`);
+  }
+  const agentKinds = Object.entries(report.byAgent).filter(([, per]) => per.msgs > 0).toSorted((x, y) => y[1].msgs - x[1].msgs);
+  if (agentKinds.length > 1) {
+    console.log('  BY AGENT');
+    const top = agentKinds.reduce((m, [, per]) => Math.max(m, per.tokens.input + per.tokens.output + per.tokens.cacheRead + per.tokens.cacheWrite), 1);
+    const arows = agentKinds.map(([kind, per]) => {
+      const total = per.tokens.input + per.tokens.output + per.tokens.cacheRead + per.tokens.cacheWrite;
+      return [kind === 'subagent' ? 'Subagents' : 'Main agent', fmt(per.msgs), fmt(per.tokens.input), fmt(per.tokens.output), fmt(per.tokens.cacheRead), `${bar(total / top, 8)} ${fmtShort(total)}`];
+    });
+    for (const line of textTable(['Agent', 'Msgs', 'Input', 'Output', 'Cache read', 'Share'], arows, [false, true, true, true, true, false])) {
+      console.log(line);
+    }
   }
   const cmdRows: { name: string; count: number; saved: number | null; avgPct: number | null; avgMs: number | null }[] =
     report.byTool.map(([tool, n]) => ({ name: tool, count: n, saved: null, avgPct: null, avgMs: null }));
