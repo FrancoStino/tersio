@@ -42,12 +42,12 @@ const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 const DIAG_SCHEDULES = new Set(['manual', 'daily', 'weekly', 'monthly']);
 
-// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all three modes.
+// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all four modes.
 const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
   off: { caveman: 'off', rtk: false, ponytail: 'off', pstack: 'off' },
-  medium: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'off' },
-  balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'off' },
-  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'off' },
+  medium: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'on' },
+  balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'on' },
+  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'on' },
 };
 const COMBO_DEFAULTS = new Set(Object.keys(COMBO_PRESET_MODES));
 

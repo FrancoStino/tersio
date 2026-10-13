@@ -1,4 +1,4 @@
-// /pstack session mode: injects the pstack rigor body. Opt-in — no combo preset turns it on.
+// /pstack session mode: injects the pstack rigor body. Every preset above off turns it on.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

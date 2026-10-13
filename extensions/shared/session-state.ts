@@ -6,12 +6,12 @@ const BRIDGE_KEY = Symbol.for('tersio/combo-session-state');
 // A verbatim sentence from omp's subagent prompt, so it can drift; read from the installed omp binary on 2026-10-01.
 export const OMP_SUBAGENT_MARKER = 'Worker agent: delegated tasks.';
 
-// pstack is the field no preset turns on: its prompt cost is unmeasured, so every level keeps it off.
+// Every level above off turns pstack on with the other three; off is the one level without it.
 export const COMBO_LEVELS: Record<string, Readonly<ComboState>> = Object.freeze({
   off: Object.freeze({ level: 'off', caveman: 'off', rtk: 'off', ponytail: 'off', pstack: 'off' }),
-  medium: Object.freeze({ level: 'medium', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'off' }),
-  balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full', pstack: 'off' }),
-  max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra', pstack: 'off' }),
+  medium: Object.freeze({ level: 'medium', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'on' }),
+  balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full', pstack: 'on' }),
+  max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra', pstack: 'on' }),
 });
 
 const MODE_VALUES: Record<string, Set<string>> = {

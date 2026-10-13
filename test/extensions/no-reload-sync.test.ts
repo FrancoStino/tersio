@@ -70,7 +70,7 @@ test("/combo max syncs sibling mirrors with no reload", async () => {
 
   expect(reloaded()).toBe(0);
   expect(notifications.filter((n) => n.startsWith("🧩 combo"))).toContain(
-    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF",
+    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON",
   );
   const cave = (await caveman.handlers.get("before_agent_start")!(MAIN_PROMPT, ctx)) as { systemPrompt: string[] };
   expect(cave.systemPrompt.join("\n")).toMatch(/Caveman ultra/);

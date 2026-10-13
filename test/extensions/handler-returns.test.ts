@@ -97,6 +97,6 @@ test("a combo change is persisted before the host is told about it", async () =>
   ]);
   const notices = order.slice(5);
   expect(notices).toEqual([
-    "setstatus:🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=OFF",
+    "setstatus:🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=ON",
   ]);
 });

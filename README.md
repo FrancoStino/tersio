@@ -8,7 +8,7 @@
 [![Build](https://shieldcn.dev/github/ci/KurutoDenzeru/tersio.svg?variant=branded&size=xs&logo=githubactions&label=Build)](https://github.com/KurutoDenzeru/tersio/actions)
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
 
-Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, an opt-in pstack rigor mode, and a gain dashboard — one-command combo presets over one shared extension tree.
+Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, a pstack rigor mode, and a gain dashboard — one-command combo presets over one shared extension tree.
 
 ## ⚡ Getting Started
 
@@ -101,18 +101,18 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 Mode switches live on their own commands; bare `/tersio` prints status. Every mode command, and every session start, prints the status line:
 
 ```
-🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF
+🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON
 ```
 
 It is display-only — it never enters the model context, so it costs the session nothing.
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|medium\|balanced\|max\|status` | One preset for the three modes (start here): medium = lite/lite/on, balanced = full/full/on, max = ultra/ultra/on; per-mode tweaks drop to `custom`. Every preset clears pstack. |
+| `/combo off\|medium\|balanced\|max\|status` | One preset for all four modes (start here): medium = caveman lite · rtk on · ponytail lite · pstack on, balanced = full/full/on/on, max = ultra/ultra/on/on, and off disables every mode; per-mode tweaks drop to `custom`. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. The legacy `wenyan` spelling still resolves, onto `megacave-full`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes. Review runs separately through `/ponytail-review`. |
-| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: no preset turns it on, and `normal mode` clears it. |
+| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). The medium, balanced, and max presets turn it on; `normal mode` clears it. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio check` | Add-on version check |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |

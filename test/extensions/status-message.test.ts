@@ -103,7 +103,7 @@ test("a new session announces the status", async () => {
   const pi2 = instantiate(comboToggleExtension, entries);
   const resumed = context(entries);
   await fire(pi2, "session_start", resumed);
-  expect(statuses(resumed.notifications)).toEqual(["🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF"]);
+  expect(statuses(resumed.notifications)).toEqual(["🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON"]);
 });
 
 test("every session event announces the status, and an unchanged state stays silent", async () => {
@@ -118,7 +118,7 @@ test("every session event announces the status, and an unchanged state stays sil
     const worker = instantiate(comboToggleExtension, entries);
     await fire(worker, event, fresh);
     expect(statuses(fresh.notifications), `${event} announces`).toEqual([
-      "🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=OFF",
+      "🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=ON",
     ]);
 
     // A second restore of the same state repaints nothing new on the bar.
@@ -142,7 +142,7 @@ test("a subagent session announces the inherited status", async () => {
     const ctx = context([], false);
     await fire(worker, "session_start", ctx);
     expect(statuses(ctx.notifications)).toEqual([
-      "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF",
+      "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON",
     ]);
   }
 });
@@ -159,7 +159,7 @@ test("the status survives compaction and still matches the live state", async ()
   await fire(worker, "session_compact", afterCompact);
 
   expect(statuses(afterCompact.notifications)).toEqual([
-    "🧩 combo MEDIUM: 🪨caveman=LITE ⚡rtk=ON 🦥ponytail=LITE 🥔pstack=OFF",
+    "🧩 combo MEDIUM: 🪨caveman=LITE ⚡rtk=ON 🦥ponytail=LITE 🥔pstack=ON",
   ]);
   expect(formatStatus(getSharedComboState())).toBe(statuses(afterCompact.notifications)[0]);
 });
@@ -178,7 +178,7 @@ test("persisted entries win over the configured default", async () => {
 
   // HOME points at a missing dir, so any default read here is "off".
   expect(statuses(ctx.notifications)).toEqual([
-    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF",
+    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON",
   ]);
 });
 
@@ -189,14 +189,14 @@ test("a mode command reports the new state, and /tersio status agrees", async ()
   const ctx = context(entries);
   await combo.commands.get("combo")!("max", ctx);
   expect(statuses(ctx.notifications)).toEqual([
-    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF",
+    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON",
   ]);
 
   const tersio = instantiate(tersioCommandsExtension, entries);
   const asked = context(entries);
   await tersio.commands.get("tersio")!("status", asked);
   expect(statuses(asked.notifications)).toEqual([
-    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF",
+    "🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON",
   ]);
 });
 
@@ -227,7 +227,7 @@ test("a marked subagent prompt still injects guidance and stays consistent with 
   const worker = instantiate(cavemanSessionExtension);
   const injected = await worker.handlers.get("before_agent_start")!({ systemPrompt: prompt }, undefined) as { systemPrompt?: string[] };
   expect(injected?.systemPrompt?.at(-1)).toMatch(/Caveman ultra active/);
-  expect(formatStatus(getSharedComboState())).toBe("🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF");
+  expect(formatStatus(getSharedComboState())).toBe("🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON");
 });
 test("the combo line names every mode, so every other surface keeps its text", () => {
   expect(formatStatus({ level: "balanced", caveman: "full", rtk: "on", ponytail: "full", pstack: "off" }))

@@ -1,4 +1,4 @@
-// The pstack rigor mode. It rides no preset, so only the command or its own stored default turns it on.
+// The pstack rigor mode. Every combo preset above off turns it on, and /pstack controls it on its own.
 import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -120,18 +120,16 @@ test("a stored pstack entry restores the mode on a new session", async () => {
   expect(getSharedComboState().pstack).toBe("on");
 });
 
-// The opt-in contract: no preset turns pstack on, and a preset turns it back off.
-test("a combo preset clears pstack, so the level never overstates the modes", async () => {
+// The preset contract: a combo preset turns pstack on with the other modes.
+test("a combo preset turns pstack on, so the level matches its modes", async () => {
   resetSharedComboState();
   const entries: SessionEntry[] = [];
-  const pstack = instantiate(pstackSessionExtension, entries);
-  await pstack.commands.get("pstack")!("on", context(entries).ctx);
-  expect(getSharedComboState().pstack).toBe("on");
-
   const combo = instantiate(comboToggleExtension, entries);
   const { statuses, ctx } = context(entries);
-  await combo.commands.get("combo")!("balanced", ctx);
 
   expect(getSharedComboState().pstack).toBe("off");
-  expect(statuses.at(-1)).toBe("🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=OFF");
+  await combo.commands.get("combo")!("balanced", ctx);
+
+  expect(getSharedComboState().pstack).toBe("on");
+  expect(statuses.at(-1)).toBe("🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=ON");
 });

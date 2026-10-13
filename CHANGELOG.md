@@ -5,12 +5,12 @@
  - Brand marks for the WorkBuddy and DeepSeek providers, so their rows show the service's own logo instead of a monogram. `deepseek`, `deepseek-web`, and `workbuddy-ai` now resolve to marks.
  - Brand marks for Trae, Kiro, and Meituan: each shows its own logo. Kiro no longer borrows the AWS cloud mark, and the Meituan LongCat line no longer draws a letter.
  - Brand tiles now carry breathing room: the artwork fills 78% of its tile instead of 88% or 100%, so no mark crowds its border. One rule covers every size, table rows and drawers alike.
- - A `/pstack` rigor mode, forked from pstack's `poteto-mode` skill (MIT, Lauren Tan). The upstream skill is a Cursor plugin index that reads 23 playbooks and sibling skills no Tersio host carries, so the shipped body is a host-neutral fork rather than a copy. It stays opt-in: every combo preset clears it, the footer names it last, and `tersio settings pstack on` sets a session-start default. Because the body is a fork, `tersio update` does not track it.
+ - A `/pstack` rigor mode, forked from pstack's `poteto-mode` skill (MIT, Lauren Tan). The upstream skill is a Cursor plugin index that reads 23 playbooks and sibling skills no Tersio host carries, so the shipped body is a host-neutral fork rather than a copy. Every combo preset above off turns it on with the other three, and `tersio settings pstack` sets the session-start default on its own. Because the body is a fork, `tersio update` does not track it.
 
 ### Changed
  - Every dashboard page now loads into a skeleton of itself. The stat strip, the chart cards, and the table block hold the page's own shape until the data arrives, in place of two generic boxes. The session trace gets the same treatment.
  - Placeholders draw their tone from the panel ink, so they read in both themes. The chart and table placeholders before this used a tint that nearly vanished in light mode.
- - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF`. A preset matches all four modes, so turning pstack on reads as `CUSTOM` rather than claiming the preset, and `🧩 combo OFF` collapses only when pstack is off too. The dashboard banner and the Settings pane carry the same segment and row.
+ - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON`. A preset matches all four modes, so the level reads `CUSTOM` only once a mode is changed by hand, and `🧩 combo OFF` collapses only when every mode is off. The dashboard banner and the Settings pane carry the same segment and row.
 
 ### Fixed
  - The host footer carried the caveman mode twice: the combo banner, and a separate `Caveman mode: full` line beside it. The mode now reads once, in the combo line, and `/caveman status` answers with the mode in a message.

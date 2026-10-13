@@ -248,6 +248,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
         cavemanDefault: "full",
         rtkDefault: true,
         ponytailDefault: "full",
+        pstackDefault: "on",
       },
     });
     const result = spawnSync(process.execPath, [installer, "--apply-update", "--dry-run", "--yes"], {
@@ -257,7 +258,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
       env: cliEnv(home),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off\)/);
+    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on\)/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -476,7 +476,7 @@ async function stepCombo(extDir: string, options: InstallOptions): Promise<void>
 
 // The body is a Tersio fork of an upstream skill, so the install copies it and never fetches it.
 async function stepPstack(extDir: string, options: InstallOptions): Promise<void> {
-  if (!options.quiet) console.log('  pstack — install the opt-in rigor mode');
+  if (!options.quiet) console.log('  pstack — install the rigor mode');
   await copySources(extDir, filesUnder('pstack'), 'pstack/index.ts', options);
 }
 

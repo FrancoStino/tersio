@@ -251,7 +251,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     const problem = ruleBodyProblem(text);
     if (problem) warnLine(`Caveman ${name}`, `unusable body (${problem}) — run: tersio install`);
   }
-  // pstack ships off, so a missing body only disables the mode; a broken one still earns a line.
+  // Every preset above off turns pstack on, so a body that is missing or unusable costs a live mode.
   check('pstack rule', pstackRuleText !== null, pstackRuleText === null ? 'missing — run: tersio install' : '');
   if (pstackRuleText !== null) {
     const problem = ruleBodyProblem(pstackRuleText);

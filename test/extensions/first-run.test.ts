@@ -109,6 +109,7 @@ test("a persisted Combo default applies to a new empty session", async () => {
       cavemanDefault: "full",
       rtkDefault: true,
       ponytailDefault: "full",
+      pstackDefault: "on",
     }), "utf8");
 
     const h = harness(undefined);

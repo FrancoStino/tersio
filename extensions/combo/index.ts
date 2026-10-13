@@ -82,7 +82,7 @@ async function loadPonytailInstructions(mode: string): Promise<string> {
 }
 
 export default function comboToggleExtension(pi: ExtensionApi): void {
-  setExtensionLabel(pi, 'Combo session toggle (all 3 add-ons)');
+  setExtensionLabel(pi, 'Combo session toggle (all four add-ons)');
 
   let setupPrompted = false;
   let lastInjected: string | undefined = undefined;
@@ -103,11 +103,10 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault'].some((key) => key in settings);
     const combo = readComboDefault();
     const preset = COMBO_LEVELS[combo];
-    const trio = hasModeDefaults
-      ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault() }
-      : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail };
-    // No preset turns pstack on, so only its own default applies.
-    const modes = { ...trio, pstack: readPstackDefault() };
+    // A stored per-mode default wins; with none, the preset supplies all four.
+    const modes = hasModeDefaults
+      ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault() }
+      : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail, pstack: preset.pstack };
     setSharedComboModes(modes);
     if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off') return;
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
@@ -136,7 +135,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   }
 
   pi.registerCommand?.('combo', {
-    description: 'Toggle all 3 Tersio modes at once. Usage: /combo <off|medium|balanced|max|status>',
+    description: 'Toggle all four Tersio modes at once. Usage: /combo <off|medium|balanced|max|status>',
     handler: async (args, ctx) => {
       listen(ctx);
       const arg = String(args || '').trim().toLowerCase();
@@ -149,11 +148,10 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
 
       if (arg === 'help') {
         ctx?.ui?.notify?.(
-          '/combo off      — disables all 3 (caveman, rtk, ponytail)\n' +
-          '/combo medium   — light: caveman=lite, rtk=on, ponytail=lite\n' +
-          '/combo balanced — middle: caveman=full, rtk=on, ponytail=full\n' +
-          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra\n' +
-          'Presets cover 3 modes. pstack is opt-in: /pstack on',
+          '/combo off      — disables every mode (caveman, rtk, ponytail, pstack)\n' +
+          '/combo medium   — light: caveman=lite, rtk=on, ponytail=lite, pstack=on\n' +
+          '/combo balanced — middle: caveman=full, rtk=on, ponytail=full, pstack=on\n' +
+          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra, pstack=on',
           'info'
         );
         return;
@@ -200,9 +198,9 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     setupPrompted = true;
     const choice = await hostSelect(pi, ctx.ui, 'Session-start defaults — Combo preset', [
       { label: 'off', description: 'Keep every Tersio mode inactive' },
-      { label: 'medium', description: 'caveman=lite, rtk=on, ponytail=lite' },
-      { label: 'balanced', description: 'caveman=full, rtk=on, ponytail=full' },
-      { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra' },
+      { label: 'medium', description: 'caveman=lite, rtk=on, ponytail=lite, pstack=on' },
+      { label: 'balanced', description: 'caveman=full, rtk=on, ponytail=full, pstack=on' },
+      { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra, pstack=on' },
     ], { selectionMarker: 'radio', helpText: 'You can change this later with /tersio settings.' });
     const level = choice || 'off';
     if (saveComboSetup(level) && level !== 'off') {

@@ -140,7 +140,7 @@ async function runSingleSetting(name: string, current: Profile, nextDiag: DiagSc
       break;
     }
     case 'pstack': {
-      const picked = await askInteractiveChoice('pstack default (opt-in rigor mode)', [...PSTACK_DEFAULTS].map((v) => ({
+      const picked = await askInteractiveChoice('pstack default (rigor mode)', [...PSTACK_DEFAULTS].map((v) => ({
         value: v, label: v,
       })), next.pstackDefault);
       if (picked.status !== 'selected') return null;
@@ -191,7 +191,7 @@ function printSettingsTable(current: Profile): void {
     console.log(l);
   }
   console.log(`  Stored: ${tersioSettingsFile()}`);
-  console.log(`  Combo ${current.comboDefault} sets caveman/rtk/ponytail and clears pstack. Tune one: tersio settings <name>`);
+  console.log(`  Combo ${current.comboDefault} sets all four modes. Tune one: tersio settings <name>`);
 }
 
 async function runSettings(): Promise<void> {

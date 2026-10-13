@@ -150,7 +150,7 @@ test("opencode sessions restore modes independently", async () => {
     mkdirSync(process.env.TERSIO_HOME, { recursive: true });
     writeFileSync(
       path.join(process.env.TERSIO_HOME, "settings.json"),
-      JSON.stringify({ comboDefault: "balanced", cavemanDefault: "full", rtkDefault: true, ponytailDefault: "full" }),
+      JSON.stringify({ comboDefault: "balanced", cavemanDefault: "full", rtkDefault: true, ponytailDefault: "full", pstackDefault: "on" }),
       "utf8",
     );
     const { ctx, hooks, commands, prompts, store } = fakeCtx();
