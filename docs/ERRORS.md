@@ -156,3 +156,11 @@ The eight entries below are editing and verification discipline. No test, lint r
 **What happened:** `opencode service start` and `service restart` both exited 1 with `Managed service port 49374 on 127.0.0.1 is already in use by another process`, while `opencode service status` answered `stopped`. A daemonized `opencode serve --service` (pid 85672, reparented to init) still held the port. `service stop` and `service restart` could not reach it, so every documented remedy failed.
 **Root cause:** The manager's view of its process and the actual process had diverged, and its status command is the only signal it offers. Nothing in the loop could see the orphan, so the port looked free.
 **Prevention rule:** When a report and a resource disagree, trust the resource. The check that matters is the one that reads the port and the process directly, and the remedy that works is the one that acts on the process, not on the manager that lost it. Validate a pid read from another process before signalling it.
+
+## 2026-10-14 — A green local run on a test that read the machine's own home
+
+**What happened:** `test/extensions/server-sessions.test.ts` passed locally and failed on CI in 49 seconds, on the pushed commit. The assertion was `expect(joined).not.toMatch(/PONYTAIL MODE ACTIVE/)` for a pi host, and CI saw the Ponytail block present. The suite reported 472 passed here and 469 passed, 1 failed, 2 skipped there.
+
+**Root cause:** The skip needs two conditions, `isPiProcess() && piHasUpstreamPonytail()`. The test set the env var and left `PI_CODING_AGENT_DIR` unset, so the second condition read `$HOME/.pi/agent` for a marker file. This machine has the pi Ponytail extension installed, so the marker existed and the skip fired. A CI runner has no `~/.pi`, so the hook fell back to injecting Ponytail and the assertion failed. The test proved that a marker existed somewhere on the machine, not that the code read one.
+
+**Prevention rule:** A test that asserts on an on-disk condition must pin the path it reads. Redirect the directory the code resolves, or the test measures the developer's machine. Reproduce a CI-only failure by running the file with an empty `HOME` before touching the code; the same empty `HOME` then proves the fix.

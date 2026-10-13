@@ -298,6 +298,7 @@ test("the context hook skips Ponytail on a pi host and keeps the rest", async ()
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-pi-"));
   const prevHome = process.env.TERSIO_HOME;
   const prevPi = process.env.PI_CODING_AGENT;
+  const prevPiDir = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.TERSIO_HOME = path.join(home, ".tersio");
     mkdirSync(process.env.TERSIO_HOME, { recursive: true });
@@ -307,6 +308,15 @@ test("the context hook skips Ponytail on a pi host and keeps the rest", async ()
       "utf8",
     );
     process.env.PI_CODING_AGENT = "true";
+    // The skip needs the marker on disk, so pin the agent dir. Reading the real one
+    // made this test pass only where an upstream extension happened to be installed.
+    process.env.PI_CODING_AGENT_DIR = path.join(home, "pi-agent");
+    mkdirSync(path.join(process.env.PI_CODING_AGENT_DIR, "ponytail", "pi-extension"), { recursive: true });
+    writeFileSync(
+      path.join(process.env.PI_CODING_AGENT_DIR, "ponytail", "pi-extension", "index.js"),
+      "// upstream marker\n",
+      "utf8",
+    );
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
 
@@ -323,6 +333,8 @@ test("the context hook skips Ponytail on a pi host and keeps the rest", async ()
     else process.env.TERSIO_HOME = prevHome;
     if (prevPi === undefined) delete process.env.PI_CODING_AGENT;
     else process.env.PI_CODING_AGENT = prevPi;
+    if (prevPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = prevPiDir;
     rmSync(home, { recursive: true, force: true });
   }
 });
