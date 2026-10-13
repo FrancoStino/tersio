@@ -61,7 +61,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
     // The follow-up installer ran, whichever interactivity branch ran.
     const tersioArgs = readFileSync(tersioLog, "utf8");
     expect(tersioArgs).toMatch(/--dry-run/);
-    expect(tersioArgs).toMatch(/(^| )install( |$)/);
+    expect(tersioArgs).toMatch(/(^| )install( |$)/m);
   } finally {
     cleanup(bin, prefix);
   }
@@ -84,7 +84,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Installing tersio from the GitHub release tarball\.\.\./);
     expect(result.stdout).toMatch(/fake-npm install -g .*tersio-npm\.tgz --no-audit --no-fund/);
-    expect(readFileSync(tersioLog, "utf8")).toMatch(/(^| )install( |$)/);
+    expect(readFileSync(tersioLog, "utf8")).toMatch(/(^| )install( |$)/m);
   } finally {
     cleanup(bin, prefix, tgz);
   }
@@ -108,7 +108,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
       expect(tersioArgs).not.toMatch(/--scope/);
     } else {
       // /dev/tty existed, so the installer ran interactively.
-      expect(tersioArgs).toMatch(/(^| )install( |$)/);
+      expect(tersioArgs).toMatch(/(^| )install( |$)/m);
     }
   } finally {
     cleanup(bin, prefix);
@@ -172,7 +172,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Installing @krtclcdy\/tersio via bun\.\.\./);
     expect(result.stdout).toMatch(/fake-bun install -g @krtclcdy\/tersio@latest/);
-    expect(readFileSync(tersioLog, "utf8")).toMatch(/(^| )install( |$)/);
+    expect(readFileSync(tersioLog, "utf8")).toMatch(/(^| )install( |$)/m);
   } finally {
     cleanup(bin, prefix);
   }
@@ -580,6 +580,25 @@ function screenAtCi(rows: number): string[] {
   }
 }
 
+/** A registry that answers with a newer version, so the welcome carries its update prompt too. */
+function screenAtUpdate(rows: number): string[] {
+  const bin = mkdtempSync(path.join(os.tmpdir(), "tersio-newer-npm-"));
+  try {
+    writeFileSync(`${bin}/npm`, "#!/bin/sh\necho 99.0.0\n", { mode: 0o755 });
+    // No CI here: a real terminal also prints the registry spinner, which is what sits above the tips.
+    const result = spawnSync("python3", ["-c", PY, String(rows), process.execPath, installer], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: { ...process.env, TERM: "xterm-256color", PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return JSON.parse(result.stdout) as string[];
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+
 describe.skipIf(!havePyte)("menu layout", () => {
   for (const rows of [40, 30, 24, 20]) {
     test(`the whole welcome fits without scrolling at ${rows} rows`, () => {
@@ -600,6 +619,14 @@ describe.skipIf(!havePyte)("menu layout", () => {
     expect(lines.some((l) => l.includes("Install add-ons")), "menu visible").toBe(true);
     expect(lines.some((l) => l.includes("Checking npm registry")), "no spinner residue").toBe(false);
   }, 20000);
+
+  // The welcome prints before the update prompt, and the spinner line sits above it: on a 20-row screen
+  // the tips used to scroll off. The menu itself waits behind the prompt, so the tips are what must fit.
+  test("an available update does not scroll the tips off a 20-row screen", () => {
+    const lines = screenAtUpdate(20);
+    expect(lines.some((l) => l.includes("set up add-ons")), `tips visible; screen:\n${lines.join("\n")}`).toBe(true);
+    expect(lines.some((l) => l.includes("is available")), "update prompt on screen").toBe(true);
+  }, 30000);
 
   test("the scissor art renders whole on a full-height terminal", () => {
     const lines = screenAt(30);

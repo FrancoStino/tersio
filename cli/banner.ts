@@ -82,9 +82,10 @@ function printWelcome(): void {
     'tersio update    refresh CLI + add-ons',
     'tersio doctor    verify the install',
   ];
-  // Below 26 rows the note scrolls off the top and slices the art.
+  // Below 26 rows the note scrolls off the top and slices the art, and the screen must also hold the
+  // update prompt and every option, so the tips take one line there.
   if (process.stdout.rows < 26) {
-    clackNote(tips.map((t) => `  ${t}`).join('\n'));
+    clackNote(`  ${tips.join(' · ')}`);
     return;
   }
   const art = bannerLines();
