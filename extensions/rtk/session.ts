@@ -24,7 +24,7 @@ function setRtkProcessEnabled(enabled: boolean): void {
 }
 
 // rtk's contract: name the rewritten surface, never the binary — a hand-typed `rtk` fights the rewrite.
-const RTK_PROMPT = `RTK guidance active. What you run is condensed automatically: searches (grep, rg), listings (ls, find, cat as read), package and test runs (bun, npm, pnpm), version control (git), and type and lint checks (tsc, eslint). Every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code. A command with no condensed form passes through unchanged.`;
+const RTK_PROMPT = `RTK guidance active. What you run is condensed automatically: searches (grep, rg), listings (ls, find, cat as read), package and test runs (bun, npm run, pnpm run), version control (git), and type and lint checks (tsc, eslint). Every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code. A command with no condensed form passes through unchanged.`;
 
 export default function rtkSessionExtension(pi: ExtensionApi): void {
   let enabled = DEFAULT_ENABLED;

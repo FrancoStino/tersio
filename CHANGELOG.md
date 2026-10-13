@@ -13,6 +13,7 @@
  - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON`. A preset matches all four modes, so the level reads `CUSTOM` only once a mode is changed by hand, and `🧩 combo OFF` collapses only when every mode is off. The dashboard banner and the Settings pane carry the same segment and row.
 
 ### Fixed
+ - The RTK guidance named `npm` and `pnpm` as condensed: rtk rewrites `npm run`, `pnpm run`, and `bun`, while `npm test`, `npm install`, and `pnpm test` pass through untouched. The block names the forms rtk rewrites, each probed with `rtk rewrite`.
  - The host footer carried the caveman mode twice: the combo banner, and a separate `Caveman mode: full` line beside it. The mode now reads once, in the combo line, and `/caveman status` answers with the mode in a message.
  - Time to first token read `—` for every pi request: pi records the response's total duration but no first-token latency, and nothing timed it. A new pi-only extension times the first streamed delta and stamps `ttft` onto the message, which is where the parser already looked.
  - OpenCode's first-token latency was dropped in two places: the v2 read never selected `time.streamed`, and the stored row hardcoded `tf` to undefined. Both carry it now, so OpenCode rows report latency instead of zero coverage.
