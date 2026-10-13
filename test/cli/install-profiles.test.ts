@@ -222,6 +222,18 @@ test("installer rejects review as a Ponytail default", () => {
   expect(bad.stderr).toMatch(/Invalid --ponytail-default/);
 });
 
+test("installer accepts a --pstack-default override and reports it", () => {
+  const result = run("install", "--dry-run", "--yes", "--pstack-default", "on");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/pstack=on/);
+});
+
+test("installer rejects a pstack level it does not have", () => {
+  const bad = run("install", "--dry-run", "--yes", "--pstack-default", "full");
+  expect(bad.status).toBe(1);
+  expect(bad.stderr).toMatch(/Invalid --pstack-default/);
+});
+
 test("update rejects an unknown host before doing anything", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-update-host-"));
   try {

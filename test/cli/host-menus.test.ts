@@ -65,6 +65,7 @@ test("install --host pi writes the pi tree and no OMP files", () => {
     expect(result.status, result.stderr).toBe(0);
     // pi auto-discovers <agent-dir>/extensions, so the tree is the install.
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/caveman\/index\.ts/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/pstack\/rule\.md/);
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/rtk\/session\.ts/);
     // pi reaches rtk/ only through this manifest: without it both files stay dead on disk.
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/rtk\/package\.json/);
@@ -134,6 +135,7 @@ test("install --host opencode writes the plugin tree and registers it", () => {
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.config\/opencode\/plugins\/tersio\/server\.ts/);
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.config\/opencode\/plugins\/tersio\/rtk\/session\.ts/);
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.config\/opencode\/plugins\/tersio\/combo\/index\.ts/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.config\/opencode\/plugins\/tersio\/pstack\/rule\.md/);
     expect(result.stdout, "OMP extension tree must stay untouched").not.toMatch(/\.omp\/agent\/extensions/);
     expect(result.stdout, "pi tree must stay untouched").not.toMatch(/\.pi\/agent\/extensions/);
     expect(result.stdout).toMatch(/Done — restart OpenCode/);
@@ -187,6 +189,7 @@ test("uninstall --host pi clears the pi tree, the package, and the shared defaul
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/\[dry-run\] would run: pi remove npm:@krtclcdy\/tersio/);
     expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.pi\/agent\/extensions\/caveman\b/);
+    expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.pi\/agent\/extensions\/pstack\b/);
     expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.tersio\/settings\.json/);
     expect(result.stdout, "OMP targets stay out of a pi uninstall").not.toMatch(/\.omp\/agent\/extensions/);
     // Ponytail now lives in a local package dir we wrote, not in pi's skills dir.

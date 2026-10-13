@@ -37,6 +37,7 @@ test("settings --dry-run previews without writing", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/│ Setting +│ Current +│ Valid values +│/);
     expect(result.stdout).toMatch(/│ combo +│ off +│/);
+    expect(result.stdout).toMatch(/│ pstack +│ off +│/);
     expect(result.stdout).toMatch(/Stored: .*\.tersio\/settings\.json/);
     expect(result.stdout).toMatch(/\[dry-run\] would set defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on\)/);
     expect(readLock(home).comboDefault, "dry-run must not write").toBe("off");
