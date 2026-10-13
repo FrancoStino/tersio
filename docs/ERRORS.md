@@ -164,3 +164,11 @@ The eight entries below are editing and verification discipline. No test, lint r
 **Root cause:** The skip needs two conditions, `isPiProcess() && piHasUpstreamPonytail()`. The test set the env var and left `PI_CODING_AGENT_DIR` unset, so the second condition read `$HOME/.pi/agent` for a marker file. This machine has the pi Ponytail extension installed, so the marker existed and the skip fired. A CI runner has no `~/.pi`, so the hook fell back to injecting Ponytail and the assertion failed. The test proved that a marker existed somewhere on the machine, not that the code read one.
 
 **Prevention rule:** A test that asserts on an on-disk condition must pin the path it reads. Redirect the directory the code resolves, or the test measures the developer's machine. Reproduce a CI-only failure by running the file with an empty `HOME` before touching the code; the same empty `HOME` then proves the fix.
+
+## 2026-10-14 — A test read a package file the install had already pruned
+
+**What happened:** A new assertion read `.omp/plugins/node_modules/@krtclcdy/tersio/package.json` after spawning the real installer into a temp home, and it failed with ENOENT on a home the same test had planted that file into moments before.
+
+**Root cause:** The planted home held Tersio and no Ponytail, so `stepPonytail` found no `pi-extension/index.js`, took the slow path, and ran `npm install` over the plugins directory. A package with no lockfile entry behind it is pruned by that install, and with no registry reachable it is not restored, so the planted manifest was gone by the time the assertion ran. The install's own writes survived only because they recreate `extensions/` after the package step.
+
+**Prevention rule:** A test that spawns the installer asserts on files the install writes, never on files the test planted beside them. Assert a package manifest through the repair path (`tersio doctor --fix extensions`), which runs no package manager, and treat any dependency on npm or bun as a host condition to pin rather than one to assume.
