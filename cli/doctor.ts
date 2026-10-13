@@ -206,15 +206,14 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     check(host.label, true, `${kind} ${PACKAGE_NAME}${host.version ? ` ${host.version}` : ''}`);
   }
 
-  // A manager that lost its daemonized process reads stopped, while the orphan still holds the port.
+  // A healthy service adds no row: the host row already names the install with its version, and
+  // this row earns its place only when the manager's report and the live process disagree.
   if (opencodeService) {
     const running = serviceRunning(opencodeService.status);
     if (!running && opencodeService.live) {
       warnLine('OpenCode service', `a serve process is alive but the service reads ${opencodeService.status} — run: tersio doctor --fix service`);
     } else if (running && !opencodeService.live) {
       warnLine('OpenCode service', 'the service reports running but no serve process is alive — run: tersio doctor --fix service');
-    } else {
-      check('OpenCode service', true, opencodeService.status);
     }
   }
 

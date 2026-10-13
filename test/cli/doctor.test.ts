@@ -693,7 +693,7 @@ test("doctor warns when a serve process outlives the service manager", () => {
   }
 });
 
-// A service that answers with its URL reads healthy, and the row carries that URL.
+// A service that answers with its URL reads healthy, and a healthy service adds no row.
 test("doctor stays silent when the opencode service answers with its URL", () => {
   const home = missingHome();
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-ok-"));
@@ -701,9 +701,27 @@ test("doctor stays silent when the opencode service answers with its URL", () =>
     const bin = fakeOpencode(dir, "http://127.0.0.1:49374", ["4242"]);
     const result = runDoctor(home, bin);
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/OpenCode service: ok http:\/\/127\.0\.0\.1:49374/);
+    expect(result.stdout).not.toMatch(/OpenCode service/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The pstack body is a Tersio fork with no remote, so the row proves it is usable rather than current.
+test("doctor checks the pstack rule body", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-pstack-body-"));
+  try {
+    const pkg = seedPluginPackage(home);
+    const ok = runDoctor(home, path.join(home, "empty-bin"));
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(ok.stdout).toMatch(/pstack rule: ok/);
+
+    // A truncated body is the failure the check exists for: it would read to the model as the real one.
+    writeFileSync(path.join(pkg, "extensions", "pstack", "rule.md"), "# pstack\n\n", "utf8");
+    const broken = runDoctor(home, path.join(home, "empty-bin"));
+    expect(broken.stdout).toMatch(/pstack rule\.md: warn unusable body \(truncated/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
