@@ -106,7 +106,8 @@ function detect(agentDir = piAgentDir()): HostEntry[] {
     const pkgDir = host.id === 'omp' ? ompPackageDir() : host.id === 'pi' ? piPackageDir(agentDir) : null;
     const tree = hostExtensionsDir(host.id, agentDir);
     // A tree wins: it is what the installer writes, and it carries no package.json, so its version is ours.
-    const via = missingTreeFiles(host.id, agentDir).length === 0
+    // OpenCode keeps no package to fall back to, so a present tree is the install; its drifted files get the per-host warning instead.
+    const via = missingTreeFiles(host.id, agentDir).length === 0 || (host.id === 'opencode' && existsSync(tree))
       ? 'tree'
       : pkgDir && existsSync(pkgDir) ? 'package' : null;
     return {
