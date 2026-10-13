@@ -1,7 +1,8 @@
 // Fixtures for the three schemas the aggregate reads: the usage store, omp's quota db, and a session journal.
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { sqliteExec } from '../../extensions/shared/sqlite.ts';
 
 /** The usage store, as `usage-store.ts` writes it. */
 const STORE_SCHEMA = `
@@ -97,7 +98,7 @@ export function writeUsageStore(file: string, fixture: { messages: MessageFixtur
         JSON.stringify(m.tools ?? []), 'omp', m.agentType ?? 'main', m.entry,
       ]))),
   ];
-  execFileSync('sqlite3', [file], { input: script.join('\n'), timeout: 30_000 });
+  sqliteExec(file, script.join('\n'));
   return file;
 }
 
@@ -112,7 +113,7 @@ export function writeQuotaDb(file: string, windows: WindowFixture[]): string {
       w.windowLabel ?? null, w.usedFraction ?? null, w.status ?? null, w.resetsAt ?? null,
     ]),
   )];
-  execFileSync('sqlite3', [file], { input: script.join('\n'), timeout: 30_000 });
+  sqliteExec(file, script.join('\n'));
   return file;
 }
 

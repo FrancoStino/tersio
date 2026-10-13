@@ -64,7 +64,7 @@ async function brandDataUri(): Promise<string> {
 /** The range a page opens on, matching the reference dashboard. */
 const DEFAULT_AGENT_RANGE: RangeKey = '24h';
 
-/** Poll memo TTL: the aggregate spawns sqlite3 per query group, so a repeat poll reuses it. */
+/** Poll memo TTL: every poll re-reads the aggregate, so a repeat poll reuses the last answer. */
 const AGENT_REFRESH_MS = 5000;
 
 /** A sync walks every transcript, so it runs at most this often even while a poll outruns it. */
@@ -548,7 +548,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       } catch { body = {}; }
       const action = String(body.action ?? '');
       const name = String(body.name ?? '');
-      // A missing sqlite3, or a locked file, is a 500 with a message rather than a silent no-op.
+      // A missing SQLite engine, or a locked file, is a 500 with a message rather than a silent no-op.
       try {
         if (action === 'create') {
           const made = await createDataBackup();

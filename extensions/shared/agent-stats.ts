@@ -1,9 +1,8 @@
-// Read-only aggregate over the usage store; missing sqlite3, table, or metric reads as zeros.
-import { execFileSync } from 'node:child_process';
+// Read-only aggregate over the usage store; missing SQLite, table, or metric reads as zeros.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SQLITE_READ_BUFFER } from './usage-ledger.ts';
+import { sqliteRead } from './sqlite.ts';
 import { usageDbPath } from './usage-store.ts';
 
 export type RangeKey = '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
@@ -536,71 +535,20 @@ export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
   };
 }
 
-/** WAL fallbacks: `-readonly` needs `-shm`, `immutable=1` ignores the WAL, then a db+wal+shm copy. */
+/** Rows from a read-only script, tab-separated: whichever engine this host has answers it. */
 export function sqliteScript(db: string, script: string): string {
-  if (!fs.existsSync(db)) throw new Error(`missing database: ${db}`);
-  const opts = {
-    encoding: 'utf8' as const,
-    timeout: 30_000,
-    stdio: ['pipe', 'pipe', 'ignore'] as ['pipe', 'pipe', 'ignore'],
-    maxBuffer: SQLITE_READ_BUFFER,
-    input: script,
-  };
-  try {
-    return execFileSync('sqlite3', ['-separator', '\t', '-readonly', db], opts);
-  } catch { /* the side files may be gone; try the next rung */ }
-  if (!fs.existsSync(`${db}-wal`)) {
-    try {
-      return execFileSync('sqlite3', ['-separator', '\t', `file:${db}?immutable=1`], opts);
-    } catch { /* fall through to the copy */ }
-  }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tersio-omp-'));
-  const target = path.join(dir, path.basename(db));
-  try {
-    fs.copyFileSync(db, target);
-    for (const suffix of ['-wal', '-shm']) {
-      if (fs.existsSync(`${db}${suffix}`)) fs.copyFileSync(`${db}${suffix}`, `${target}${suffix}`);
-    }
-    return execFileSync('sqlite3', ['-separator', '\t', '-readonly', target], opts);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  return sqliteRead(db, script);
 }
 
-const BLOCK = '@@blk@@';
-
-function blocks(out: string): Map<string, string[][]> {
+/** One call per query: an unavailable table leaves its key absent, so a partial schema still reads. */
+function readBlocks(db: string, queries: Array<[name: string, sql: string]>): Map<string, string[][]> {
   const map = new Map<string, string[][]>();
-  let current: string[][] | null = null;
-  for (const line of out.split('\n')) {
-    if (!line) continue;
-    if (line.startsWith(BLOCK)) {
-      current = [];
-      map.set(line.slice(BLOCK.length), current);
-      continue;
-    }
-    if (current) current.push(line.split('\t'));
+  for (const [name, sql] of queries) {
+    try {
+      map.set(name, sqliteScript(db, sql).split('\n').filter((line) => line.trim()).map((line) => line.split('\t')));
+    } catch { /* an unavailable table leaves its key absent */ }
   }
   return map;
-}
-
-/** One sqlite3 call for many queries; a failure aborts the script, so only the missing blocks re-run. */
-function readBlocks(db: string, queries: Array<[name: string, sql: string]>): Map<string, string[][]> {
-  const script = queries.map(([name, sql]) => `SELECT '${BLOCK}${name}';\n${sql};\n`).join('');
-  try {
-    return blocks(sqliteScript(db, script));
-  } catch (error) {
-    // A failing statement aborts the script, so its stdout holds every block that ran.
-    if (!error || typeof error !== 'object' || !('stdout' in error) || typeof error.stdout !== 'string') throw error;
-    const merged = blocks(error.stdout);
-    for (const [name, sql] of queries) {
-      if (merged.has(name)) continue;
-      try {
-        for (const [k, rows] of blocks(sqliteScript(db, `SELECT '${BLOCK}${name}';\n${sql};\n`))) merged.set(k, rows);
-      } catch { /* an unavailable table leaves its key absent */ }
-    }
-    return merged;
-  }
 }
 
 function tableColumns(db: string, table: string): Set<string> {

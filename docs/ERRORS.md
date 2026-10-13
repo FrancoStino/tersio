@@ -172,3 +172,19 @@ The eight entries below are editing and verification discipline. No test, lint r
 **Root cause:** The planted home held Tersio and no Ponytail, so `stepPonytail` found no `pi-extension/index.js`, took the slow path, and ran `npm install` over the plugins directory. A package with no lockfile entry behind it is pruned by that install, and with no registry reachable it is not restored, so the planted manifest was gone by the time the assertion ran. The install's own writes survived only because they recreate `extensions/` after the package step.
 
 **Prevention rule:** A test that spawns the installer asserts on files the install writes, never on files the test planted beside them. Assert a package manifest through the repair path (`tersio doctor --fix extensions`), which runs no package manager, and treat any dependency on npm or bun as a host condition to pin rather than one to assume.
+
+## 2026-10-14 — A delegated mechanical rewrite emitted half the call it replaced
+
+**What happened:** Two sweeps replacing `execFileSync("sqlite3", [db, sql])` with `sqliteExec(db, sql)` left the old argument array's closing bracket behind: three sites in `test/cli/usage.test.ts`, four in `test/extensions/rtk.test.ts`. Both files stopped parsing, so vitest collected zero tests from each and reported the whole file as failed. A third sweep dropped a `cost: 0.5` field from a fixture object it was only meant to leave alone, and the assertion it fed read 0 where it expected 0.5.
+
+**Root cause:** The rewrite deleted an opening bracket and one key-value line but re-emitted the surrounding span from memory, so a closer with nothing to close, and a field with no writer, both survived. Reviewing the diff for the intended change is not the same as reading the span that was re-emitted.
+
+**Prevention rule:** A mechanical rewrite keeps every bracket and every field it did not explicitly name. After a sweep, load every touched file (`bun run test <path>` transforms it, so a parse error surfaces) and check that only the named call sites moved.
+
+## 2026-10-14 — `bun run check` was green over a test file that did not parse
+
+**What happened:** `bun run check` (`tsc --noEmit`) reported clean while `test/cli/usage.test.ts` held the syntax error above. The typecheck had no opinion about a file that could not be tokenized.
+
+**Root cause:** The root tsconfig does not include `test/`, so test files sit outside the check. The only gate that reads them is vitest's transform.
+
+**Prevention rule:** After editing anything under `test/`, run `bun run test` or the one file. `bun run check` says nothing about test files; `bun run verify` is the pair that covers both.

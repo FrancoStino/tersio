@@ -1,8 +1,9 @@
 // Usage ledger: append-only JSON lines, read by the CLI, `/tersio`, and the Dashboard. Corrupt lines are skipped.
 import fs from 'node:fs';
 import path from 'node:path';
-import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
 import { execFileSync } from 'node:child_process';
+import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
+import { sqliteRead } from './sqlite.ts';
 
 export type UsageKind = 'command' | 'toggle' | 'install' | 'update' | 'rtk-audit';
 
@@ -210,7 +211,7 @@ export interface OpencodeDbRow {
   tools?: string;
 }
 
-// `message` vs `session_message`: read scalars only, since the blob's newlines split in the sqlite3 CLI.
+// `message` vs `session_message`: read scalars only, since the blob's newlines break the row-per-line output.
 const OC_DB_ORDER = ' ORDER BY time_created;';
 const OC_DB_COLUMNS =
   'json_extract(data,\'$.time.created\'), json_extract(data,\'$.time.streamed\'), json_extract(data,\'$.time.completed\'),' +
@@ -229,18 +230,14 @@ const ocDbCurrent = (since: number): string =>
 // A re-scan window covers tokens that land after the row was created, so a late fill is not lost.
 export const OPENCODE_DB_OVERLAP_MS = 3_600_000;
 
-// execFileSync caps output at 1MB; a busy table clears it in one SELECT.
-export const SQLITE_READ_BUFFER = 50 * 1024 * 1024;
-
-// Empty when sqlite3 is absent or the db is unreadable; that is a sync skip, not a failure.
+// Empty when no SQLite is available or the db is unreadable; that is a sync skip, not a failure.
 export function readOpencodeDbRows(db: string, sinceMs: number): OpencodeDbRow[] {
   if (!Number.isFinite(sinceMs)) return [];
   try {
     if (!fs.existsSync(db)) return [];
     const since = Math.max(0, Math.floor(sinceMs));
     // Separate calls: a db holding only one table must not cancel the other.
-const run = (sql: string): string =>
-  execFileSync('sqlite3', ['-separator', '\t', '-readonly', db, sql], { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: SQLITE_READ_BUFFER });
+    const run = (sql: string): string => sqliteRead(db, sql);
 let out = '';
 try { out += run(ocDbLegacy(since)); } catch { /* no legacy table or unreadable */ }
 try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or unreadable */ }

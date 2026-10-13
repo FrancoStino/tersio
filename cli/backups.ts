@@ -2,8 +2,9 @@
 
 import { promises as fs } from 'node:fs';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+
+import { sqliteExec } from '../extensions/shared/sqlite.ts';
 
 import { agentDbPath, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { rtkDbPath } from '../extensions/shared/rtk-gain.ts';
@@ -134,9 +135,9 @@ function totalOf(dir: string): number {
 /** Put the sqlite ledger's write-ahead log back in the main file, so a copy is one whole database. */
 function checkpointLedger(): void {
   try {
-    execFileSync('sqlite3', [usageDbPath(), 'PRAGMA wal_checkpoint(TRUNCATE);'], { stdio: 'ignore', timeout: 10_000 });
+    sqliteExec(usageDbPath(), 'PRAGMA wal_checkpoint(TRUNCATE);');
   } catch {
-    /* no sqlite3, or no ledger: the plain file copy is the best available */
+    /* no SQLite on this host, or no ledger: the plain file copy is the best available */
   }
 }
 

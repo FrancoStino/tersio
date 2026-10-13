@@ -15,7 +15,9 @@ import {
   priceFor,
   refreshPrices,
 } from "../../extensions/shared/pricing.ts";
+import { sqliteEngine, sqliteExec, sqliteRead } from "../../extensions/shared/sqlite.ts";
 import { canonicalModelId, usdCost } from "../../extensions/shared/usage-ledger.ts";
+import { hasSqlite } from "../helpers/env.ts";
 
 function setEnv(vars: Record<string, string | undefined>): Record<string, string | undefined> {
   const prev: Record<string, string | undefined> = {};
@@ -352,4 +354,29 @@ test("usdCost calls only a firm tier priced", () => {
     expect(missing.tier).toBe("default");
     expect(missing.priced).toBe(false);
   });
+});
+
+// A reader keyed by column name collapses a repeated name and shifts every later cell, so the adapter
+// must answer positionally, the way the sqlite3 CLI did.
+test.skipIf(!hasSqlite())("the sqlite adapter keeps cells positional, whichever engine answers", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-sqlite-"));
+  const db = path.join(dir, "shape.db");
+  const before = process.env.TERSIO_SQLITE;
+  const sql = "SELECT a, b AS first, b FROM t ORDER BY b;";
+  try {
+    delete process.env.TERSIO_SQLITE;
+    sqliteExec(db, "CREATE TABLE t (a TEXT, b INTEGER); INSERT INTO t VALUES ('x', 1), (NULL, 2);");
+    const viaEngine = sqliteRead(db, sql);
+    // NULL is one empty cell, cells join on tabs, and the output ends in a single newline.
+    expect(viaEngine).toBe("x\t1\t1\n\t2\t2\n");
+    if (sqliteEngine() === "cli") return;
+    process.env.TERSIO_SQLITE = "cli";
+    // With the binary forced, only a host that actually has one still reports the CLI engine.
+    if (sqliteEngine() !== "cli") return;
+    expect(sqliteRead(db, sql)).toBe(viaEngine);
+  } finally {
+    if (before === undefined) delete process.env.TERSIO_SQLITE;
+    else process.env.TERSIO_SQLITE = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

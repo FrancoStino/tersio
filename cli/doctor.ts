@@ -477,7 +477,7 @@ function statsIndexLag(): string | null {
     const when = relTime(Date.now() - statSync(statsDb).mtimeMs);
     return `${shortBytes(worstBytes)} of ${path.basename(freshest)} unread, last written ${when === 'just now' ? 'moments ago' : when} — run: omp stats`;
   } catch {
-    return null; // no sqlite3, or an unreadable index: nothing to report
+    return null; // no SQLite engine, or an unreadable index: nothing to report
   }
 }
 

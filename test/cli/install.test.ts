@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { createHash } from "node:crypto";
-import { execFileSync, execSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -29,7 +29,8 @@ import {
 } from "../../extensions/shared/plugin-settings.ts";
 import { readUsageDb, syncUsageDb } from "../../extensions/shared/usage-store.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
-import { cliEnv, withHome } from "../helpers/env.ts";
+import { sqliteExec } from "../../extensions/shared/sqlite.ts";
+import { cliEnv, hasSqlite, withHome } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -610,15 +611,6 @@ test("opencode install retires the legacy `-session` and `-toggle` dirs", () => 
 }, 150000);
 
 // OpenCode v2 stores one row per message in sqlite and no longer writes the JSON tree.
-function hasSqlite(): boolean {
-  try {
-    execSync("command -v sqlite3", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const SCHEMA = `CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
 CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);`;
 
@@ -630,7 +622,7 @@ function seed(dir: string, rows: Array<{ id: string; created: number; data: Reco
       `INSERT INTO message VALUES ('${r.id}','ses_a',${r.created},${r.created},'${JSON.stringify(r.data).replace(/'/g, "''")}');`,
     );
   }
-  execFileSync("sqlite3", [db, sql.join("")], { timeout: 30000 });
+  sqliteExec(db, sql.join(""));
   return db;
 }
 
@@ -644,7 +636,7 @@ function seedCurrent(dir: string, rows: Array<{ id: string; created: number; dat
       `INSERT INTO session_message VALUES ('${r.id}','ses_a','${type}',1,${r.created},${r.created},'${JSON.stringify(r.data).replace(/'/g, "''")}');`,
     );
   }
-  execFileSync("sqlite3", [db, sql.join("")], { timeout: 30000 });
+  sqliteExec(db, sql.join(""));
   return db;
 }
 
@@ -792,7 +784,7 @@ test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads 
   try {
     mkdirSync(path.join(dir, "sessions"), { recursive: true });
     const db = path.join(dir, "opencode-big.db");
-    execFileSync("sqlite3", [db, SCHEMA.split("\n")[1]], { timeout: 30000 });
+    sqliteExec(db, SCHEMA.split("\n")[1]);
     // Long model ids push each row past ~500 bytes, so 2500 rows clear 1MB.
     const bigModel = `bench-${"m".repeat(400)}`;
     const base = 1789800000000;
@@ -811,11 +803,11 @@ test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads 
       );
       if (rows.length >= 500) {
         // Via stdin: Linux caps one argv string at 128KB (E2BIG), input has no such cap.
-        execFileSync("sqlite3", [db], { input: rows.join(""), timeout: 30000 });
+        sqliteExec(db, rows.join(""));
         rows.length = 0;
       }
     }
-    if (rows.length) execFileSync("sqlite3", [db], { input: rows.join(""), timeout: 30000 });
+    if (rows.length) sqliteExec(db, rows.join(""));
     withEnv(dir, () => {
       process.env.TERSIO_OPENCODE_DB = db;
       expect(syncUsageDb()).toBe(true);
@@ -845,7 +837,7 @@ test.runIf(hasSqlite())("tool names are read from content parts and backfill a s
 
       // Pre-tools store: every row at `[]` and the marker cleared; one sync must re-read and not double any row.
       const usageDb = process.env.TERSIO_USAGE_DB as string;
-      execFileSync("sqlite3", [usageDb, `UPDATE messages SET tools='[]' WHERE h='opencode'; DELETE FROM meta WHERE k='opencode_tools';`]);
+      sqliteExec(usageDb, `UPDATE messages SET tools='[]' WHERE h='opencode'; DELETE FROM meta WHERE k='opencode_tools';`);
       expect(syncUsageDb()).toBe(true);
       tokens = readUsageDb()?.tokens;
       expect(tokens?.messages).toBe(2);

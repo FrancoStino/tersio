@@ -1,6 +1,6 @@
 // Usage and report surface: the ledger, store, hosts, tokens, backups, currency, and agent stats.
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +40,7 @@ import {
   usageDbPath,
 } from "../../extensions/shared/usage-store.ts";
 import { errorSignature, readAgentStats, readSessionTrace } from "../../extensions/shared/agent-stats.ts";
+import { sqliteExec, sqliteRead } from "../../extensions/shared/sqlite.ts";
 import {
   BACKUP_KEEP,
   backupDir,
@@ -320,15 +321,15 @@ test.skipIf(!hasSqlite())("the store records every agent Tersio can read", () =>
     }), "utf8");
     // OpenCode v2: rows in sqlite, both table shapes, read through their own path.
     const ocDb = path.join(dir, "opencode", "opencode.db");
-    execFileSync("sqlite3", [ocDb, "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);"], { timeout: 30000 });
+    sqliteExec(ocDb, "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);");
     const created = Date.parse("2026-03-04T10:00:00.000Z");
-    execFileSync("sqlite3", [ocDb,
+    sqliteExec(ocDb,
       `INSERT INTO session_message VALUES ('r1','s','assistant',1,${created},${created},'${JSON.stringify({
         model: { providerID: "kimi", id: "kimi-k2.5" },
         tokens: { input: 40, output: 25, cache: { read: 15, write: 0 } },
         time: { created },
         cost: 0.5,
-      }).replace(/'/g, "''")}');`], { timeout: 30000 });
+      }).replace(/'/g, "''")}');`);
 
     withHome(dir, () => {
       expect(syncUsageDb()).toBe(true);
@@ -358,17 +359,15 @@ test.skipIf(!hasSqlite())("the reads the page needs are indexed", () => {
     writeTranscript(path.join(dir, ".omp", "agent", "sessions"), "a.jsonl", "claude-opus-4", { input: 10, output: 5 }, "2026-03-01T10:00:00.000Z");
     withHome(dir, () => {
       expect(syncUsageDb()).toBe(true);
-      const names = execFileSync(
-        "sqlite3",
-        ["-readonly", usageDbPath(), "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_messages%';"],
-        { encoding: "utf8", timeout: 30000 },
+      const names = sqliteRead(
+        usageDbPath(),
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_messages%';",
       ).split("\n").map((line) => line.trim()).filter(Boolean).toSorted();
       expect(names).toEqual(["idx_messages_file", "idx_messages_h_t", "idx_messages_model", "idx_messages_t"]);
       // The watermark the sync reads is the one the index serves.
-      const plan = execFileSync(
-        "sqlite3",
-        ["-readonly", usageDbPath(), "EXPLAIN QUERY PLAN SELECT MAX(t) FROM messages WHERE h='opencode';"],
-        { encoding: "utf8", timeout: 30000 },
+      const plan = sqliteRead(
+        usageDbPath(),
+        "EXPLAIN QUERY PLAN SELECT MAX(t) FROM messages WHERE h='opencode';",
       );
       expect(plan).toMatch(/SEARCH messages USING (COVERING )?INDEX/);
     });
@@ -413,13 +412,13 @@ test.skipIf(!hasSqlite())("OpenCode first-token latency reaches the store", () =
     const streamed = created + 1200;
     const ocDb = path.join(dir, "opencode", "opencode.db");
     mkdirSync(path.dirname(ocDb), { recursive: true });
-    execFileSync("sqlite3", [ocDb, "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);"], { timeout: 30000 });
-    execFileSync("sqlite3", [ocDb,
+    sqliteExec(ocDb, "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);");
+    sqliteExec(ocDb,
       `INSERT INTO session_message VALUES ('r1','s','assistant',1,${created},${created},'${JSON.stringify({
         model: { providerID: "deepseek", id: "deepseek-v4.1-flash" },
         tokens: { input: 40, output: 25, cache: { read: 15, write: 0 } },
         time: { created, streamed, completed: created + 4000 },
-      }).replace(/'/g, "''")}');`], { timeout: 30000 });
+      }).replace(/'/g, "''")}');`);
 
     withHome(dir, () => {
       expect(syncUsageDb()).toBe(true);
@@ -632,7 +631,7 @@ test.skipIf(!hasSqlite())("migration guard restores the backup when transcripts 
       }
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(6);
-      execFileSync("sqlite3", [process.env.TERSIO_USAGE_DB!, "UPDATE meta SET v='__old__' WHERE k='parser_version';"]);
+      sqliteExec(process.env.TERSIO_USAGE_DB!, "UPDATE meta SET v='__old__' WHERE k='parser_version';");
       rmSync(path.join(dir, "sessions", "a.jsonl"));
       rmSync(path.join(dir, "sessions", "b.jsonl"));
       expect(syncUsageDb()).toBe(false);
@@ -641,7 +640,7 @@ test.skipIf(!hasSqlite())("migration guard restores the backup when transcripts 
       process.env.TERSIO_FORCE_REPARSE = "1";
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(2);
-      expect(execFileSync("sqlite3", [process.env.TERSIO_USAGE_DB!, "PRAGMA freelist_count;"], { encoding: "utf8" }).trim()).toBe("0");
+      expect(sqliteRead(process.env.TERSIO_USAGE_DB!, "PRAGMA freelist_count;").trim()).toBe("0");
     });
   } finally {
     if (prevForce === undefined) delete process.env.TERSIO_FORCE_REPARSE;
@@ -666,7 +665,7 @@ test.skipIf(!hasSqlite())("a store from a newer tersio keeps its rows instead of
       expect(readUsageDb()?.tokens.messages).toBe(6);
       const backupsBefore = listUsageBackups().length;
       // A newer tersio wrote the store; this build cannot migrate it forward.
-      execFileSync("sqlite3", [db, "UPDATE meta SET v='99' WHERE k='parser_version';"]);
+      sqliteExec(db, "UPDATE meta SET v='99' WHERE k='parser_version';");
       rmSync(path.join(dir, "sessions", "a.jsonl"));
       rmSync(path.join(dir, "sessions", "b.jsonl"));
       expect(syncUsageDb()).toBe(true);
@@ -674,7 +673,7 @@ test.skipIf(!hasSqlite())("a store from a newer tersio keeps its rows instead of
       expect(reparseGuardReport()).toMatch(/written by a newer tersio/);
       // No backup was taken and none was restored: the wipe path never ran.
       expect(listUsageBackups().length).toBe(backupsBefore);
-      expect(execFileSync("sqlite3", [db, "SELECT v FROM meta WHERE k='parser_version';"], { encoding: "utf8" }).trim()).toBe("99");
+      expect(sqliteRead(db, "SELECT v FROM meta WHERE k='parser_version';").trim()).toBe("99");
       // The force switch still accepts the loss on demand.
       process.env.TERSIO_FORCE_REPARSE = "1";
       expect(syncUsageDb()).toBe(true);
@@ -702,7 +701,7 @@ test.skipIf(!hasSqlite())("v9 databases migrate in place without re-parsing tran
         ].join("\n") + "\n",
         "utf8",
       );
-      execFileSync("sqlite3", [db, [
+      sqliteExec(db, [
         `CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
         `CREATE TABLE files (path TEXT PRIMARY KEY, mtime REAL NOT NULL, size INTEGER NOT NULL);`,
         `CREATE TABLE messages (file TEXT NOT NULL, t REAL, model TEXT NOT NULL,` +
@@ -712,12 +711,12 @@ test.skipIf(!hasSqlite())("v9 databases migrate in place without re-parsing tran
         `INSERT INTO messages VALUES ('${file}',1,'m',10,1,NULL,0,0,NULL,'completed',NULL,NULL,'[]','pi');`,
         `INSERT INTO messages VALUES ('${file}',2,'m',20,2,NULL,0,0,NULL,'completed',NULL,NULL,'[]','pi');`,
         `INSERT INTO meta VALUES ('parser_version','9');`,
-      ].join("")]);
+      ].join(""));
       rmSync(file);
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(2);
       expect(reparseGuardReport()).toBe(null);
-      const schema = execFileSync("sqlite3", [db, "SELECT sql FROM sqlite_master WHERE name='messages';"], { encoding: "utf8" });
+      const schema = sqliteRead(db, "SELECT sql FROM sqlite_master WHERE name='messages';");
       expect(schema).toMatch(/file_id/);
     });
   } finally {
@@ -737,7 +736,7 @@ test.skipIf(!hasSqlite())("v10 databases gain the id column without re-parsing",
         `{"timestamp":"2026-09-01T10:00:00.000Z","type":"message","id":"row-1","message":{"role":"assistant","model":"m","usage":{"input":10,"output":1}}}\n`,
         "utf8",
       );
-      execFileSync("sqlite3", [db, [
+      sqliteExec(db, [
         `CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
         `CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);`,
         `CREATE TABLE messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
@@ -747,12 +746,12 @@ test.skipIf(!hasSqlite())("v10 databases gain the id column without re-parsing",
         `INSERT INTO messages (file_id, t, model, i, o, d, cr, cw, usd, st, code, note, tools, h)` +
         ` VALUES (1,1,'m',10,1,NULL,0,0,NULL,'completed',NULL,NULL,'[]','pi');`,
         `INSERT INTO meta VALUES ('parser_version','10');`,
-      ].join("")]);
+      ].join(""));
       rmSync(file);
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(1);
-      const cols = execFileSync("sqlite3", [db, "PRAGMA table_info(messages);"], { encoding: "utf8" });
-      expect(cols).toMatch(/[,|]id[,|]/);
+      const cols = sqliteRead(db, "PRAGMA table_info(messages);");
+      expect(cols).toMatch(/\tid\t/);
       expect(reparseGuardReport()).toBe(null);
     });
   } finally {
@@ -772,7 +771,7 @@ test.skipIf(!hasSqlite())("v12 databases gain the ttft column and backfill it fr
         `{"timestamp":"2026-09-01T10:00:00.000Z","message":{"role":"assistant","model":"m","duration":4000,"ttft":900,"usage":{"input":10,"output":1}}}\n`,
         "utf8",
       );
-      execFileSync("sqlite3", [db, [
+      sqliteExec(db, [
         `CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
         `CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size REAL NOT NULL);`,
         `CREATE TABLE messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
@@ -782,13 +781,13 @@ test.skipIf(!hasSqlite())("v12 databases gain the ttft column and backfill it fr
         `INSERT INTO messages (file_id, t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, a, id)` +
         ` VALUES (1,1,'m',10,1,4000,0,0,NULL,'completed',NULL,NULL,'[]','pi','main','row-1');`,
         `INSERT INTO meta VALUES ('parser_version','12');`,
-      ].join("")]);
+      ].join(""));
 
       // The column arrives and the transcript is re-read once so existing rows gain latency, not NULL.
       expect(syncUsageDb()).toBe(true);
-      const cols = execFileSync("sqlite3", [db, "PRAGMA table_info(messages);"], { encoding: "utf8" });
-      expect(cols).toMatch(/[,|]tf[,|]/);
-      const latencies = execFileSync("sqlite3", [db, "SELECT CAST(tf AS INTEGER) FROM messages;"], { encoding: "utf8" }).trim();
+      const cols = sqliteRead(db, "PRAGMA table_info(messages);");
+      expect(cols).toMatch(/\ttf\t/);
+      const latencies = sqliteRead(db, "SELECT CAST(tf AS INTEGER) FROM messages;").trim();
       expect(latencies).toBe("900");
       // No row is lost and the guard never trips: the ALTER moves nothing.
       expect(readUsageDb()?.tokens.messages).toBe(1);

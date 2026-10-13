@@ -1,8 +1,8 @@
 // Savings read from rtk history, never estimated; modes bench in docs/BENCHMARK.md.
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sqliteRead } from './sqlite.ts';
 
 export interface RtkCommandRow {
   command: string;
@@ -23,7 +23,7 @@ export interface RtkGain {
 
 const EMPTY: RtkGain = { commands: 0, saved: 0, input: 0, avgPct: 0, totalMs: 0, byCommand: [] };
 
-// The table shows one clipped cell, so bound the command before it crosses the sqlite3 CLI and lands in /data.json.
+// The table shows one clipped cell, so bound the command before it reaches /data.json.
 const MAX_CMD_CHARS = 200;
 
 // A multi-line stored command would derail every row after it; flatten on read.
@@ -40,12 +40,7 @@ export function rtkDbPath(): string {
 }
 
 function query(db: string, sql: string): string[][] {
-  const out = execFileSync('sqlite3', ['-separator', '\t', db, sql], {
-    encoding: 'utf8',
-    timeout: 5000,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  return out
+  return sqliteRead(db, sql)
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => line.split('\t'));

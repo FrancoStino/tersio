@@ -1,11 +1,10 @@
-// usage-store.ts — tersio-owned usage.db. A cache of the live parse, not a fork; no sqlite3 → sync false / read null.
-import { execFileSync } from 'node:child_process';
+// usage-store.ts — tersio-owned usage.db. A cache of the live parse, not a fork; no SQLite → sync false / read null.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sqliteExec, sqliteRead } from './sqlite.ts';
 import {
   RECENT_LIMIT,
-  SQLITE_READ_BUFFER,
   canonicalModelId,
   classifySessionLine,
   classifyOpencodeMessage,
@@ -56,19 +55,13 @@ function nullStr(v: string | undefined): string {
   return v === undefined ? 'NULL' : esc(v);
 }
 
+// A failed INSERT stops before COMMIT, so it leaves no DELETEs behind.
 function run(db: string, sql: string): void {
-  // -bail stops the script before COMMIT, so a failed INSERT never leaves DELETEs behind.
-  execFileSync('sqlite3', ['-bail', db, sql], { stdio: ['ignore', 'ignore', 'ignore'], timeout: 30000 });
+  sqliteExec(db, sql);
 }
 
 function query(db: string, sql: string): string[][] {
-  const out = execFileSync('sqlite3', ['-separator', '\t', db, sql], {
-    encoding: 'utf8',
-    timeout: 30000,
-    stdio: ['ignore', 'pipe', 'ignore'],
-    maxBuffer: SQLITE_READ_BUFFER,
-  });
-  return out
+  return sqliteRead(db, sql)
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => line.split('\t'));
