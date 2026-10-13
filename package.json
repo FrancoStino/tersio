@@ -160,6 +160,6 @@
   "dependencies": {
     "@clack/core": "^1.5.1",
     "@clack/prompts": "^1.8.0",
-    "@dietrichgebert/ponytail": "^5.1.0"
+    "@dietrichgebert/ponytail": "^5.2.0"
   }
 }
