@@ -1,4 +1,5 @@
 // Pins the pi agent vars with a temp HOME, so a spawned CLI cannot delete the real ~/.pi/agent.
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,11 @@ import { sqliteAvailable } from '../../extensions/shared/sqlite.ts';
 /** The store reads SQLite in process, or falls back to the binary; tests skip when neither exists. */
 export function hasSqlite(): boolean {
   return sqliteAvailable();
+}
+
+/** Bun carries the in-process SQLite the CLI prefers, so a check that spawns it skips without one. */
+export function hasBun(): boolean {
+  return spawnSync('bun', ['--version'], { stdio: 'ignore' }).status === 0;
 }
 
 export function cliEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {

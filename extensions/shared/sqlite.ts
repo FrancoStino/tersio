@@ -5,6 +5,10 @@
 // CLI printed them -- rows on their own lines, cells joined by tabs, NULL an empty cell, one trailing
 // newline -- because every caller already parses that shape. The engine rungs take one statement per
 // read, so a caller with several queries calls once per query.
+//
+// The write path leaves the journal mode alone. The store's own schema sets WAL so a reader (the
+// dashboard) never blocks a writer, and changing the mode needs exclusive access: with a reader holding
+// the file the pragma fails, which is a failure reported after the caller's rows have already committed.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';

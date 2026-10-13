@@ -1,8 +1,10 @@
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   SERVING_CONCURRENCY,
@@ -17,7 +19,7 @@ import {
 } from "../../extensions/shared/pricing.ts";
 import { sqliteEngine, sqliteExec, sqliteRead } from "../../extensions/shared/sqlite.ts";
 import { canonicalModelId, usdCost } from "../../extensions/shared/usage-ledger.ts";
-import { hasSqlite } from "../helpers/env.ts";
+import { hasBun, hasSqlite } from "../helpers/env.ts";
 
 function setEnv(vars: Record<string, string | undefined>): Record<string, string | undefined> {
   const prev: Record<string, string | undefined> = {};
@@ -377,6 +379,84 @@ test.skipIf(!hasSqlite())("the sqlite adapter keeps cells positional, whichever 
   } finally {
     if (before === undefined) delete process.env.TERSIO_SQLITE;
     else process.env.TERSIO_SQLITE = before;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The adapter opens and closes a connection per call, so this holds a second one to stand in for the
+// reader another process keeps: the dashboard reads the store while a sync writes to it.
+function heldConnection(db: string): { exec(sql: string): void; rows(sql: string): number; close(): void } {
+  const load = createRequire(import.meta.url);
+  try {
+    const { Database } = load("bun:sqlite") as {
+      Database: new (db: string) => { exec(sql: string): void; query(sql: string): { all(): unknown[] }; close(): void };
+    };
+    const d = new Database(db);
+    return { exec: (sql) => d.exec(sql), rows: (sql) => d.query(sql).all().length, close: () => d.close() };
+  } catch { /* not Bun; Node carries the same engine */ }
+  const { DatabaseSync } = load("node:sqlite") as {
+    DatabaseSync: new (db: string) => { exec(sql: string): void; prepare(sql: string): { all(): unknown[] }; close(): void };
+  };
+  const d = new DatabaseSync(db);
+  return { exec: (sql) => d.exec(sql), rows: (sql) => d.prepare(sql).all().length, close: () => d.close() };
+}
+
+// A reader must not block a writer, and the write path must not move the store out of WAL. The pragma
+// that flipped the mode made a sync throw after its rows had committed, and guarding it left the store
+// in a mode where the next write never landed at all.
+test.skipIf(sqliteEngine() !== "bun" && sqliteEngine() !== "node")(
+  "a write commits while another connection holds a read transaction",
+  () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-concurrent-"));
+    const db = path.join(dir, "usage.db");
+    try {
+      sqliteExec(db, "PRAGMA journal_mode=WAL; CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);");
+      expect(sqliteRead(db, "PRAGMA journal_mode;").trim(), "the store is written in WAL").toBe("wal");
+      const reader = heldConnection(db);
+      try {
+        reader.exec("BEGIN");
+        expect(reader.rows("SELECT a FROM t;"), "the reader holds a snapshot of one row").toBe(1);
+        // The row lands while that snapshot is held: a reader must never block a writer.
+        sqliteExec(db, "INSERT INTO t VALUES (2);");
+        expect(sqliteRead(db, "SELECT count(*) FROM t;").trim(), "the row committed").toBe("2");
+        expect(reader.rows("SELECT a FROM t;"), "the reader keeps its own snapshot").toBe(1);
+      } finally {
+        reader.exec("COMMIT");
+        reader.close();
+      }
+      expect(sqliteRead(db, "PRAGMA journal_mode;").trim(), "the write left the mode alone").toBe("wal");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+// Vitest runs its workers on Node even when Bun starts the suite, so the Bun engine, the one OMP users
+// get in process, is only reachable by spawning Bun. Both rungs must answer byte for byte.
+test.skipIf(!hasBun() || !hasSqlite())("the Bun engine answers exactly as this suite's engine", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-bun-rung-"));
+  const fixture = "CREATE TABLE t (a TEXT, b INTEGER); INSERT INTO t VALUES ('x', 1), (NULL, 2);";
+  const sql = "SELECT a, b AS first, b FROM t ORDER BY b;";
+  try {
+    const localDb = path.join(dir, "local.db");
+    sqliteExec(localDb, fixture);
+    const local = sqliteRead(localDb, sql);
+    const adapter = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../extensions/shared/sqlite.ts");
+    const script = [
+      `import { sqliteEngine, sqliteExec, sqliteRead } from ${JSON.stringify(adapter)};`,
+      `const db = ${JSON.stringify(path.join(dir, "bun.db"))};`,
+      `sqliteExec(db, ${JSON.stringify(fixture)});`,
+      `console.log(JSON.stringify({ engine: sqliteEngine(), tsv: sqliteRead(db, ${JSON.stringify(sql)}) }));`,
+    ].join("\n");
+    const env = { ...process.env };
+    // This test is about the Bun rung, not about whichever rung the suite forced for itself.
+    delete env.TERSIO_SQLITE;
+    const out = spawnSync("bun", ["-e", script], { encoding: "utf8", env });
+    expect(out.status, out.stderr).toBe(0);
+    const answered = JSON.parse(out.stdout) as { engine: string; tsv: string };
+    expect(answered.engine, "Bun answers through bun:sqlite").toBe("bun");
+    expect(answered.tsv, "the Bun rung returns what this suite's engine returns").toBe(local);
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
