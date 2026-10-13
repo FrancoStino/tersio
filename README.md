@@ -4,6 +4,7 @@
 
 [![npm version](https://shieldcn.dev/npm/@krtclcdy%2Ftersio.svg?variant=branded&size=xs&logo=npm)](https://www.npmjs.com/package/@krtclcdy/tersio)
 [![node](https://shieldcn.dev/badge/node-%3E%3D20.12-22c55e.svg?variant=branded&size=xs&logo=nodedotjs)](https://nodejs.org)
+[![bun](https://shieldcn.dev/badge/bun-%3E%3D1.4.2-22c55e.svg?variant=branded&size=xs&logo=bun)](https://bun.sh)
 [![npm downloads](https://shieldcn.dev/npm/dm/@krtclcdy%2Ftersio.svg?variant=branded&size=xs&logo=npm)](https://www.npmjs.com/package/@krtclcdy/tersio)
 [![Build](https://shieldcn.dev/github/ci/KurutoDenzeru/tersio.svg?variant=branded&size=xs&logo=githubactions&label=Build)](https://github.com/KurutoDenzeru/tersio/actions)
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
@@ -52,7 +53,8 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 ### Requirements
 
 - [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — all three are supported; pick one with `tersio install --host <omp|pi|opencode>`
-- Node.js 20.12+ with npm
+- Node.js 20.12+ with npm, or Bun — the CLI runs under either, and the installer prefers Bun when it is present
+- SQLite runs in process where the runtime provides it: Bun always, Node 22.5+ through `node:sqlite`. An older Node uses the `sqlite3` binary instead, and both answer identically
 - macOS or Linux, native or WSL
 
 On Windows, use WSL. There is no native Windows path: the installer, the extensions, and the RTK wiring are tested on macOS and Linux only. WSL has its own home directory, so install from inside WSL — `command -v npm` must resolve to a Linux path, not `/mnt/c/`.

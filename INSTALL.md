@@ -24,7 +24,8 @@ Each host loads its extensions from one place, so the same file never loads twic
 ## Requirements
 
 - OMP, pi, or OpenCode.
-- Node.js 20.12+ with npm.
+- Node.js 20.12+ with npm, or Bun. The installer prefers Bun when it is present.
+- SQLite runs in process where the runtime provides it (Bun, or Node 22.5+); an older Node uses the `sqlite3` binary instead.
 - macOS, Linux, or WSL. Install from the environment where the host runs.
 
 ## After installing

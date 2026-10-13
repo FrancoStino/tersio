@@ -188,3 +188,11 @@ The eight entries below are editing and verification discipline. No test, lint r
 **Root cause:** The root tsconfig does not include `test/`, so test files sit outside the check. The only gate that reads them is vitest's transform.
 
 **Prevention rule:** After editing anything under `test/`, run `bun run test` or the one file. `bun run check` says nothing about test files; `bun run verify` is the pair that covers both.
+
+## 2026-10-14 — A journal-mode flip turned a committed write into a failed one
+
+**What happened:** The SQLite adapter ended every write with `PRAGMA journal_mode=DELETE`, to leave a file that a plain `sqlite3 -readonly` could open. With a reader holding the database, SQLite denies that mode change, so `sqliteExec` threw `database is locked` after the caller's rows had already committed. A sync read the throw as a failure. Guarding the pragma was worse: it succeeded whenever nothing held the file, which moved the store out of WAL, so the next write blocked on a reader's shared lock and its insert never committed.
+
+**Root cause:** The pragma was cosmetic housekeeping for an external tool, placed on the write path of a store whose schema sets WAL for reader/writer concurrency. One global mode, two kinds of connection, and a statement that needs exclusive access to change it.
+
+**Prevention rule:** A write path must not change the database's journal mode. The mode change needs exclusive access and undoes the concurrency the schema asked for. Prove a write path with a reader holding a read transaction, and assert the rows committed, not just that no error was raised.
