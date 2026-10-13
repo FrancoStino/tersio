@@ -263,7 +263,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // A verbatim sentence read out of omp's own prompt, so a re-worded release stops Caveman reaching subagents.
   const subagentGap = subagentMarkerStatus(ompBinary());
   if (subagentGap) warnLine('Caveman subagent marker', subagentGap);
-  // A tree on an older body serves until its install step runs: stale, missing and orphan are one hole.
+  // A tree on an older body serves until its install step runs; debris needs the sweeper instead.
   if (treeStale.length > 0) {
     warnLine('Per-host add-on files',
       `stale in ${treeStale.length} file${treeStale.length === 1 ? '' : 's'}: ${treeStale.slice(0, 6).join(', ')}` +
@@ -277,7 +277,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   if (treeOrphan.length > 0) {
     warnLine('Per-host add-on files',
       `orphaned in ${treeOrphan.length} file${treeOrphan.length === 1 ? '' : 's'}: ${treeOrphan.join(', ')}` +
-      ` — run: tersio install --host <host>`);
+      ` — run: tersio doctor --fix extensions`);
   }
   const rtkAge = rtkMtime ? `(updated ${relTime(Date.now() - rtkMtime.mtimeMs)} · ${absDate(rtkMtime.mtimeMs)})` : '';
   check('RTK binary', rtkBin !== null, rtkBinText === null ? 'not found in PATH' : [rtkVersion, rtkAge].filter(Boolean).join(' '));
