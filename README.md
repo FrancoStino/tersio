@@ -1,6 +1,6 @@
 ![Banner](./docs/Banner.webp)
 
-# ✂️ Tersio — Token Saver OMP & Usage Tracker
+# ✂️ Tersio — Token Saver & Usage Tracker
 
 [![npm version](https://shieldcn.dev/npm/@krtclcdy%2Ftersio.svg?variant=branded&size=xs&logo=npm)](https://www.npmjs.com/package/@krtclcdy/tersio)
 [![node](https://shieldcn.dev/badge/node-%3E%3D20.12-22c55e.svg?variant=branded&size=xs&logo=nodedotjs)](https://nodejs.org)
@@ -9,6 +9,8 @@
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
 
 Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, a pstack rigor mode, and a gain dashboard — one-command combo presets over one shared extension tree.
+
+Measured savings per mode, the prompt overhead each one adds, and the rerun protocol: [docs/BENCHMARK.md](./docs/BENCHMARK.md).
 
 ## ⚡ Getting Started
 
@@ -54,31 +56,6 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 - macOS or Linux, native or WSL
 
 On Windows, use WSL. There is no native Windows path: the installer, the extensions, and the RTK wiring are tested on macOS and Linux only. WSL has its own home directory, so install from inside WSL — `command -v npm` must resolve to a Linux path, not `/mnt/c/`.
-
-## 📊 Benchmarks
-
-Every mode is measured against a base run with all modes off. Measured surfaces use different boundaries. Do not treat reply-text, code-output, and shell-output reductions as total bill savings. **A mode also spends tokens on the prompt, on every turn — read the caveat under the table before choosing.** Results and the rerun protocol are in [docs/BENCHMARK.md](./docs/BENCHMARK.md).
-
-| Mode | Surface (n) | Base → Tersio | Δ |
-|---|---|---|---|
-| `/caveman full` | Terse reply, o200k tokens (3 samples, p50) | 124 → 107 | **−13.7% reply text** |
-| `/caveman ultra` | Terse reply, o200k tokens (3 samples, p50) | 124 → 109 | **−12.1% reply text** |
-| `/ponytail lite` | Code reply, o200k tokens (3 samples, p50) | 306 → 177 | **−42.2% code** |
-| `/ponytail full` | Code reply, o200k tokens (3 samples, p50) | 306 → 208 | **−32.0% code** |
-| `/ponytail ultra` | Code reply, o200k tokens (3 samples, p50) | 306 → 112 | **−63.4% code** |
-| `/combo medium` | Code reply, o200k tokens (3 samples, p50) | 306 → 132 | **−56.9% code** |
-| `/rtk on` — `bun run test` | Command output (3 runs, p50) | 4,003 → 54 | **−98.7% output** |
-| `/rtk on` — `find . -name '*.test.ts'` | Command output (3 runs, p50) | 10,908 → 248 | **−97.7% output** |
-| `/rtk on` — `ls -la .` | Command output (3 runs, p50) | 983 → 275 | **−72.0% output** |
-| `/rtk on` — `git status` | Command output (3 runs, p50) | 72 → 18 | **−75.0% output** |
-| `/rtk on` — `bun run build` | Command output (3 runs, p50) | 140 → 114 | **−18.6% output** |
-
-The two `/caveman` rows above are the exception worth naming: both levels spend more prompt tokens than the reply text they save, so they cost you money on net. Use Caveman for the terser writing style, not as a token saving.
-
-Prompt overhead is included in [docs/BENCHMARK.md](./docs/BENCHMARK.md) with a full prompt-base example. Summary: `/rtk on` pays back immediately, `/ponytail ultra` repays in about 7 code tasks, `/combo medium` in about 8, and every Caveman level costs more in prompt than it saves in reply text. pstack adds 1,374 tokens of prompt per turn, close to Caveman full's 1,158, and has no measured reply-text saving; its rules are trimmed to what caveman and ponytail do not already say.
-
-The Command tools dashboard reports weighted RTK command-output savings and OMP-specific adoption from executed Bash records. It does not estimate provider billing.
-Upstream Ponytail's fair agentic benchmark reports 54% less code, 22% fewer tokens, 20% lower cost, and 100% retained safety. RTK estimates command-output tokens, not bill savings. Caveman and Ponytail compliance varies by model. Measure your own sessions with `tersio usage` and the dashboard.
 
 ## 🖥️ CLI
 
@@ -131,8 +108,8 @@ Shared, and identical for every host:
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
 | `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
-| Model prices | `~/.tersio/prices.json` is a cache of LiteLLM's feed, refreshed in the background. `~/.tersio/prices.local.json` is yours: one entry per model id, keyed as the transcript spells it or with a `*` prefix to cover every gateway prefix. It wins over the feed, and it is how a gateway model the feed keys under another provider gets its real rate. `tersio usage` prints an `Unpriced (heaviest first)` line naming the model keys to add. |
-| Price sources | The cost the host itself reported wins over every rate card: it is the only figure from the party that billed. A recorded zero is a real zero, not a missing value — omp flags a request it could not price in a separate field, so a zero is a free model. A model counts as host-priced only when every one of its messages carried a cost. Then `prices.local.json`, then the LiteLLM cache, then a default table the report labels as a guess. |
+| Model prices | `~/.tersio/prices.json` caches LiteLLM's feed; `~/.tersio/prices.local.json` is yours, keyed by model id or a `*` gateway prefix, and it wins over the feed. `tersio usage` prints an `Unpriced` line naming the keys to add. |
+| Price sources | The host's own reported cost first, then `prices.local.json`, then the LiteLLM cache, then a default table the report labels a guess. A recorded zero is a real zero. A model counts as host-priced only when every message carried a cost. |
 | Data snapshots | `~/.tersio/backups/` — one directory per snapshot with a `manifest.json`; six are kept |
 
 Per host, written by `tersio install --host <omp|pi|opencode>`:

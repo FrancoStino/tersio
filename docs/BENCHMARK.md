@@ -52,8 +52,9 @@ Keep results out of git: write to `$BENCH_TMP`, or `benchmark/results/` only if 
 |---|---|---|
 | Caveman | `/caveman <level>` | `lite`, `full`, `ultra`, `megacave-lite`, `megacave-full`, `megacave-ultra` |
 | Ponytail | `/ponytail <level>` | `lite`, `full`, `ultra` |
-| Combo | `/combo <level>` | `medium` (caveman `lite` + rtk + ponytail `lite`), `balanced` (`full`/`on`/`full`), `max` (`ultra`/`on`/`ultra`) |
+| Combo | `/combo <level>` | `medium` (caveman `lite` + rtk + ponytail `lite` + pstack), `balanced` (`full`/`on`/`full`/`on`), `max` (`ultra`/`on`/`ultra`/`on`) |
 | RTK | `/rtk on` | `on` |
+| pstack | `/pstack on` | `on` |
 
 Set the mode through saved defaults, not a `/command` prefix: Ponytail and RTK inject at session
 start, and a prefix can leave the recorded prompt unchanged.
@@ -67,18 +68,32 @@ a Combo gives the saving. Use three prompts per surface.
 | Code | C1: Write a TypeScript function `chunk<T>(items: T[], size: number): T[][]` that splits an array into fixed-size chunks, and `chunkLazy` that yields chunks from an iterable without materializing the whole array.<br>C2: Write a TypeScript function `debounce` and a function `throttle`, both with the signature `(fn: (...args: T) => void, ms: number)`.<br>C3: Write a TypeScript function `groupBy<T, K extends PropertyKey>(items: T[], key: (item: T) => K): Record<K, T[]>` and `countBy` with the same inputs returning `Record<K, number>`. |
 | Agentic (tools on) | A: In the fixture repo, run the test suite. Fix the failing test. Stop when all tests pass. |
 
+### How pstack is scored
+
+pstack rides every Combo level above `off`, so a Combo run already carries it and the base run has to
+clear it (`--pstack-default off`). For its own numbers, run `--combo-default off --pstack-default on`.
+
+It has no reply-text saving to look for: its rules ask for more of the reply, not less. So pstack is
+scored on section 6's quality gates and on review rounds, never on tokens. Report `Block` with
+`Quality` beside it, mark the token columns `n/a`, and publish no saving for it.
+
+Counted offline with `<host> toks "<block>" --json` (`o200k_base`) on 2026-10-14, the injected block
+is 1,374 tokens: 25 of upstream's rules kept verbatim from `cursor/plugins` at `dbf4981`, against the
+skill's own 4,428 and Caveman `full` at 1,158.
+
 ## 4. Run procedure
 
 ```bash
-run() {  # run <caveman> <ponytail> <rtk> <combo> <prompt> <out>
+run() {  # run <caveman> <ponytail> <rtk> <combo> <pstack> <prompt> <out>
   tersio settings --caveman-default "$1" --ponytail-default "$2" \
-                  --rtk-default "$3" --combo-default "$4"
-  /usr/bin/time -f '%e' -o "$6.time" \
-    <host> -p --session-dir "$BENCH_TMP/$6" --no-tools \
-      --model "<model>" "$5" > "$6.out"
+                  --rtk-default "$3" --combo-default "$4" --pstack-default "$5"
+  /usr/bin/time -f '%e' -o "$7.time" \
+    <host> -p --session-dir "$BENCH_TMP/$7" --no-tools \
+      --model "<model>" "$6" > "$7.out"
 }
-run off off off off "$P1" base-p1      # base: all four off
-run ultra off off off "$P1" cav-ultra-p1
+run off off off off off "$P1" base-p1        # base: all five off
+run ultra off off off off "$P1" cav-ultra-p1
+run off off off off on "$P1" pstack-p1       # pstack alone: no token claim, scored on quality
 ```
 
 If `tersio settings --help` does not accept level values, adapt the flags.
@@ -144,8 +159,12 @@ A saving is valid only if the answer is still right. A mode that drops edge case
 3. For `megacave-*` modes, score by keyword meaning, not string match.
 
 **Agentic (A).** Pass = the suite is green and no test file was edited. Run base, `rtk on`,
-`ponytail ultra`, and `combo medium`, N = 5. Report the pass rate beside every token and time number;
-a failed run is reported, not dropped.
+`ponytail ultra`, `combo medium`, and pstack alone, N = 5. Report the pass rate beside every token
+and time number; a failed run is reported, not dropped.
+
+**pstack.** These gates are its only claim. Score the agentic pass, count the review rounds it took
+to land the change, and count a wrong turn as a failure even when the suite ends green. A block that
+passes no better than base is a cost with no return; report it that way.
 
 Report `Quality` (pass count out of N) beside every saving. Do not publish a saving for a mode that
 fails more often than base.
@@ -205,7 +224,7 @@ look for `... (N earlier lines, ctrl+o to expand)` in the output.
 
 ## 8. Traps
 
-- **Saved defaults.** Set all four to `off` before the base run.
+- **Saved defaults.** Set all five to `off` before the base run, pstack included: it rides every Combo level above `off`, so a preset left on measures nothing clean.
 - **Prompt on one surface only.** Code replies are longer than prose replies; use a separate base per surface.
 - **Combo without tools.** With `--no-tools` the RTK part does nothing but its block still costs tokens, so the result measures only Caveman + Ponytail. Label it so.
 - **Combo sums.** Check that the Combo `Block` equals the sum of its parts; if not, find the extra tokens (wrapper text?) and report them.
@@ -226,6 +245,9 @@ Put the summary table first.
 
 Then one table per mode family with a verdict line under each, same column names. For RTK:
 `Tool call | Base | After | Δ | Δ% | Δ time | Fidelity`.
+
+For pstack: `Mode | Surface | Block | Quality | Review rounds | Tokens | Time`, with the token
+columns marked `n/a`. Its block buys review rounds, not fewer tokens.
 
 Verdicts name the failure cases too. Write "strongest in this sample", never "saves 63%".
 
@@ -266,6 +288,7 @@ re-derived without counting by hand.
 - [ ] Every mode and level in section 3, on both surfaces
 - [ ] N = 5, median with min and max, three prompts per surface
 - [ ] Quality score beside every saving
+- [ ] pstack: `--pstack-default` cleared for the base; `Block` and `Quality` reported, no token claim
 - [ ] RTK: three groups, fidelity checks, end-to-end run
 - [ ] Token and time reported
 - [ ] Environment line complete
