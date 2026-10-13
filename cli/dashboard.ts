@@ -18,7 +18,7 @@ import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
-import { findPackageRoot, resolveRtkBinary } from '../extensions/shared/utils.ts';
+import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from './backups.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
@@ -331,18 +331,26 @@ function computeDoctorRows(): DoctorRow[] {
       .filter((line) => line.startsWith('/') || line.startsWith('.'));
   } catch { /* missing config is reported by extension rows */ }
   const duplicateExtensions = [...new Set(explicitEntries.filter((entry, index) => explicitEntries.indexOf(entry) !== index))];
-  addon('Unique config registrations', true, 'ok', 'Extensions');
+  addon('Unique config registrations', duplicateExtensions.length === 0, duplicateExtensions.length ? duplicateExtensions.join(', ') : 'ok', 'Extensions');
   // A listed extension whose file is gone makes the host warn on every load, so surface it here.
   const dangling = explicitEntries
     .filter((entry) => entry.includes(`extensions${path.sep}`) || entry.includes('extensions/'))
     .filter((entry) => !ok(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
   addon('Extension files present', dangling.length === 0, dangling.length ? dangling.join(', ') : 'ok', 'Extensions');
-  ext('Caveman extension', path.join(tersioPluginDir, 'extensions', 'caveman-session', 'index.ts'));
-  ext('RTK extension', path.join(tersioPluginDir, 'extensions', 'rtk-session', 'index.ts'));
-  const rule = path.join(tersioPluginDir, 'extensions', 'caveman-session', 'rule.md');
+  ext('Caveman extension', path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts'));
+  ext('pstack extension', path.join(tersioPluginDir, 'extensions', 'pstack', 'index.ts'));
+  ext('RTK extension', path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts'));
+  const rule = path.join(tersioPluginDir, 'extensions', 'caveman', 'rule.md');
   const ruleAge = ageStr(rule);
   const ruleAt = absTime(rule);
   addon('Caveman rule', ruleAge !== null, ruleAge && ruleAt ? `(updated ${ruleAge} · ${ruleAt})` : rule);
+  // The pstack body is a Tersio fork with no remote, so this row proves it is usable, not current.
+  const pstackRule = path.join(tersioPluginDir, 'extensions', 'pstack', 'rule.md');
+  let pstackProblem: string | null = 'missing — run: tersio install';
+  try { pstackProblem = ruleBodyProblem(readFileSync(pstackRule, 'utf8')); } catch { /* missing stays */ }
+  const pstackAge = ageStr(pstackRule);
+  const pstackAt = absTime(pstackRule);
+  addon('pstack rule', pstackProblem === null, pstackProblem ?? `(updated ${pstackAge} · ${pstackAt})`);
   const rtkVer = rtkBin ? rtkVersion(rtkBin) : null;
   const rtkAge = rtkBin ? ageStr(rtkBin) : null;
   const rtkAt = rtkBin ? absTime(rtkBin) : null;
