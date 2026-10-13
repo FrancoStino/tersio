@@ -1,32 +1,29 @@
 ## Unreleased
 
 ### Added
- - `tersio reinstall` is back: it lists the agents that have Tersio installed now, asks which one to refresh, reinstalls it, then runs the doctor to prove the result. The interactive menu carries it under `Install add-ons`. `--host` picks without asking.
- - Brand marks for the WorkBuddy and DeepSeek providers, so their rows show the service's own logo instead of a monogram. `deepseek`, `deepseek-web`, and `workbuddy-ai` now resolve to marks.
- - Brand marks for Trae, Kiro, and Meituan: each shows its own logo. Kiro no longer borrows the AWS cloud mark, and the Meituan LongCat line no longer draws a letter.
- - Brand tiles now carry breathing room: the artwork fills 78% of its tile instead of 88% or 100%, so no mark crowds its border. One rule covers every size, table rows and drawers alike.
- - A `/pstack` rigor mode, forked from pstack's `poteto-mode` skill (MIT, Lauren Tan). The upstream skill is a Cursor plugin index that reads 23 playbooks and sibling skills no Tersio host carries, so the shipped body is a host-neutral fork rather than a copy, and it is trimmed to the rules Tersio's caveman and ponytail blocks do not already inject: 1,374 tokens against the skill's 4,428, with every kept rule taken from upstream and each omission named in the file. It also states the order against Ponytail, which owns how large a change is, while pstack owns the approach, the verification, and the design. Every combo preset above off turns it on with the other three, and `tersio settings pstack` sets the session-start default on its own. Because the body is a fork, `tersio update` does not track it.
+ - `tersio reinstall` is back: it lists the agents that have Tersio, asks which one to refresh, reinstalls it, and checks the result. `--host` skips the question.
+ - Brand marks for the WorkBuddy and DeepSeek providers, and for Trae, Kiro, and Meituan. Each shows its own logo, so Kiro no longer uses the AWS mark and Meituan LongCat no longer shows a letter.
+ - Logos have breathing room: a mark fills less of its tile, so no artwork touches the edge. One rule covers every size.
+ - A new `/pstack` rigor mode, taken from pstack's `poteto-mode` skill (MIT, Lauren Tan). It is an adaptation for Tersio's hosts, not a copy, and it keeps only the rules Caveman and Ponytail do not already add. It covers how work is approached, checked, and designed, while Ponytail still decides how large a change is. Every Combo preset above `off` turns it on, and `tersio settings pstack` sets the default for new sessions. `tersio update` does not update it, because it is an adaptation.
 
 ### Changed
- - The bundled Ponytail moves to 5.2.0, the version Tersio's own plugin install resolves, so the pi and OpenCode copies stop lagging the ruleset omp loads.
- - Every dashboard page now loads into a skeleton of itself. The stat strip, the chart cards, and the table block hold the page's own shape until the data arrives, in place of two generic boxes. The session trace gets the same treatment.
- - Placeholders draw their tone from the panel ink, so they read in both themes. The chart and table placeholders before this used a tint that nearly vanished in light mode.
- - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON`. A preset matches all four modes, so the level reads `CUSTOM` only once a mode is changed by hand, and `🧩 combo OFF` collapses only when every mode is off. The dashboard banner and the Settings pane carry the same segment and row.
+ - The bundled Ponytail moves to 5.2.0, the same version Tersio installs, so the pi and OpenCode copies no longer fall behind.
+ - Every dashboard page now loads with a preview of its own layout — the stat strip, the chart cards, the table block, and the session trace — instead of two plain boxes.
+ - These previews use the panel's own tone, so they read in the light theme too. Before this they nearly vanished there.
+ - The status line now names all four modes: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON`. A preset sets all four, so the level reads `CUSTOM` only after you change one by hand. The dashboard and Settings show the same.
 
 ### Fixed
- - `tersio doctor` compared one Ponytail hook per host, and 5.1 and 5.2 ship that file identically: pi and OpenCode lagged a minor behind the package omp loads, with no row to say so. The row now compares the whole ruleset, names the file, and points at `tersio install --host <host>`.
- - `tersio install --host omp` wrote the mode files into the plugin package but never its manifest, so a mode added since the last publish loaded nowhere: every preset above `off` carried pstack while omp still listed five extensions and no `pstackDefault`. The install and `doctor --fix extensions` now write this build's own manifest block over the package's, and the orphaned-file row points at the sweeper instead of at the install that creates the backups.
- - The RTK guidance named `npm` and `pnpm` as condensed: rtk rewrites `npm run`, `pnpm run`, and `bun`, while `npm test`, `npm install`, and `pnpm test` pass through untouched. The block names the forms rtk rewrites, each probed with `rtk rewrite`.
- - The host footer carried the caveman mode twice: the combo banner, and a separate `Caveman mode: full` line beside it. The mode now reads once, in the combo line, and `/caveman status` answers with the mode in a message.
- - Time to first token read `—` for every pi request: pi records the response's total duration but no first-token latency, and nothing timed it. A new pi-only extension times the first streamed delta and stamps `ttft` onto the message, which is where the parser already looked.
- - OpenCode's first-token latency was dropped in two places: the v2 read never selected `time.streamed`, and the stored row hardcoded `tf` to undefined. Both carry it now, so OpenCode rows report latency instead of zero coverage.
- - The dashboard's own read of the usage store never selected the `tf` column, so first-token latency was discarded on every load even when the store held it.
- - pi lost every RTK mode surface: `rtk/session.ts` and `rtk/filter.ts` were written to disk but never reachable, because pi discovers a subdirectory only through an `index.ts` or a `package.json` with `pi.extensions`. The installer now writes `rtk/package.json`, so `/rtk`, `rtk_run`, the prompt block, and the grep and glob filter all load on pi.
- - OpenCode lost five of six Ponytail skills and `/ponytail`: the bundle shipped one `SKILL.md` where pi shipped six, and no host surface registered them. All six now ship, and the plugin registers them through the skill API.
- - On OpenCode, `/rtk off` silenced the prompt block but not the bash rewrite: `execute.before` rewrote commands with no mode check, while the filter hook below it had one. Both read the mode now.
- - `package.json` declared a Ponytail skills path through `node_modules`, which npm hoists out of every installed package, so it never resolved outside a checkout. Removed; the dependency declares its own skills, and it is what loads them on omp.
- - pi could fail to start with `Cannot find module '../ai-addons-updater/index.ts'`: a stale `tersio-commands/` extension survived every install, because the debris list named `ai-addons-updater` but not the directory that imported it. A repair now also drops the whole debris directory, not just the files inside it, so no empty shell of a retired extension is left behind.
- - `opencode service start` and `service restart` could fail with `port 49374 is already in use` while `service status` read `stopped`: the service manager had lost its daemonized `serve` process, so neither `stop` nor `restart` could reach it. `tersio doctor` now reports the mismatch, and `tersio doctor --fix service` stops the orphan by pid and starts the service again. The pid comes from `pgrep` and is validated, because it is another process's output.
+ - `tersio doctor` compared one Ponytail file per host, and two recent versions ship that file unchanged, so pi and OpenCode could fall behind with no warning. The row now compares everything Ponytail ships, names the file at fault, and points at `tersio install --host <host>`.
+ - `tersio install --host omp` copied the mode files but not the list that loads them, so a mode added since the last release loaded nowhere. The install and `doctor --fix extensions` now write this build's own list, and the repair points at the right tool.
+ - The RTK guidance named the wrong commands as condensed: it listed `npm` and `pnpm`, while rtk rewrites `npm run`, `pnpm run`, and `bun`, and leaves `npm test` and `npm install` alone. Each rewritten form is now named and tested.
+ - The host footer showed the caveman mode twice. It now reads once, in the Combo line, and `/caveman status` answers with the mode.
+ - The dashboard could not show first-token latency for pi or OpenCode, even when the data existed: pi never recorded it, OpenCode recorded it in a field nothing read, and the dashboard read the store without asking for that column. All three carry it now.
+ - pi lost every RTK mode surface: the files were installed but could not be found, because pi needs a marker file that was missing. `/rtk`, `rtk_run`, the prompt block, and the search filters all load on pi now.
+ - OpenCode lost five of its six Ponytail skills and `/ponytail`, because the bundle shipped one file where pi shipped six, and nothing registered them. All six ship now.
+ - On OpenCode, `/rtk off` stopped the prompt text but not the command rewriting. Both read the mode now.
+ - A Ponytail file path was declared through `node_modules`, which npm moves out of the package, so it never worked outside a checkout. Removed.
+ - pi could fail to start on a leftover extension from an old version, which every install kept. A repair now removes the whole leftover directory, not just the files inside it.
+ - `opencode service start` and `service restart` could fail, saying a port was in use, while `service status` said stopped: the service manager had lost track of its own background process. `tersio doctor` now reports this, and `doctor --fix service` stops the stray process and starts the service again.
 
 ## v2.25.5
 
