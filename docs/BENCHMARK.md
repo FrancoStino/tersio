@@ -77,8 +77,12 @@ It has no reply-text saving to look for: its rules ask for more of the reply, no
 scored on section 6's quality gates and on review rounds, never on tokens. Report `Block` with
 `Quality` beside it, mark the token columns `n/a`, and publish no saving for it.
 
+The fork also fixes the order against ponytail: ponytail owns how large a change is, pstack owns the
+approach, the verification, and the design. Two upstream entries are dropped for that reason,
+`Redesign from First Principles` and `Build the Lever`, because their triggers fire on ordinary work.
+
 Counted offline with `<host> toks "<block>" --json` (`o200k_base`) on 2026-10-14, the injected block
-is 1,374 tokens: 25 of upstream's rules kept verbatim from `cursor/plugins` at `dbf4981`, against the
+is 1,374 tokens: 23 of upstream's rules kept verbatim from `cursor/plugins` at `dbf4981`, against the
 skill's own 4,428 and Caveman `full` at 1,158.
 
 ## 4. Run procedure
