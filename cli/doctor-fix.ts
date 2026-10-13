@@ -17,7 +17,7 @@ import {
   httpsDownload, parseChecksum, readTextIfExists, resolveHostBinary, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
 import { runLatestUpdate } from './update.ts';
-import { OPENCODE_ENTRY, TREE_FILES, isObsoleteTreeFile, syncTreeFiles, treeFilesFor } from './manifest.ts';
+import { OPENCODE_ENTRY, TREE_FILES, isObsoleteTreeFile, syncPluginManifest, syncTreeFiles, treeFilesFor } from './manifest.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 
 type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli' | 'service';
@@ -193,6 +193,9 @@ async function fixExtensions(pluginsDir: string): Promise<void> {
     await fs.rm(at, { recursive: true, force: true });
     sayTagged(`  [rm] debris dir ${at}`);
   }
+
+  // A synced tree is not enough: omp loads only the entries its manifest names.
+  await syncPluginManifest(path.dirname(pluginExtDir), { dryRun, verbose });
 
   // Writing is not atomic, so re-read rather than assume the tree is whole.
   if (dryRun) return;

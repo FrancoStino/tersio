@@ -64,10 +64,12 @@ test("dry run reports the retired copies and removes nothing", () => {
   try {
     pluginPresent(home);
     const before = readdirSync(extDir(home)).toSorted();
-    const result = run(home, {}, "--dry-run", "--yes");
+    const result = run(home, {}, "--dry-run", "--yes", "--verbose");
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Add-ons load from: the OMP plugin manifest/);
     expect(result.stdout).toMatch(/Retired agent copies — remove/);
+    // The manifest decides what omp loads, so the install reports the manifest write it would make.
+    expect(result.stdout).toMatch(/would write .*@krtclcdy\/tersio\/package\.json/);
     expect(readdirSync(extDir(home)).toSorted()).toEqual(before);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -82,6 +84,8 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(path.join(pluginExt(home), "combo", "index.ts")), "combo lands in the plugin tree").toBe(true);
     expect(existsSync(path.join(pluginExt(home), "caveman", "index.ts")), "caveman lands in the plugin tree").toBe(true);
+    // omp loads no OpenCode entry, but the package ships one, so the install writes it as the repair does.
+    expect(existsSync(path.join(pluginExt(home), "server.ts")), "the package entry lands too").toBe(true);
     for (const dir of RETIRED) {
       expect(existsSync(path.join(extDir(home), dir)), `${dir} removed`).toBe(false);
     }

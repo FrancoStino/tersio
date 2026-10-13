@@ -3,7 +3,7 @@ import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
-import { writeIfChanged } from './common.ts';
+import { writeIfChanged, WriteOptions } from './common.ts';
 
 export const EXT_DIR = path.join(findPackageRoot(path.dirname(fileURLToPath(import.meta.url))), 'extensions');
 
@@ -87,6 +87,38 @@ export function treeFileText(file: string): string | null {
   const generated = GENERATED_TREE_FILES[file];
   if (generated !== undefined) return generated;
   try { return readFileSync(sourcePath(file), 'utf8'); } catch { return null; }
+}
+
+/** The shipped package manifest, one level above the extension tree. */
+const MANIFEST_PATH = path.join(path.dirname(EXT_DIR), 'package.json');
+
+/** The `omp` block a host reads for what to load: extensions, features, and the settings schema. */
+export function shippedOmpManifest(): Record<string, unknown> | null {
+  try {
+    const pkg = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { omp?: unknown };
+    return typeof pkg.omp === 'object' && pkg.omp !== null ? pkg.omp as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the shipped `omp` block over an installed plugin's manifest. The tree files come from this
+ * build, so an entry added here reaches the host only when its manifest names it.
+ */
+export async function syncPluginManifest(pluginDir: string, options: WriteOptions = {}): Promise<void> {
+  const omp = shippedOmpManifest();
+  if (omp === null) return;
+  const pkgPath = path.join(pluginDir, 'package.json');
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  if (JSON.stringify(pkg.omp) === JSON.stringify(omp)) return;
+  pkg.omp = omp;
+  await writeIfChanged(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, options);
 }
 
 /** Copy bundled files into `dest`; misses are reported and skipped, `skip` keeps newer fetched rule bodies. */

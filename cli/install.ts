@@ -31,7 +31,7 @@ import {
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { PI_RTK_MANIFEST, filesUnder, rootFiles, sourcePath, syncTreeFiles } from './manifest.ts';
+import { PI_RTK_MANIFEST, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
@@ -462,6 +462,11 @@ async function stepTersioCommands(extDir: string, options: WriteOptions): Promis
 
 async function stepUpdater(extDir: string, options: WriteOptions): Promise<void> {
   await copySources(extDir, filesUnder('updater'), 'updater/index.ts', options);
+}
+
+// omp loads no OpenCode entry, but its package ships one: the repair writes it, so the install does too.
+async function stepPluginEntry(extDir: string, options: WriteOptions): Promise<void> {
+  await copySources(extDir, rootFiles(), 'server.ts', options);
 }
 
 // pi records no first-token latency, so this stamps one into the row the dashboard reads.
@@ -1010,6 +1015,9 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('pstack', () => stepPstack(extDir, installOptions));
   await capture('commands', () => stepTersioCommands(extDir, installOptions));
   await capture('updater', () => stepUpdater(extDir, installOptions));
+  // One package, one file set: the repair writes every tree file here, so the install does too.
+  if (ownsTree) await capture('plugin entry', () => stepPluginEntry(extDir, installOptions));
+  if (ownsTree) await capture('plugin manifest', () => syncPluginManifest(path.dirname(pluginExtDir), installOptions));
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
   if (selfPlugin) await capture('settings', () => writePluginSettings(profile, installOptions));
 

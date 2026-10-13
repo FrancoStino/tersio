@@ -361,6 +361,32 @@ test("doctor --fix leaves an existing fetched rule.md alone and writes no .bak",
   }
 }, 30000);
 
+// The manifest is what omp loads, so a repair writes this build's own block over the package's.
+test("doctor --fix extensions writes this build's plugin manifest", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    const pkgPath = path.join(pkg, "package.json");
+    // The state a published package leaves behind: one entry of the day, and no pstack.
+    writeFileSync(pkgPath, JSON.stringify({ name: "@krtclcdy/tersio", version: "0.0.0", omp: { extensions: ["./extensions/caveman/index.ts"] } }), "utf8");
+
+    const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "extensions", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: cliEnv(home),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const shipped = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { omp: unknown };
+    const installed = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string; omp?: unknown };
+    expect(installed.omp, "the manifest names what this build ships").toEqual(shipped.omp);
+    expect(installed.name, "the package's own fields survive").toBe("@krtclcdy/tersio");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 30000);
+
 // Without a separate row, an unusable rtk_run reads as a healthy install.
 test("doctor warns that rtk_run needs an exec-capable host", () => {
   const home = missingHome();
