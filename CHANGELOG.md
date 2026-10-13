@@ -1,4 +1,4 @@
-## Unreleased
+## v2.25.6
 
 ### Added
  - `tersio reinstall` is back: it lists the agents that have Tersio, asks which one to refresh, reinstalls it, and checks the result. `--host` skips the question.
