@@ -704,7 +704,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
   {
     field: "comboDefault",
     label: "Combo preset",
-    hint: "Sets caveman, RTK and Ponytail together, and turns pstack off.",
+    hint: "Sets caveman, RTK, Ponytail and pstack together.",
     options: [
       { id: "off", label: "Off" },
       { id: "medium", label: "Medium" },
@@ -741,7 +741,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
   {
     field: "pstackDefault",
     label: "pstack",
-    hint: "Rigor mode. Opt-in, so it spends prompt tokens only when you pick it.",
+    hint: "Rigor mode. The medium, balanced, and max presets turn it on.",
     options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
   },
 ];
@@ -786,10 +786,9 @@ function DefaultModes() {
         const raw = current[row.field];
         const isRtk = row.field === "rtkDefault";
         const value = isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // A live preset writes the three modes, so they are inert; Off makes them the only input.
-        // pstack stays live either way: no preset writes it, so it is always the user's own call.
+        // A live preset writes all four modes, so they are inert; Off makes them the only input.
         const presetOn = current.comboDefault !== "off";
-        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault");
+        const locked = !loaded || (presetOn && row.field !== "comboDefault");
         if (isRtk) {
           return (
             <div key={row.field} className="flex items-center justify-between gap-3">

@@ -1,5 +1,5 @@
 // The shell: a glass topbar (brand, mode banner, range, theme) over a page-jumping rail whose footer holds Settings.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -63,7 +63,7 @@ export interface ModeState {
   pstackDefault: string;
 }
 
-/** One glyph and one short name per mode, in the order the locks appear in the combo. pstack trails, because it rides no preset. */
+/** One glyph and one short name per mode, in the order the combo names them; pstack trails the three. */
 const MODE_GLYPHS = [
   { key: "caveman", glyph: "🪨", label: "caveman", level: (m: ModeState) => (m.cavemanDefault ?? "off").toUpperCase() },
   { key: "rtk", glyph: "⚡", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
@@ -76,25 +76,54 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
   const level = modes?.comboDefault ?? "off";
   const on = level !== "off";
   const label = on ? `combo ${level.toUpperCase()}` : "combo off";
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const trackRef = useRef<HTMLSpanElement>(null);
+  const [scroll, setScroll] = useState(false);
+  // The mode row scrolls only when it cannot fit, so a short row stays still. The first copy
+  // alone is measured: the loop's duplicate would otherwise double the width it compares.
+  useEffect(() => {
+    const box = boxRef.current;
+    const track = trackRef.current;
+    if (!box || !track) return;
+    const measure = (): void => {
+      const first = track.firstElementChild as HTMLElement | null;
+      setScroll(first !== null && first.offsetWidth > box.clientWidth + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [modes]);
+  const row = (key: string): ReactNode => (
+    <span key={key} className="flex shrink-0 items-center">
+      {MODE_GLYPHS.map((m) => (
+        <span key={m.key} className="mr-1.5 inline-flex items-center gap-0.5">
+          <span className="text-[12px]">{m.glyph}</span>
+          <span className="text-dim">{m.label}=</span>
+          <span className={on ? "font-semibold text-ink" : "text-dim"}>{modes ? m.level(modes) : "OFF"}</span>
+        </span>
+      ))}
+    </span>
+  );
   return (
     <button
       type="button"
       onClick={onOpen}
       title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open Settings to change it.`}
-      className="mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-accent-soft"
+      className={cn(
+        "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-accent-soft",
+        on ? "border-accent/40 bg-panel" : "border-line bg-panel/60",
+      )}
     >
       <span className="shrink-0 text-[13px]">🧩</span>
-      <span className={cn("min-w-0 truncate", on ? "font-semibold text-ink" : "text-dim")}>{label}:</span>
-      {/* A block, not a flex: only a block truncates, so the modes cut with an ellipsis in a
-          narrow topbar instead of clipping mid-word. Below `lg` they drop out entirely. */}
-      <span className="mono hidden min-w-0 truncate lg:block">
-        {MODE_GLYPHS.map((m) => (
-          <span key={m.key} className="mr-1.5 inline-flex items-center gap-0.5 align-middle">
-            <span className="text-[12px]">{m.glyph}</span>
-            <span className="text-dim">{m.label}=</span>
-            <span className={on ? "text-ink" : "text-dim"}>{modes ? m.level(modes) : "OFF"}</span>
-          </span>
-        ))}
+      <span className={cn("shrink-0", on ? "font-semibold text-ink" : "text-dim")}>{label}:</span>
+      {/* The modes ride a marquee: shown from `sm` up, scrolling only when the row outgrows the bar.
+          Reduced motion freezes the row, and the button's title still names every mode. */}
+      <span ref={boxRef} className="hidden min-w-0 overflow-hidden sm:block">
+        <span ref={trackRef} className={cn("flex w-max items-center", scroll && "animate-tick")}>
+          {row("single")}
+          {scroll && row("loop")}
+        </span>
       </span>
     </button>
   );
