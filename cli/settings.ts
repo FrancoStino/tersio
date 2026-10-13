@@ -1,8 +1,8 @@
 // cli/settings.ts — view/edit session-start defaults and the display currency.
 import {
   CAVEMAN_DEFAULTS, COMBO_DEFAULTS, COMBO_PRESET_MODES,
-  PONYTAIL_DEFAULTS, cavemanDefaultFlag, comboDefaultFlag, currency, currencyGiven, diagScheduleFlag, dryRun,
-  ponytailDefaultFlag, profileFlagsGiven, rtkDefaultFlag, settingArg, subagentMarkerFlags, subagentMarkersGiven,
+  PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, cavemanDefaultFlag, comboDefaultFlag, currency, currencyGiven, diagScheduleFlag, dryRun,
+  ponytailDefaultFlag, pstackDefaultFlag, profileFlagsGiven, rtkDefaultFlag, settingArg, subagentMarkerFlags, subagentMarkersGiven,
 } from './common.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { CURRENCY_CODES } from './currency.ts';
@@ -21,9 +21,11 @@ function applyFlags(base: Profile): Profile {
   next.cavemanDefault = preset.caveman;
   next.rtkDefault = preset.rtk;
   next.ponytailDefault = preset.ponytail;
+  next.pstackDefault = preset.pstack;
   if (cavemanDefaultFlag !== undefined) next.cavemanDefault = cavemanDefaultFlag;
   if (rtkDefaultFlag !== undefined) next.rtkDefault = rtkDefaultFlag === 'on';
   if (ponytailDefaultFlag !== undefined) next.ponytailDefault = ponytailDefaultFlag;
+  if (pstackDefaultFlag !== undefined) next.pstackDefault = pstackDefaultFlag;
   if (subagentMarkersGiven) next.subagentMarkers = subagentMarkerFlags;
   if (currencyGiven) next.currency = currency;
   return next;
@@ -43,6 +45,7 @@ async function askProfile(current: Profile): Promise<Profile | null> {
     cavemanDefault: preset.caveman,
     rtkDefault: preset.rtk,
     ponytailDefault: preset.ponytail,
+    pstackDefault: preset.pstack,
     currency: current.currency,
     backupSchedule: current.backupSchedule,
     subagentMarkers: current.subagentMarkers,
@@ -84,10 +87,10 @@ async function askDiagSchedule(current: DiagSchedule): Promise<DiagSchedule | nu
   return picked.value as DiagSchedule;
 }
 
-const SETTING_NAMES = ['combo', 'caveman', 'rtk', 'ponytail', 'currency', 'diagnosis', 'markers'] as const;
+const SETTING_NAMES = ['combo', 'caveman', 'rtk', 'ponytail', 'pstack', 'currency', 'diagnosis', 'markers'] as const;
 
 function settingsUsage(): void {
-  console.log('  Usage: tersio settings [combo|caveman|rtk|ponytail|currency|diagnosis|markers] [--combo-default off|medium|balanced|max] [--caveman-default off|lite|full|ultra|megacave-lite|megacave-full|megacave-ultra] [--rtk-default on|off] [--ponytail-default off|lite|full|ultra] [--currency USD|PHP|EUR|GBP|JPY|KRW|SGD|AUD|CAD|INR] [--diag-schedule manual|daily|weekly|monthly] [--subagent-marker <text>]... [--dry-run]');
+  console.log('  Usage: tersio settings [combo|caveman|rtk|ponytail|pstack|currency|diagnosis|markers] [--combo-default off|medium|balanced|max] [--caveman-default off|lite|full|ultra|megacave-lite|megacave-full|megacave-ultra] [--rtk-default on|off] [--ponytail-default off|lite|full|ultra] [--pstack-default on|off] [--currency USD|PHP|EUR|GBP|JPY|KRW|SGD|AUD|CAD|INR] [--diag-schedule manual|daily|weekly|monthly] [--subagent-marker <text>]... [--dry-run]');
 }
 
 // Single-setting jump: prompts only that value instead of walking the whole chain; null when aborted.
@@ -108,6 +111,7 @@ async function runSingleSetting(name: string, current: Profile, nextDiag: DiagSc
       next.cavemanDefault = preset.caveman;
       next.rtkDefault = preset.rtk;
       next.ponytailDefault = preset.ponytail;
+      next.pstackDefault = preset.pstack;
       break;
     }
     case 'caveman': {
@@ -133,6 +137,14 @@ async function runSingleSetting(name: string, current: Profile, nextDiag: DiagSc
       })), next.ponytailDefault);
       if (picked.status !== 'selected') return null;
       next.ponytailDefault = picked.value;
+      break;
+    }
+    case 'pstack': {
+      const picked = await askInteractiveChoice('pstack default (opt-in rigor mode)', [...PSTACK_DEFAULTS].map((v) => ({
+        value: v, label: v,
+      })), next.pstackDefault);
+      if (picked.status !== 'selected') return null;
+      next.pstackDefault = picked.value;
       break;
     }
     case 'currency': {
@@ -171,6 +183,7 @@ function printSettingsTable(current: Profile): void {
     ['caveman', current.cavemanDefault, [...CAVEMAN_DEFAULTS].join(' | ')],
     ['rtk', current.rtkDefault ? 'on' : 'off', 'on | off'],
     ['ponytail', current.ponytailDefault, [...PONYTAIL_DEFAULTS].join(' | ')],
+    ['pstack', current.pstackDefault, [...PSTACK_DEFAULTS].join(' | ')],
     ['diagnosis', readDiagSchedule(), 'manual | daily | weekly | monthly'],
     ['markers', current.subagentMarkers.length === 0 ? 'default' : current.subagentMarkers.join(' | '), 'host subagent prompt text'],
   ];
@@ -178,7 +191,7 @@ function printSettingsTable(current: Profile): void {
     console.log(l);
   }
   console.log(`  Stored: ${tersioSettingsFile()}`);
-  console.log(`  Combo ${current.comboDefault} sets caveman/rtk/ponytail. Tune one: tersio settings <name>`);
+  console.log(`  Combo ${current.comboDefault} sets caveman/rtk/ponytail and clears pstack. Tune one: tersio settings <name>`);
 }
 
 async function runSettings(): Promise<void> {

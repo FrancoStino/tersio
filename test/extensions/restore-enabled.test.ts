@@ -43,5 +43,5 @@ test("restore skips a corrupt latest rtk-mode entry and uses the older valid one
   const { handlers, notifications } = harness(entries);
   await handlers.get("session_start")!({}, context(entries, notifications));
   // The corrupt trailing entry is skipped, so the branch restores rtk=on.
-  expect(notifications.at(-1)).toBe("🧩 combo CUSTOM: 🪨caveman=OFF ⚡rtk=ON 🦥ponytail=OFF");
+  expect(notifications.at(-1)).toBe("🧩 combo CUSTOM: 🪨caveman=OFF ⚡rtk=ON 🦥ponytail=OFF 🥔pstack=OFF");
 });

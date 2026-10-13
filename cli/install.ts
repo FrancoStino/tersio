@@ -474,6 +474,12 @@ async function stepCombo(extDir: string, options: InstallOptions): Promise<void>
   await copySources(extDir, filesUnder('combo'), 'combo/index.ts', options);
 }
 
+// The body is a Tersio fork of an upstream skill, so the install copies it and never fetches it.
+async function stepPstack(extDir: string, options: InstallOptions): Promise<void> {
+  if (!options.quiet) console.log('  pstack — install the opt-in rigor mode');
+  await copySources(extDir, filesUnder('pstack'), 'pstack/index.ts', options);
+}
+
 // The tree ships no node_modules, so the ruleset rides along as files. Both hosts need the same six.
 const PONYTAIL_SKILL_NAMES = ['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review'] as const;
 
@@ -515,6 +521,7 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
   await stepTiming(dir, options);
   await copySources(dir, filesUnder('caveman'), 'caveman/index.ts', options);
   await stepCombo(dir, options);
+  await stepPstack(dir, options);
   await copySources(dir, filesUnder('commands'), 'commands/index.ts', options);
   await stepUpdater(dir, options);
   await stepPonytailBundle(dir, options);
@@ -779,6 +786,7 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
   await stepTiming(extDir, options);
   await stepCaveman(extDir, options);
   await stepCombo(extDir, options);
+  await stepPstack(extDir, options);
   await stepTersioCommands(extDir, options);
   await stepUpdater(extDir, options);
   await stepPonytailForPi(agentDir, options);
@@ -997,6 +1005,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('rtk filter', () => stepRtkFilter(extDir, installOptions));
   await capture('caveman', () => stepCaveman(extDir, installOptions));
   await capture('combo', () => stepCombo(extDir, installOptions));
+  await capture('pstack', () => stepPstack(extDir, installOptions));
   await capture('commands', () => stepTersioCommands(extDir, installOptions));
   await capture('updater', () => stepUpdater(extDir, installOptions));
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));

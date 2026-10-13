@@ -38,15 +38,16 @@ interface PluginsPackage {
 
 const CAVEMAN_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra']);
 const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
+const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 const DIAG_SCHEDULES = new Set(['manual', 'daily', 'weekly', 'monthly']);
 
 // Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all three modes.
-const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string }> = {
-  off: { caveman: 'off', rtk: false, ponytail: 'off' },
-  medium: { caveman: 'lite', rtk: true, ponytail: 'lite' },
-  balanced: { caveman: 'full', rtk: true, ponytail: 'full' },
-  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra' },
+const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
+  off: { caveman: 'off', rtk: false, ponytail: 'off', pstack: 'off' },
+  medium: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'off' },
+  balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'off' },
+  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'off' },
 };
 const COMBO_DEFAULTS = new Set(Object.keys(COMBO_PRESET_MODES));
 
@@ -118,10 +119,11 @@ if (legacyScope !== null && legacyScope !== 'user') {
 const comboDefaultFlag = parseEnum(flagValue('--combo-default'), COMBO_DEFAULTS, '--combo-default');
 const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEFAULTS, '--caveman-default');
 const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
+const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');
 const rtkDefaultFlag = parseEnum(flagValue('--rtk-default'), RTK_DEFAULTS, '--rtk-default');
 const diagScheduleFlag = parseEnum(flagValue('--diag-schedule'), DIAG_SCHEDULES, '--diag-schedule');
 
-const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag]
+const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag]
   .some((flag) => flag !== undefined);
 
 // Repeatable `--subagent-marker`; overrides the built-in host prompt marker.
@@ -374,14 +376,14 @@ function relTime(ageMs: number): string {
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
-  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
+  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,
   install, reinstall, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, verbose, doctor, fix, uninstall, usage, dashboard, reset, settings,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,
-  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, rtkDefaultFlag, diagScheduleFlag, profileFlagsGiven,
+  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, rtkDefaultFlag, diagScheduleFlag, profileFlagsGiven,
   subagentMarkerFlags, subagentMarkersGiven,
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,

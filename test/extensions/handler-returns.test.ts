@@ -16,7 +16,7 @@ const loadExtension = async (segments: readonly string[]) => {
 };
 
 // Every extension entry point, each registering exactly one command.
-const EXTENSIONS = [["caveman", "index.ts"], ["combo", "index.ts"], ["rtk", "session.ts"], ["commands", "index.ts"], ["updater", "index.ts"]] as const;
+const EXTENSIONS = [["caveman", "index.ts"], ["pstack", "index.ts"], ["combo", "index.ts"], ["rtk", "session.ts"], ["commands", "index.ts"], ["updater", "index.ts"]] as const;
 
 interface FakePi {
   commands: Map<string, Handler>;
@@ -71,7 +71,7 @@ test("no tersio command handler resolves a value", async () => {
     }
   }
   // The mode switches the tree owns, so a dropped registration fails here rather than passing quietly.
-  for (const command of ["/caveman", "/rtk", "/combo", "/ponytail", "/tersio", "/ai-addons"]) {
+  for (const command of ["/caveman", "/pstack", "/rtk", "/combo", "/ponytail", "/tersio", "/ai-addons"]) {
     expect(seen, `${command} must be registered`).toContain(command);
   }
 });
@@ -88,14 +88,15 @@ test("a combo change is persisted before the host is told about it", async () =>
   await pi.commands.get("combo")?.("balanced", { ...ctx, hasUI: true, ui: pi.ui });
 
   // Every mode entry lands first, in the preset's own order.
-  expect(order.slice(0, 4)).toEqual([
+  expect(order.slice(0, 5)).toEqual([
     "entry:caveman-mode",
     "entry:rtk-mode",
     "entry:ponytail-mode",
+    "entry:pstack-mode",
     "entry:combo-level",
   ]);
-    const notices = order.slice(4);
+  const notices = order.slice(5);
   expect(notices).toEqual([
-    "setstatus:🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL",
+    "setstatus:🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=OFF",
   ]);
 });

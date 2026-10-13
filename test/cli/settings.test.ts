@@ -38,7 +38,7 @@ test("settings --dry-run previews without writing", () => {
     expect(result.stdout).toMatch(/│ Setting +│ Current +│ Valid values +│/);
     expect(result.stdout).toMatch(/│ combo +│ off +│/);
     expect(result.stdout).toMatch(/Stored: .*\.tersio\/settings\.json/);
-    expect(result.stdout).toMatch(/\[dry-run\] would set defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full\)/);
+    expect(result.stdout).toMatch(/\[dry-run\] would set defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off\)/);
     expect(readLock(home).comboDefault, "dry-run must not write").toBe("off");
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -105,7 +105,7 @@ test("settings with flags writes combo preset + overrides", () => {
       },
     );
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Defaults: combo=medium \(caveman=ultra · rtk=on · ponytail=lite\)/);
+    expect(result.stdout).toMatch(/Defaults: combo=medium \(caveman=ultra · rtk=on · ponytail=lite · pstack=off\)/);
     const saved = readLock(home);
     expect(saved.comboDefault).toBe("medium");
     expect(saved.cavemanDefault).toBe("ultra");

@@ -8,7 +8,7 @@
 [![Build](https://shieldcn.dev/github/ci/KurutoDenzeru/tersio.svg?variant=branded&size=xs&logo=githubactions&label=Build)](https://github.com/KurutoDenzeru/tersio/actions)
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
 
-Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, and a gain dashboard — one-command combo presets over one shared extension tree.
+Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, an opt-in pstack rigor mode, and a gain dashboard — one-command combo presets over one shared extension tree.
 
 ## ⚡ Getting Started
 
@@ -94,21 +94,22 @@ Upstream Ponytail's fair agentic benchmark reports 54% less code, 22% fewer toke
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
-Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the `tersio settings` default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
+Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the `tersio settings` default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
 
 ## ⌨️ Commands reference
 
 Mode switches live on their own commands; bare `/tersio` prints status. Every mode command, and every session start, prints the status line:
 
 ```
-🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA
+🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF
 ```
 
 It is display-only — it never enters the model context, so it costs the session nothing.
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|medium\|balanced\|max\|status` | One preset for all three (start here): medium = lite/lite/on, balanced = full/full/on, max = ultra/ultra/on; per-mode tweaks drop to `custom`. |
+| `/combo off\|medium\|balanced\|max\|status` | One preset for the three modes (start here): medium = lite/lite/on, balanced = full/full/on, max = ultra/ultra/on; per-mode tweaks drop to `custom`. Every preset clears pstack. |
+| `/pstack on\|off\|status` | The pstack rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT, Lauren Tan). Opt-in: no preset turns it on, so its prompt cost only applies when you ask. `/pstack off` or `normal mode` clears it. Its body ships with Tersio, so `tersio update` does not track it. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. The legacy `wenyan` spelling still resolves, onto `megacave-full`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes. Review runs separately through `/ponytail-review`. |
@@ -126,7 +127,7 @@ Shared, and identical for every host:
 
 | What | Path |
 |---|---|
-| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, and the display currency |
+| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, and the display currency |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
 | `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
@@ -139,7 +140,7 @@ Per host, written by `tersio install --host <omp|pi|opencode>`:
 | Host | Extensions | Ponytail |
 |---|---|---|
 | Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — the plugin manifest (`omp.extensions`) owns every mode extension, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring, which `config.yml` registers by path | nested plugin dependency under `~/.omp/plugins/node_modules/`, one Plugins row |
-| pi | `~/.pi/agent/extensions/{caveman,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `npm:@dietrichgebert/ponytail`, installed as a pi package |
+| pi | `~/.pi/agent/extensions/{caveman,pstack,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `npm:@dietrichgebert/ponytail`, installed as a pi package |
 | OpenCode | `~/.config/opencode/plugins/tersio/` — registered in `opencode.json` plugins, so there is nothing else to register | bundled with Tersio; no separate package |
 
 All three hosts carry the same `shared/` modules and the same mode extensions from the same sources.

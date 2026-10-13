@@ -27,6 +27,7 @@ const PONYTAIL_PKG = '@dietrichgebert/ponytail';
 const PI_TREE_DIRS = [
   // What an install writes now.
   'caveman',
+  'pstack',
   'rtk',
   'updater',
   'combo',

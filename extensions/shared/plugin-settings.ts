@@ -47,6 +47,8 @@ export function readPluginSettings(): Record<string, unknown> {
 const COMBO_LEVELS = new Set(['off', 'medium', 'balanced', 'max']);
 const CAVEMAN_MODES = new Set(['off', 'lite', 'full', 'ultra', 'megacave', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'wenyan', 'wenyan-lite', 'wenyan-full', 'wenyan-ultra']);
 const PONYTAIL_MODES = new Set(['off', 'lite', 'full', 'ultra']);
+// Opt-in only: no combo preset writes this, so it never reaches a user who did not ask for it.
+const PSTACK_MODES = new Set(['off', 'on']);
 
 function readStringDefault(key: string, valid: Set<string>): string {
   const raw = readPluginSettings()[key];
@@ -70,15 +72,19 @@ export function readPonytailDefault(): string {
   return readStringDefault('ponytailDefault', PONYTAIL_MODES);
 }
 
+export function readPstackDefault(): string {
+  return readStringDefault('pstackDefault', PSTACK_MODES);
+}
+
 export function isComboSetupComplete(): boolean {
   return readPluginSettings().comboSetupComplete === true;
 }
 
 const COMBO_MODE_DEFAULTS = {
-  off: { cavemanDefault: 'off', rtkDefault: false, ponytailDefault: 'off' },
-  medium: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite' },
-  balanced: { cavemanDefault: 'full', rtkDefault: true, ponytailDefault: 'full' },
-  max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra' },
+  off: { cavemanDefault: 'off', rtkDefault: false, ponytailDefault: 'off', pstackDefault: 'off' },
+  medium: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite', pstackDefault: 'off' },
+  balanced: { cavemanDefault: 'full', rtkDefault: true, ponytailDefault: 'full', pstackDefault: 'off' },
+  max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra', pstackDefault: 'off' },
 } as const;
 
 export function saveComboSetup(level: string): boolean {

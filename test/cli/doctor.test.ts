@@ -422,7 +422,7 @@ test("doctor does not count the exec row when rtk is absent", () => {
     expect(result.status, result.stderr).toBe(0);
     // The exec question is meaningless without a binary.
     expect(result.stdout).toMatch(/—  RTK exec: not installed/);
-    expect(result.stdout).toMatch(/Summary: 4 checks/);
+    expect(result.stdout).toMatch(/Summary: 5 checks/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

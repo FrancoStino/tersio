@@ -179,6 +179,7 @@ test("package manifest declares always-on extensions plus updater feature and se
   }
   expect(manifest.omp?.extensions).toEqual([
     "./extensions/caveman/index.ts",
+    "./extensions/pstack/index.ts",
     "./extensions/rtk/session.ts",
     "./extensions/rtk/filter.ts",
     "./extensions/combo/index.ts",

@@ -50,6 +50,8 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     ?? path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
   const cavemanIndex = path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts');
   const cavemanRule = (name: string) => path.join(tersioPluginDir, 'extensions', 'caveman', name);
+  // The pstack body is a Tersio fork with no remote, so the check proves it is usable, not current.
+  const pstackRule = path.join(tersioPluginDir, 'extensions', 'pstack', 'rule.md');
   const rtkIndex = path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts');
   const updaterIndex = path.join(tersioPluginDir, 'extensions', 'updater', 'index.ts');
 
@@ -117,6 +119,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     cavemanRuleText: readTextIfExists(cavemanRule('rule.md')),
     cavemanUltraText: readTextIfExists(cavemanRule('rule-ultra.md')),
     cavemanMegacaveText: readTextIfExists(cavemanRule('rule-megacave.md')),
+    pstackRuleText: readTextIfExists(pstackRule),
     rtkIndexText: readTextIfExists(rtkIndex),
     updaterIndexText: readTextIfExists(updaterIndex),
     rtkMtime: rtkBin ? fs.stat(rtkBin).catch(() => null) : Promise.resolve(null),
@@ -135,7 +138,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
     ? Promise.resolve(serviceState())
     : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanUltraText, cavemanMegacaveText, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -150,6 +153,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       probes.cavemanRuleText,
       probes.cavemanUltraText,
       probes.cavemanMegacaveText,
+      probes.pstackRuleText,
       probes.ruleMtime,
       probes.rtkBinText,
       probes.rtkMtime,
@@ -246,6 +250,12 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     if (text === null) continue;
     const problem = ruleBodyProblem(text);
     if (problem) warnLine(`Caveman ${name}`, `unusable body (${problem}) — run: tersio install`);
+  }
+  // pstack ships off, so a missing body only disables the mode; a broken one still earns a line.
+  check('pstack rule', pstackRuleText !== null, pstackRuleText === null ? 'missing — run: tersio install' : '');
+  if (pstackRuleText !== null) {
+    const problem = ruleBodyProblem(pstackRuleText);
+    if (problem) warnLine('pstack rule.md', `unusable body (${problem}) — run: tersio install`);
   }
   // A verbatim sentence read out of omp's own prompt, so a re-worded release stops Caveman reaching subagents.
   const subagentGap = subagentMarkerStatus(ompBinary());

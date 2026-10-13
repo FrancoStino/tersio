@@ -26,6 +26,7 @@ import {
   readComboDefault,
   readPluginSettings,
   readPonytailDefault,
+  readPstackDefault,
   readRtkDefault,
   saveComboSetup,
 } from '../shared/plugin-settings.ts';
@@ -94,6 +95,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
     pi.appendEntry?.('rtk-mode', { enabled: modes.rtk === 'on' });
     pi.appendEntry?.('ponytail-mode', { mode: modes.ponytail });
+    pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
     pi.appendEntry?.('combo-level', { level });
   }
   function restoreConfiguredDefaults(): void {
@@ -101,15 +103,18 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault'].some((key) => key in settings);
     const combo = readComboDefault();
     const preset = COMBO_LEVELS[combo];
-    const modes = hasModeDefaults
+    const trio = hasModeDefaults
       ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault() }
-      : preset;
+      : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail };
+    // No preset turns pstack on, so only its own default applies.
+    const modes = { ...trio, pstack: readPstackDefault() };
     setSharedComboModes(modes);
-    if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off') return;
+    if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off') return;
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
     pi.appendEntry?.('rtk-mode', { enabled: modes.rtk === 'on' });
     pi.appendEntry?.('ponytail-mode', { mode: modes.ponytail });
-    if (preset && modes.caveman === preset.caveman && modes.rtk === preset.rtk && modes.ponytail === preset.ponytail) {
+    pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
+    if (preset && modes.caveman === preset.caveman && modes.rtk === preset.rtk && modes.ponytail === preset.ponytail && modes.pstack === preset.pstack) {
       pi.appendEntry?.('combo-level', { level: combo });
     }
   }
@@ -147,7 +152,8 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
           '/combo off      — disables all 3 (caveman, rtk, ponytail)\n' +
           '/combo medium   — light: caveman=lite, rtk=on, ponytail=lite\n' +
           '/combo balanced — middle: caveman=full, rtk=on, ponytail=full\n' +
-          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra',
+          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra\n' +
+          'Presets cover 3 modes. pstack is opt-in: /pstack on',
           'info'
         );
         return;

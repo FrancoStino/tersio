@@ -6,29 +6,32 @@ const BRIDGE_KEY = Symbol.for('tersio/combo-session-state');
 // A verbatim sentence from omp's subagent prompt, so it can drift; read from the installed omp binary on 2026-10-01.
 export const OMP_SUBAGENT_MARKER = 'Worker agent: delegated tasks.';
 
+// pstack is the field no preset turns on: its prompt cost is unmeasured, so every level keeps it off.
 export const COMBO_LEVELS: Record<string, Readonly<ComboState>> = Object.freeze({
-  off: Object.freeze({ level: 'off', caveman: 'off', rtk: 'off', ponytail: 'off' }),
-  medium: Object.freeze({ level: 'medium', caveman: 'lite', rtk: 'on', ponytail: 'lite' }),
-  balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full' }),
-  max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra' }),
+  off: Object.freeze({ level: 'off', caveman: 'off', rtk: 'off', ponytail: 'off', pstack: 'off' }),
+  medium: Object.freeze({ level: 'medium', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'off' }),
+  balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full', pstack: 'off' }),
+  max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra', pstack: 'off' }),
 });
 
 const MODE_VALUES: Record<string, Set<string>> = {
   caveman: new Set(['off', 'lite', 'full', 'ultra', 'megacave', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'wenyan', 'wenyan-lite', 'wenyan-full', 'wenyan-ultra']),
   rtk: new Set(['off', 'on']),
   ponytail: new Set(['off', 'lite', 'full', 'ultra']),
+  pstack: new Set(['off', 'on']),
 };
 
 // Upstream renamed wenyan to megacave and kept the old spelling as an alias.
 const CAVEMAN_LEGACY_PREFIX = /^wenyan/;
 
-type ModeName = 'caveman' | 'rtk' | 'ponytail';
+type ModeName = 'caveman' | 'rtk' | 'ponytail' | 'pstack';
 type Modes = Record<ModeName, string>;
 
 const MODE_ENTRY_TYPES: Record<string, ModeName> = {
   'caveman-mode': 'caveman',
   'rtk-mode': 'rtk',
   'ponytail-mode': 'ponytail',
+  'pstack-mode': 'pstack',
 };
 
 /** True when the branch carries Tersio's own mode state; a subagent starts without it. */
@@ -54,7 +57,7 @@ export function normalizeMode(name: ModeName, value: unknown): string | null {
 export function deriveLevel(modes: Modes | null | undefined): ComboLevel {
   for (const level of Object.keys(COMBO_LEVELS) as ComboLevel[]) {
     const preset = COMBO_LEVELS[level];
-    if (preset.caveman === modes?.caveman && preset.rtk === modes?.rtk && preset.ponytail === modes?.ponytail) return level;
+    if (preset.caveman === modes?.caveman && preset.rtk === modes?.rtk && preset.ponytail === modes?.ponytail && preset.pstack === modes?.pstack) return level;
   }
   return 'custom';
 }
@@ -72,6 +75,7 @@ function normalizedState(modes: Partial<Modes> | null | undefined, level: ComboL
     caveman: normalizeMode('caveman', modes?.caveman) || 'off',
     rtk: normalizeMode('rtk', modes?.rtk) || 'off',
     ponytail: normalizeMode('ponytail', modes?.ponytail) || 'off',
+    pstack: normalizeMode('pstack', modes?.pstack) || 'off',
   };
   return Object.freeze({ level: isKnownLevel(level) ? level : deriveLevel(state), ...state });
 }
@@ -156,15 +160,16 @@ export function setSharedComboMode(name: ModeName, value: unknown): Readonly<Com
   const mode = normalizeMode(name, value);
   if (!mode) return getSharedComboState();
   const modes = { ...getSharedComboState(), [name]: mode } as Modes;
-  // Derive the level from the final triplet, so a redundant same-value write cannot strand a preset at 'custom'.
+  // Derive the level from the final quartet, so a redundant same-value write cannot strand a preset at 'custom'.
   return publish(normalizedState(modes));
 }
 
-export function setSharedComboModes(modes: { caveman?: unknown; rtk?: unknown; ponytail?: unknown }): Readonly<ComboState> {
+export function setSharedComboModes(modes: { caveman?: unknown; rtk?: unknown; ponytail?: unknown; pstack?: unknown }): Readonly<ComboState> {
   return publish(normalizedState({
     caveman: normalizeMode('caveman', modes.caveman) || 'off',
     rtk: normalizeMode('rtk', modes.rtk) || 'off',
     ponytail: normalizeMode('ponytail', modes.ponytail) || 'off',
+    pstack: normalizeMode('pstack', modes.pstack) || 'off',
   }));
 }
 
@@ -185,13 +190,13 @@ export function reconcileSharedComboEntries(entries: SessionEntry[] | null | und
       if (mode) modes[name] = mode;
     }
   }
-  // The level reflects the final triplet, not write order, so a preset followed by the same values reconciles back.
+  // The level reflects the final quartet, not write order, so a preset followed by the same values reconciles back.
   return publish(normalizedState(modes));
 }
 
 // One-line session-wide mode summary for change confirmations.
-export function activeModesSummary(state: { caveman: string; rtk: string; ponytail: string }): string {
-  return `caveman=${state.caveman.toUpperCase()}, rtk=${state.rtk.toUpperCase()}, ponytail=${state.ponytail.toUpperCase()}`;
+export function activeModesSummary(state: { caveman: string; rtk: string; ponytail: string; pstack: string }): string {
+  return `caveman=${state.caveman.toUpperCase()}, rtk=${state.rtk.toUpperCase()}, ponytail=${state.ponytail.toUpperCase()}, pstack=${state.pstack.toUpperCase()}`;
 }
 
 // Keyed registration drops stale closures; hosts offer no teardown hook.

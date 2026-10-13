@@ -2,7 +2,7 @@
 import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS,
+  CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
   verbose,
 } from './common.ts';
 import type { WriteOptions } from './common.ts';
@@ -25,6 +25,7 @@ interface Profile {
   cavemanDefault: string;
   rtkDefault: boolean;
   ponytailDefault: string;
+  pstackDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
   // Empty means the built-in default.
@@ -40,6 +41,7 @@ function defaultProfile(): Profile {
     cavemanDefault: 'off',
     rtkDefault: false,
     ponytailDefault: 'off',
+    pstackDefault: 'off',
     currency: DEFAULT_CURRENCY,
     backupSchedule: 'monthly',
     subagentMarkers: [],
@@ -51,6 +53,7 @@ interface StoredSettings {
   cavemanDefault?: unknown;
   rtkDefault?: unknown;
   ponytailDefault?: unknown;
+  pstackDefault?: unknown;
   currency?: unknown;
   backupSchedule?: unknown;
   subagentMarkers?: unknown;
@@ -70,6 +73,7 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   if (typeof stored.cavemanDefault === 'string' && CAVEMAN_DEFAULTS.has(stored.cavemanDefault)) base.cavemanDefault = stored.cavemanDefault;
   if (typeof stored.rtkDefault === 'boolean') base.rtkDefault = stored.rtkDefault;
   if (typeof stored.ponytailDefault === 'string' && PONYTAIL_DEFAULTS.has(stored.ponytailDefault)) base.ponytailDefault = stored.ponytailDefault;
+  if (typeof stored.pstackDefault === 'string' && PSTACK_DEFAULTS.has(stored.pstackDefault)) base.pstackDefault = stored.pstackDefault;
   if (typeof stored.currency === 'string' && isCurrencyCode(stored.currency.trim().toUpperCase())) {
     base.currency = stored.currency.trim().toUpperCase() as CurrencyCode;
   }
@@ -117,6 +121,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     cavemanDefault: profile.cavemanDefault,
     rtkDefault: profile.rtkDefault,
     ponytailDefault: profile.ponytailDefault,
+    pstackDefault: profile.pstackDefault,
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     ...(profile.subagentMarkers.length > 0 ? { subagentMarkers: profile.subagentMarkers } : {}),
@@ -131,23 +136,24 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
 }
 
 function formatProfile(profile: Profile): string {
-  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault}) · currency=${profile.currency}`;
+  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault}) · currency=${profile.currency}`;
 }
 
 export { defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings, Profile };
 
 /** The status line the extensions print, read from the persisted profile. */
 export function formatCliStatus(profile: Profile): string {
-  const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault } = profile;
-  if (comboDefault === 'off' && cavemanDefault === 'off' && !rtkDefault && ponytailDefault === 'off') {
+  const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault, pstackDefault } = profile;
+  if (comboDefault === 'off' && cavemanDefault === 'off' && !rtkDefault && ponytailDefault === 'off' && pstackDefault === 'off') {
     return '🧩 combo OFF';
   }
   const preset = COMBO_PRESET_MODES[comboDefault];
   const isPreset = preset !== undefined
     && preset.caveman === cavemanDefault
     && preset.rtk === rtkDefault
-    && preset.ponytail === ponytailDefault;
+    && preset.ponytail === ponytailDefault
+    && preset.pstack === pstackDefault;
   const level = isPreset ? comboDefault.toUpperCase() : 'CUSTOM';
   const rtk = rtkDefault ? 'ON' : 'OFF';
-  return `🧩 combo ${level}: 🪨caveman=${cavemanDefault.toUpperCase()} ⚡rtk=${rtk} 🦥ponytail=${ponytailDefault.toUpperCase()}`;
+  return `🧩 combo ${level}: 🪨caveman=${cavemanDefault.toUpperCase()} ⚡rtk=${rtk} 🦥ponytail=${ponytailDefault.toUpperCase()} 🥔pstack=${pstackDefault.toUpperCase()}`;
 }

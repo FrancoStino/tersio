@@ -22,6 +22,8 @@ export const TREE_FILES: readonly string[] = [
   'caveman/rule.md',
   'caveman/rule-ultra.md',
   'caveman/rule-megacave.md',
+  'pstack/index.ts',
+  'pstack/rule.md',
   'rtk/session.ts',
   'rtk/filter.ts',
   'timing/index.ts',

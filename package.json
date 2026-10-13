@@ -28,9 +28,10 @@
   },
   "omp": {
     "name": "Tersio",
-    "description": "Toggleable Caveman/RTK/Ponytail session modes with Combo presets",
+    "description": "Toggleable Caveman/RTK/Ponytail session modes with Combo presets, plus the opt-in pstack rigor mode",
     "extensions": [
       "./extensions/caveman/index.ts",
+      "./extensions/pstack/index.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
       "./extensions/combo/index.ts",
@@ -92,6 +93,15 @@
         ],
         "default": "off"
       },
+      "pstackDefault": {
+        "type": "enum",
+        "description": "Session-start default; opt-in, never set by a combo preset",
+        "values": [
+          "off",
+          "on"
+        ],
+        "default": "off"
+      },
       "currency": {
         "type": "enum",
         "description": "Display currency for usage/dashboard reports (--currency overrides per run)",
@@ -114,15 +124,17 @@
   "files": [
     "dist/**/*.js",
     "dist/extensions/caveman/*.md",
+    "dist/extensions/pstack/*.md",
     "dashboard/dist/**/*",
     "extensions/**/*.ts",
     "extensions/caveman/rule.md",
     "extensions/caveman/rule-ultra.md",
-    "extensions/caveman/rule-megacave.md"
+    "extensions/caveman/rule-megacave.md",
+    "extensions/pstack/rule.md"
   ],
   "scripts": {
     "clean": "rm -rf dist dashboard/dist",
-    "build": "tsc && bun run build:dashboard && cp extensions/caveman/*.md dist/extensions/caveman/",
+    "build": "tsc && bun run build:dashboard && cp extensions/caveman/*.md dist/extensions/caveman/ && cp extensions/pstack/*.md dist/extensions/pstack/",
     "build:dashboard": "bun install --cwd dashboard/app --frozen-lockfile && bun run --cwd dashboard/app build",
     "prepublishOnly": "bun run build",
     "check": "tsc --noEmit",

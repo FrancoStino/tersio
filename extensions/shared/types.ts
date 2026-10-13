@@ -5,6 +5,7 @@ export interface ComboState {
   caveman: string;
   rtk: string;
   ponytail: string;
+  pstack: string;
 }
 
 export type ComboLevel = 'off' | 'medium' | 'balanced' | 'max' | 'custom';
