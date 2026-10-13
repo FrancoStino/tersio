@@ -75,7 +75,7 @@ Every mode is measured against a base run with all modes off. Measured surfaces 
 
 The two `/caveman` rows above are the exception worth naming: both levels spend more prompt tokens than the reply text they save, so they cost you money on net. Use Caveman for the terser writing style, not as a token saving.
 
-Prompt overhead is included in [docs/BENCHMARK.md](./docs/BENCHMARK.md) with a full prompt-base example. Summary: `/rtk on` pays back immediately, `/ponytail ultra` repays in about 7 code tasks, `/combo medium` in about 8, and every Caveman level costs more in prompt than it saves in reply text.
+Prompt overhead is included in [docs/BENCHMARK.md](./docs/BENCHMARK.md) with a full prompt-base example. Summary: `/rtk on` pays back immediately, `/ponytail ultra` repays in about 7 code tasks, `/combo medium` in about 8, and every Caveman level costs more in prompt than it saves in reply text. pstack adds 1,374 tokens of prompt per turn, close to Caveman full's 1,158, and has no measured reply-text saving; its rules are trimmed to what caveman and ponytail do not already say.
 
 The Command tools dashboard reports weighted RTK command-output savings and OMP-specific adoption from executed Bash records. It does not estimate provider billing.
 Upstream Ponytail's fair agentic benchmark reports 54% less code, 22% fewer tokens, 20% lower cost, and 100% retained safety. RTK estimates command-output tokens, not bill savings. Caveman and Ponytail compliance varies by model. Measure your own sessions with `tersio usage` and the dashboard.
