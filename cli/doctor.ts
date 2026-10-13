@@ -83,13 +83,17 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const treeStale: string[] = [];
   const treeMissing: string[] = [];
   const treeOrphan: string[] = [];
-  for (const host of hosts.filter((h) => h.installed)) {
-    // omp's is the package tree, so it holds every manifest entry and is compared against the full set.
-    const isPackageTree = host.id === 'omp';
-    const treeId = isPackageTree ? 'opencode' : host.id;
-    const base = isPackageTree
-      ? path.join(tersioPluginDir, 'extensions')
-      : hostExtensionsDir(host.id);
+  // The tree a host loads: omp reads the plugin package, every other host its own directory.
+  const treeBaseFor = (host: ReturnType<typeof detectHosts>[number]): string =>
+    host.id === 'omp' ? path.join(tersioPluginDir, 'extensions') : hostExtensionsDir(host.id);
+  // A tree holding at least one file of this build is compared even when the host reads as not
+  // installed. pi auto-discovers every index.ts it finds, so a half-written tree needs reporting,
+  // and `detectHosts` reads one as absent: it wants every file or a declared package.
+  const treeHoldsOwnFiles = (host: ReturnType<typeof detectHosts>[number]): boolean =>
+    treeFilesFor(host.id === 'omp' ? 'opencode' : host.id).some((rel) => existsSync(path.join(treeBaseFor(host), ...rel.split('/'))));
+  for (const host of hosts.filter((h) => h.installed || treeHoldsOwnFiles(h))) {
+    const treeId = host.id === 'omp' ? 'opencode' : host.id;
+    const base = treeBaseFor(host);
     const onDisk = new Set(hostTreeFiles(base).filter((rel) => path.extname(rel) !== '.js'));
     const expected = new Set(treeFilesFor(treeId));
     const every = new Set([...onDisk, ...expected]);
