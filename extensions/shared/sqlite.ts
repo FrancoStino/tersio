@@ -40,11 +40,6 @@ interface NodeDatabase {
   close(): void;
 }
 
-// Both engines checkpoint and drop the -wal/-shm on close, but they leave the header in WAL mode. A later
-// `sqlite3 -readonly` open cannot recreate the missing -shm, so the file reads as unopenable. Returning it
-// to a rollback journal is the state the CLI wrote before the engines existed; the writers re-enable WAL.
-const LEAVE_ROLLBACK = 'PRAGMA journal_mode=DELETE;';
-
 let cached: Engine | null | undefined;
 let cachedFor: string | undefined;
 
@@ -60,7 +55,7 @@ function engine(): Engine | null {
     cached = {
       kind: 'bun',
       read: (db, sql) => { const d = new Database(db, { readonly: true }); try { return d.query(sql).values(); } finally { d.close(); } },
-      exec: (db, sql) => { const d = new Database(db); try { d.exec(sql); d.exec(LEAVE_ROLLBACK); } finally { d.close(); } },
+      exec: (db, sql) => { const d = new Database(db); try { d.exec(sql); } finally { d.close(); } },
     };
     return cached;
   } catch { /* not Bun, or no SQLite in this build */ }
@@ -84,7 +79,7 @@ function engine(): Engine | null {
           return st.all();
         } finally { d.close(); }
       },
-      exec: (db, sql) => { const d = new DatabaseSync(db); try { d.exec(sql); d.exec(LEAVE_ROLLBACK); } finally { d.close(); } },
+      exec: (db, sql) => { const d = new DatabaseSync(db); try { d.exec(sql); } finally { d.close(); } },
     };
     return cached;
   } catch { /* Node older than 22.5, or one built without SQLite or positional rows */ }
