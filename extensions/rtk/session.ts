@@ -23,8 +23,8 @@ function setRtkProcessEnabled(enabled: boolean): void {
   else process.env.RTK_DISABLED = '1';
 }
 
-// rtk's awareness contract: state the output contract, never tell the model to type `rtk`.
-const RTK_PROMPT = `RTK guidance active. Bash output, and large grep and glob results, are condensed to save tokens: every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code.`;
+// rtk's contract: name the rewritten surface, never the binary — a hand-typed `rtk` fights the rewrite.
+const RTK_PROMPT = `RTK guidance active. What you run is condensed automatically: searches (grep, rg), listings (ls, find, cat as read), package and test runs (bun, npm, pnpm), version control (git), and type and lint checks (tsc, eslint). Every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code. A command with no condensed form passes through unchanged.`;
 
 export default function rtkSessionExtension(pi: ExtensionApi): void {
   let enabled = DEFAULT_ENABLED;
@@ -44,7 +44,7 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
 
   setExtensionLabel(pi, 'RTK session toggle');
 
-  // Live mirror: a /tersio or /combo switch publishes shared state — adopt it at once so the next turn and the rtk_run gate see it, no reload.
+  // Live mirror: a /tersio or /combo switch publishes shared state — adopt it once so the next turn and rtk_run see it.
   function syncFromShared(state: { rtk: string }): void {
     enabled = state.rtk === 'on';
     setRtkProcessEnabled(enabled);
@@ -102,7 +102,7 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
     const entries = sessionEntries(ctx);
     // A subagent's branch has no Tersio entries; reconciling it would wipe shared state.
     if (hasModeState(entries)) reconcileSharedComboEntries(entries);
-    // Persisted session state wins; a fresh session falls back to the installer/user-configured default (off unless configured).
+    // Persisted session state wins; a fresh session falls back to the installer/user default (off unless configured).
     const persisted = resolveEnabled(entries);
     enabled = typeof persisted === 'boolean' ? persisted : enabled || readRtkDefault();
     setRtkProcessEnabled(enabled);

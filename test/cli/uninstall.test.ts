@@ -49,7 +49,6 @@ function seed(home: string) {
   );
   mkdirSync(path.join(home, ".bun", "bin"), { recursive: true });
   writeFileSync(path.join(home, ".bun", "bin", "rtk"), "fake", "utf8");
-  // Backups this CLI leaves behind.
   writeFileSync(path.join(home, ".omp", "agent", "config.yml.bak"), "extensions: []\n", "utf8");
   const pluginCaveman = path.join(pluginsDir, "node_modules", SELF, "extensions", "caveman");
   mkdirSync(pluginCaveman, { recursive: true });
@@ -80,8 +79,7 @@ test("uninstall removes extension dirs, self registration, and combo config entr
     // Ponytail ships with the presets, so a full uninstall removes it; the rtk binary stays.
     expect(!existsSync(path.join(home, ".omp", "plugins", "node_modules", PONYTAIL)), "ponytail removed by default").toBeTruthy();
     expect(existsSync(path.join(home, ".bun", "bin", "rtk")), "rtk binary kept").toBeTruthy();
-    // The wiring goes with the rest, or OMP keeps loading a hook for a package
-    // that is gone. The binary stays: it is a shared tool on PATH.
+    // Wiring goes with the rest or OMP loads a hook for a gone package; the binary stays, shared on PATH.
     expect(existsSync(path.join(extDir, "rtk.ts")), "rtk wiring removed").toBeFalsy();
     expect(config).not.toMatch(/rtk\.ts/);
     expect(config).not.toMatch(/ponytail/);
@@ -126,8 +124,7 @@ test("uninstall removes the bundled ponytail copy even with no legacy dep entry"
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-uninstall-"));
   try {
     seed(home);
-    // Post-bundle state: no separate dep or lock entry, only the
-    // tersio-owned directory.
+    // Post-bundle state: no separate dep or lock entry, only the tersio-owned directory.
     const pluginsDir = path.join(home, ".omp", "plugins");
     writeFileSync(
       path.join(pluginsDir, "package.json"),
@@ -209,11 +206,9 @@ test("uninstall dry-run changes no files", () => {
   }
 });
 
-// Neither `--host pi` nor auto-selecting the only installed host reached a
-// prompt, so pi files were removed with no confirmation and nothing to review.
-// From the install manifest: a hand-written copy drifted, and the drift made a
-// complete install look absent, so uninstall skipped.
-const { TREE_FILES: PI_TREE } = await import(new URL("file:///" + path.join(root, "cli/manifest.ts").replace(/\\/g, "/")).href);
+// Install manifest is the source of truth: a hand-written copy drifted and made a complete install look absent.
+const { treeFilesFor } = await import(new URL("file:///" + path.join(root, "cli/manifest.ts").replace(/\\/g, "/")).href);
+const PI_TREE = treeFilesFor("pi");
 
 function seedPi(home: string): void {
   const extDir = path.join(home, ".pi", "agent", "extensions");

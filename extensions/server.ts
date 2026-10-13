@@ -1,5 +1,8 @@
 // OpenCode plugin entry: maps its plugin API onto the shared ExtensionApi the mode extensions consume.
 import { execFile } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Plugin } from '@opencode/plugin';
 import cavemanSessionExtension from './caveman/index.ts';
 import rtkSessionExtension from './rtk/session.ts';
@@ -40,8 +43,7 @@ const plugin: Plugin.Plugin = {
     const loadEntries = async (sid: string): Promise<SessionEntry[]> => {
       const own = ((await ctx.storage.get(`entries:${sid}`)) as SessionEntry[] | undefined) ?? [];
       if (own.length) return own;
-      // Pre-scoped installs kept one global list; adopt it once, then diverge.
-      // Clear it after adoption so it can never shadow saved defaults later.
+      // Pre-scoped installs kept one global list; adopt it once and clear it so it cannot shadow saved defaults later.
       const legacy = ((await ctx.storage.get('entries')) as SessionEntry[] | undefined) ?? [];
       if (legacy.length) void ctx.storage.set('entries', []).catch(() => {});
       return [...legacy];
@@ -138,8 +140,7 @@ const plugin: Plugin.Plugin = {
             if (sid) await ensureSession(sid);
             const text = typeof input.prompt?.text === 'string' ? input.prompt.text : '';
             const args = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
-            // The shared handlers report through ui.notify, which has no OpenCode
-            // surface. Collect it and send it back so a command never answers blank.
+            // Shared handlers notify via ui.notify, which OpenCode lacks; echo it back so a command does not answer blank.
             const notes: string[] = [];
             const cmdCtx: ExtensionCtx = {
               ...stubCtx(sid),
@@ -175,6 +176,15 @@ const plugin: Plugin.Plugin = {
       }
     });
 
+    // The tree ships the ruleset beside the extensions, and OpenCode reads no node_modules from a plugin dir.
+    try {
+      await ctx.skill.transform((editor) => {
+        for (const skill of bundledSkills()) editor.add(skill as never);
+      });
+    } catch {
+      // Hosts without the skill transform keep the ruleset in the prompt alone.
+    }
+
     await ctx.session.hook('context', async (event) => {
       const sid = sidOf((event as { sessionID?: unknown }).sessionID);
       if (sid) await ensureSession(sid);
@@ -205,6 +215,10 @@ const plugin: Plugin.Plugin = {
       if (tool !== 'bash' && tool !== 'shell') return;
       const input = event.input as { command?: unknown } | null | undefined;
       if (typeof input?.command !== 'string' || !input.command) return;
+      // /rtk off must stop the rewrite too, or the mode switch only silences the prompt block.
+      const sid = typeof (event as { sessionID?: unknown }).sessionID === 'string' ? (event as { sessionID: string }).sessionID : activeSid;
+      if (sid !== undefined) await ensureSession(sid);
+      if (!rtkActive(sid === undefined ? undefined : sessionEntriesOf(sid))) return;
       const rewritten = await rewriteCommand(input.command);
       if (rewritten) input.command = rewritten;
     });
@@ -246,16 +260,66 @@ function execRtk(cmd: string, args: string[], opts?: { signal?: AbortSignal; tim
   });
 }
 
+/** `rtk rewrite` exit codes: 0 rewrite found, 1 no equivalent, 3 advisory; the code is the contract. */
+const RTK_REWRITE_FOUND = 0;
+const RTK_REWRITE_ADVISORY = 3;
+
+/** The bundled ruleset's skill dirs, beside the plugin entry: OpenCode reads no node_modules from a plugin. */
+const PONYTAIL_BUNDLE_SKILLS = join(dirname(fileURLToPath(import.meta.url)), 'ponytail-bundle', 'skills');
+
+/** Frontmatter a SKILL.md carries: flat keys only, the shape every bundled skill uses. */
+function parseSkillFile(file: string): { id: string; name: string; description: string; path: string; content: string } | null {
+  let raw: string;
+  try { raw = readFileSync(file, 'utf8'); } catch { return null; }
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---[^\S\n]*\r?\n?([\s\S]*)$/);
+  if (!match) return null;
+  const field = (key: string): string | undefined => {
+    const lines = match[1].split(/\r?\n/);
+    const at = lines.findIndex((line) => line.startsWith(`${key}:`));
+    if (at === -1) return undefined;
+    const value = lines[at].slice(key.length + 1).trim();
+    if (value[0] !== '>' && value[0] !== '|') return value;
+    // Folded (`>`) joins the indented lines; the next unindented key ends the block.
+    const block: string[] = [];
+    for (const line of lines.slice(at + 1)) {
+      if (line.trim() !== '' && !/^\s/.test(line)) break;
+      block.push(line.trim());
+    }
+    while (block.length > 0 && block[block.length - 1] === '') block.pop();
+    return block.join(value[0] === '|' ? '\n' : ' ');
+  };
+  const id = field('name') ?? basename(dirname(file));
+  return { id, name: id, description: field('description') ?? '', path: file, content: match[2] };
+}
+
+/** Every bundled skill, or an empty list when the installer has not bundled them. */
+function bundledSkills(): ReturnType<typeof parseSkillFile>[] {
+  let entries;
+  try { entries = readdirSync(PONYTAIL_BUNDLE_SKILLS, { withFileTypes: true }); } catch { return []; }
+  const out: ReturnType<typeof parseSkillFile>[] = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.isDirectory()) continue;
+    const skill = parseSkillFile(join(PONYTAIL_BUNDLE_SKILLS, entry.name, 'SKILL.md'));
+    if (skill) out.push(skill);
+  }
+  return out;
+}
+
 function rewriteCommand(command: string): Promise<string | null> {
   const bin = resolveRtkBinary();
   if (!bin) return Promise.resolve(null);
   return new Promise((resolve) => {
     execFile(bin, ['rewrite', command], { timeout: 5000 }, (error, stdout) => {
       // A kill or timeout means untrustworthy output; pass the command through.
-      const err = error as { killed?: boolean; signal?: unknown } | null;
+      const err = error as { killed?: boolean; signal?: unknown; code?: unknown } | null;
       if (err && (err.killed || err.signal)) return resolve(null);
+      const code = typeof err?.code === 'number' ? err.code : RTK_REWRITE_FOUND;
+      // Exit 1 is the only "no equivalent" answer, so anything else with output rewrites.
+      if (code === 1) return resolve(null);
       const out = String(stdout).trim();
-      resolve(out && out !== command ? out : null);
+      if (!out || out === command) return resolve(null);
+      if (code !== RTK_REWRITE_FOUND && code !== RTK_REWRITE_ADVISORY) return resolve(null);
+      resolve(out);
     });
   });
 }

@@ -1,5 +1,4 @@
-// test/repo-integrity.test.ts — an import target must be git-tracked, not
-// merely on disk, or a fresh checkout fails at `tsc`.
+// An import target must be git-tracked, not merely on disk, or a fresh checkout fails at `tsc`.
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -35,8 +34,7 @@ function relativeSpecs(body: string): string[] {
   return specs.filter((spec) => spec.startsWith("."));
 }
 
-// Compiled .js is gitignored; the tracked source of truth is always the .ts.
-// A Vite asset import carries a query (`./mark.svg?raw`), and its target is still that file.
+// Compiled .js is gitignored, so tracked sources are always .ts; a Vite `?raw` query still names its file.
 function candidates(source: string, spec: string): string[] {
   const bare = spec.replace(/\?.*$/, "");
   const stem = path.posix.join(path.posix.dirname(source), bare);
@@ -62,8 +60,7 @@ test("tracked sources only import git-tracked files", () => {
       `Commit the targets or fix the imports:\n${violations.join("\n")}`,).toEqual([]);
 });
 
-// A spawn spreading process.env with an overridden HOME still writes the real
-// ~/.pi/agent, which once deleted a real extension tree. cliEnv() pins both.
+// A spawn spreading process.env and overriding HOME still writes the real ~/.pi/agent; cliEnv() pins both.
 function gitTsFiles(): string[] {
   return [...trackedFiles()].filter((f) => f.endsWith(".ts"));
 }
@@ -91,8 +88,7 @@ test("package exports a loadable opencode server entrypoint", () => {
   expect(existsSync(path.join(root, tracked)), `${tracked} must exist for a fresh checkout`).toBe(true);
 });
 
-// Recharts animates in JS on mount, which a CSS kill-switch cannot stop. A moving ticker or
-// donut makes a byte comparison of two captures drift, so the entrance animation stays off.
+// Recharts animates in JS on mount, so a byte comparison of two captures drifts; the entrance stays off.
 test("no dashboard chart re-enables a recharts entrance animation", () => {
   const offenders: string[] = [];
   for (const file of trackedFiles()) {

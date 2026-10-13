@@ -72,8 +72,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-content"
-      // The shell is a column, so a body that grows fills a card that a grid row stretched.
-      // A card at its own height ignores it, and an `mt-auto` footer then pins to the bottom.
+      // The shell is a column, so a body fills a grid-stretched card; an `mt-auto` footer then pins to the bottom.
       className={cn("flex-1 px-(--card-spacing)", className)}
       {...props}
     />

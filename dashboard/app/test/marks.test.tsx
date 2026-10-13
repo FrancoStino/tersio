@@ -1,5 +1,4 @@
-// Guards the mark rules: every slug the UI names maps to a mark, the marks come from one
-// catalog, and the export inlines that same catalog into a self-contained file.
+// Guards the mark rules: every UI slug maps to a mark, marks come from one catalog the export inlines.
 import { describe, expect, test } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -24,6 +23,7 @@ const KNOWN_HOSTS = [
   "poolside.ai/favicon",
   "cdn.sanity.io",
   "cdn-avatars.huggingface.co",
+  "upload.wikimedia.org",
 ];
 
 function sourceFiles(dir: string): string[] {
@@ -73,9 +73,7 @@ describe("remote marks", () => {
     expect(Object.keys(MARK_BG).length).toBeGreaterThan(20);
     for (const [slug, bg] of Object.entries(MARK_BG)) {
       expect(`${slug} bg: ${bg}`).toMatch(/^[a-z0-9-]+ bg: #[0-9a-f]{6}$/);
-      // The fill must actually contrast with the ink drawn on it, or the mark disappears. A brand
-      // color is a given and the brand's own convention governs the ink, so the floor only has to
-      // catch a real failure such as the ink matching the fill.
+      // The 2.5 floor only catches a real failure, such as the ink matching the fill; brand color governs the ink.
       const fill = luminance(bg);
       const ink = luminance(contrastInk(bg));
       const ratio = (Math.max(fill, ink) + 0.05) / (Math.min(fill, ink) + 0.05);
@@ -127,6 +125,11 @@ describe("remote marks", () => {
       ["step-5-preview-free", "stepfun"],
       ["typesafe/jev-latest", "typesafe"],
       ["qwen-code-max", "qwen"],
+      // Meituan's own LongCat line, which names its vendor mark.
+      ["longcat-2.5-preview", "meituan"],
+      ["meituan/LongCat-2.0:free", "meituan"],
+      // Big Pickle ships with no disclosed author, so it reads as the stealth line.
+      ["opencode/opencode/big-pickle", "stealth"],
     ];
     for (const [model, slug] of models) {
       expect(`${model} -> ${vendorOf(model).slug}`).toBe(`${model} -> ${slug}`);
@@ -175,6 +178,12 @@ describe("remote marks", () => {
       ["opencode-zen", "opencode"],
       ["gmi-cloud", "gmicloud"],
       ["opencode-go", "opencode"],
+      // Kiro is AWS's own editor, so its mark is Kiro's, not the AWS cloud mark it ships under.
+      ["kiro", "kiro"],
+      ["trae-global", "trae"],
+      ["workbuddy-ai", "workbuddy"],
+      ["deepseek", "deepseek"],
+      ["deepseek-web", "deepseek"],
     ];
     for (const [provider, slug] of branded) {
       expect(`${provider} -> ${providerMeta(provider).slug}`).toBe(`${provider} -> ${slug}`);

@@ -1,6 +1,4 @@
-// Clack anchors its frame to the cursor, so a welcome taller than the terminal
-// scrolls the top off and slices the art. The byte stream looks fine, so the
-// screen has to be rendered: this needs `pyte`, and skips without it.
+// Clack anchors to the cursor, so an over-tall welcome scrolls; proving it needs `pyte`, and skips without it.
 import { describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -57,8 +55,11 @@ const PY = [
 
 const havePyte = spawnSync("python3", ["-c", "import pyte"], { encoding: "utf8" }).status === 0;
 
-/** The visible screen, one string per terminal row. */
+/** The visible screen, one string per terminal row. One capture per row count, shared by every test. */
+const screenCache = new Map<number, string[]>();
 function screenAt(rows: number): string[] {
+  const cached = screenCache.get(rows);
+  if (cached) return cached;
   const result = spawnSync("python3", ["-c", PY, String(rows), process.execPath, installer], {
     cwd: root,
     encoding: "utf8",
@@ -66,14 +67,14 @@ function screenAt(rows: number): string[] {
     env: { ...process.env, TERM: "xterm-256color" },
   });
   expect(result.status, result.stderr).toBe(0);
-  return JSON.parse(result.stdout) as string[];
+  const lines = JSON.parse(result.stdout) as string[];
+  screenCache.set(rows, lines);
+  return lines;
 }
 
 const LABELS = ["Install add-ons", "Update", "Doctor", "Settings", "Usage", "Dashboard", "Uninstall"];
 
-// Clack's spinner stop writes an extra newline under CI. A slow update check
-// used to leave that residue above the menu and push the tips off a 20-row
-// screen. Slow the registry reply past one spinner frame to prove it is gone.
+// Slow the registry past a spinner frame: Clack's CI spinner residue once pushed tips off a 20-row screen.
 function screenAtCi(rows: number): string[] {
   const bin = mkdtempSync(path.join(os.tmpdir(), "tersio-slow-npm-"));
   try {
@@ -99,8 +100,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
       for (const label of LABELS) {
         expect(lines.some((l) => l.includes(label)), `${label} present at ${rows} rows`).toBe(true);
       }
-      // The intro and every option must survive. A short terminal that scrolled
-      // them away showed a blank gap and a sliced art fragment.
+      // The intro and every option must survive; scrolling them away showed a blank gap and sliced art.
       expect(lines.some((l) => l.includes("set up add-ons")), `tips visible at ${rows} rows`).toBe(true);
       expect(lines.some((l) => l.includes("Uninstall")), `last option visible at ${rows} rows`).toBe(true);
     }, 20000);
@@ -134,8 +134,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
     expect(titleAt, "title present").toBeGreaterThan(-1);
     expect(comboAt, "combo present").toBeGreaterThan(titleAt);
     expect(firstOptionAt, "first option present").toBeGreaterThan(comboAt);
-    // It sits under the title, not in the option list: a radio marker would
-    // make it look selectable.
+    // Under the title, not the option list, so no radio marker marks it selectable.
     expect(lines[comboAt], "combo is not a selectable option").not.toMatch(/[●○]/);
   }, 20000);
 

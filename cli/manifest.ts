@@ -1,5 +1,6 @@
 // Single list of install writes, shared by installer, doctor, and tests.
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
 import { writeIfChanged } from './common.ts';
@@ -23,6 +24,7 @@ export const TREE_FILES: readonly string[] = [
   'caveman/rule-megacave.md',
   'rtk/session.ts',
   'rtk/filter.ts',
+  'timing/index.ts',
   'combo/index.ts',
   'commands/index.ts',
   'updater/index.ts',
@@ -47,21 +49,45 @@ export function rootFiles(): Array<[string, string]> {
   return TREE_FILES.filter((file) => !file.includes('/')).map((file) => [sourcePath(file), file]);
 }
 
-/** The OpenCode plugin entry. It imports `@opencode/plugin`, which the omp and pi loaders lack, so it ships in the OpenCode tree alone. */
+/** The OpenCode plugin entry: imports `@opencode/plugin`, absent from omp and pi loaders, so it ships there alone. */
 export const OPENCODE_ENTRY = 'server.ts';
+
+/** pi's rtk entry manifest, generated rather than copied: no other host loads rtk that way. */
+export const PI_RTK_MANIFEST = 'rtk/package.json';
+
+/** pi's rtk entry manifest, generated rather than copied: no other host loads rtk that way. */
+export const PI_RTK_MANIFEST_BODY = `${JSON.stringify({ pi: { extensions: ['./session.ts', './filter.ts'] } }, null, 2)}\n`;
+
+/** Files the install generates, keyed by tree path, so one repair path handles copied and generated alike. */
+export const GENERATED_TREE_FILES: Readonly<Record<string, string>> = {
+  [PI_RTK_MANIFEST]: PI_RTK_MANIFEST_BODY,
+};
 
 /** The files one host's extension tree holds. The package tree holds all of them. */
 export function treeFilesFor(id: 'omp' | 'pi' | 'opencode'): readonly string[] {
-  return id === 'opencode' ? TREE_FILES : TREE_FILES.filter((file) => file !== OPENCODE_ENTRY);
+  if (id === 'opencode') return TREE_FILES;
+  const files = TREE_FILES.filter((file) => file !== OPENCODE_ENTRY);
+  return id === 'pi' ? [...files, PI_RTK_MANIFEST] : files;
 }
 
-/**
- * Copy every bundled file into `dest`, creating the directories it needs. A file the bundle does not
- * carry is reported and skipped rather than aborting, so one missing source cannot stop the rest.
- *
- * `skip` answers "leave this file alone", which is how the rule bodies survive a repair: an upstream
- * fetch can be newer than the bundled copy, and a re-fetch never overwrites it.
- */
+/** Obsolete install debris; explicit, not a sweep, because these trees are shared with tersio's other steps. */
+const OBSOLETE_DIRS = ['caveman-session', 'rtk-filter', 'rtk-session', 'combo-toggle', 'tersio-commands', 'ai-addons-updater', 'lib', 'opencode'] as const;
+
+/** Debris test for a tree-relative path; one definition shared by detection and repair. */
+export function isObsoleteTreeFile(rel: string, id: 'omp' | 'pi' | 'opencode'): boolean {
+  if (rel.endsWith('.bak') || rel === '.DS_Store') return true;
+  if (OBSOLETE_DIRS.includes(rel.split('/')[0] as (typeof OBSOLETE_DIRS)[number])) return true;
+  return rel === 'server.ts' && id !== 'opencode';
+}
+
+/** A tree file's text: copied files come from the repo, generated ones from their own definition. */
+export function treeFileText(file: string): string | null {
+  const generated = GENERATED_TREE_FILES[file];
+  if (generated !== undefined) return generated;
+  try { return readFileSync(sourcePath(file), 'utf8'); } catch { return null; }
+}
+
+/** Copy bundled files into `dest`; misses are reported and skipped, `skip` keeps newer fetched rule bodies. */
 export async function syncTreeFiles(
   dest: string,
   files: readonly string[],
@@ -71,6 +97,11 @@ export async function syncTreeFiles(
   const missing: string[] = [];
   for (const file of files) {
     if (skip?.(file)) continue;
+    const generated = GENERATED_TREE_FILES[file];
+    if (generated !== undefined) {
+      await writeIfChanged(path.join(dest, ...file.split('/')), generated, options);
+      continue;
+    }
     const from = sourcePath(file);
     const text = await readTextIfExists(from);
     if (text === null) {

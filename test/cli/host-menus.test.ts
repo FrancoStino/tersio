@@ -66,6 +66,8 @@ test("install --host pi writes the pi tree and no OMP files", () => {
     // pi auto-discovers <agent-dir>/extensions, so the tree is the install.
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/caveman\/index\.ts/);
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/rtk\/session\.ts/);
+    // pi reaches rtk/ only through this manifest: without it both files stay dead on disk.
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/rtk\/package\.json/);
     expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pi\/agent\/extensions\/shared\/session-state\.ts/);
     expect(result.stdout).toMatch(/\[dry-run\] would write session defaults to .*\.tersio\/settings\.json/);
     expect(result.stdout, "OMP extension tree must stay untouched").not.toMatch(/\.omp\/agent\/extensions/);
@@ -88,15 +90,14 @@ test("install --host omp keeps the OMP tree and never touches pi", () => {
   }
 });
 
-// `pi remove` shells out to npm even when nothing is declared, and npm's stderr then
-// reads as a failed step. The removal is only reachable when the npm spec is declared.
+// `pi remove` shells out to npm even with nothing declared; npm's stderr then reads as a failed step.
 test("install --host pi skips the npm ponytail removal when pi does not declare it", () => {
   const home = tempHome();
   try {
     seedRtk(home);
     seedPiPackage(home, "2.25.3");
     const agentDir = path.join(home, ".pi", "agent");
-    // The state a repeat install sees: the local dir is declared, the npm spec is gone.
+    // The state a repeat install sees.
     writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: [path.join(agentDir, "ponytail")] }), "utf8");
 
     const result = run(home, ["install", "--host", "pi", "--yes"]);
@@ -148,7 +149,14 @@ test("install --host opencode bundles the ponytail ruleset beside the tree", () 
     const result = run(home, ["install", "--host", "opencode", "--yes"]);
     expect(result.status, result.stderr).toBe(0);
     const base = path.join(home, ".config", "opencode", "plugins", "tersio", "ponytail-bundle");
-    for (const file of ["hooks/ponytail-instructions.js", "hooks/ponytail-config.js", "skills/ponytail/SKILL.md"]) {
+    // The tree ships no node_modules, so every skill the /ponytail-* commands read must ride along.
+    const bundled = [
+      "hooks/ponytail-instructions.js",
+      "hooks/ponytail-config.js",
+      ...["ponytail", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"]
+        .map((skill) => `skills/${skill}/SKILL.md`),
+    ];
+    for (const file of bundled) {
       const full = path.join(base, ...file.split("/"));
       expect(existsSync(full), `${file} bundled`).toBe(true);
     }

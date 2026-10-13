@@ -27,7 +27,7 @@ import { PACKAGE_VERSION, currency } from './common.ts';
 import { formatCurrency } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 
-// `est` is tersio's modeled cost; the dashboard prefers a measured figure, so the two are never blended into one unlabeled number.
+// `est` is tersio's modeled cost; the dashboard prefers a measured figure, so they are never blended.
 export interface RecentRequestRow extends RecentRequest {
   est: number;
 }
@@ -60,10 +60,7 @@ export interface UsageReport {
   estimatedUsd: number;
   /** How many models resolved at each tier, so a reader can judge the estimate. */
   priceTiers: Record<string, number>;
-  /**
-   * Ledger keys still priced by a guess, heaviest first, five at most. Keys rather than labels,
-   * because the key is what `prices.local.json` spells. One list covers every host.
-   */
+  /** Ledger keys still priced by a guess, heaviest first, five at most, since `prices.local.json` uses keys. */
   weakModels: string[];
   /** Models the host priced itself, so the reader knows whose figure that is. */
   measuredModels: string[];
@@ -76,7 +73,7 @@ export interface UsageReport {
   source: 'live' | 'stored' | 'stored-stale';
   paths: { ledger: string; sessions: string; usageDb: string };
 }
-// RTK's history is machine-wide; rows group by command alone. 2000 groups covers a long history while still bounding /data.json.
+// RTK history is machine-wide; rows group by command. 2000 groups covers a long history while bounding /data.json.
 const RTK_COMMAND_ROWS = 2000;
 
 export function summarizeUsage(rows: UsageRow[]): UsageReport {
@@ -88,7 +85,7 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
     detailCounts[r.detail] = (detailCounts[r.detail] ?? 0) + 1;
   }
   const byDetail = Object.entries(detailCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  // usage.db is a cache of the same per-message rows: sync best-effort, read stored, fall back to the live parse when the store is missing or stale.
+  // usage.db caches the same per-message rows: sync best-effort, read stored, fall back to the live parse when stale.
   let synced = false;
   try {
     synced = syncUsageDb();
@@ -130,16 +127,14 @@ export function summarizeUsage(rows: UsageRow[]): UsageReport {
   const weakModels: string[] = [];
   const measuredModels: string[] = [];
   for (const [model, t] of Object.entries(session.byModel)) {
-    // A model is measured only when the host priced every one of its messages; a partly measured
-    // model would read its unpriced messages as zero, which is the one error worse than a guess.
+    // A model counts as measured only when the host priced every message, or unpriced ones would read as zero.
     const covered = (session.byModelCostMessages[model] ?? 0) >= (session.byModelMessages[model] ?? 0);
     const measured = covered ? session.byModelMeasured[model] : undefined;
     const c = usdCost(t, model, measured);
     usd += c.usd;
     priceTiers[c.tier] = (priceTiers[c.tier] ?? 0) + 1;
     if (c.tier === 'measured') measuredModels.push(model);
-    // A tier that is not firm is an estimate, so it is kept out of the firm total rather than
-    // summed beside a measured cost that would make the whole figure read as a bill.
+    // A non-firm tier is kept out of the firm total, or a guessed cost would make the figure read as a bill.
     if (!PRICE_TIERS_FIRM.includes(c.tier)) {
       estimatedUsd += c.usd;
       weakModels.push(model);
@@ -249,7 +244,7 @@ function pad(s: string, n: number): string {
   return s.length >= n ? s : s + ' '.repeat(n - s.length);
 }
 
-// Box-drawing table, plain text (piped-safe, byte-stable). Numeric columns right-align; long cells truncate with an ellipsis. Shared with cli/settings.ts.
+// Box-drawing table, plain text (piped-safe, byte-stable). Numbers right-align; long cells truncate with an ellipsis.
 function textTable(headers: string[], rows: string[][], right: boolean[] = [], maxW = 32): string[] {
   const cells = [headers, ...rows].map((r) =>
     r.map((c) => (c.length > maxW ? c.slice(0, maxW - 1) + '…' : c)),
@@ -276,8 +271,7 @@ function printReport(report: UsageReport): void {
   // A tier that is not firm is named, so a figure that is partly a guess never reads as a bill.
   const weak = ['tail', 'default'].reduce((sum, tier) => sum + (report.priceTiers[tier] ?? 0), 0);
   const overridden = report.priceTiers.override ?? 0;
-  // The count stays in the cell; the names go on their own line below, because the cell is a
-  // fixed 118 columns and a list of model ids would be truncated to nothing.
+  // The count stays in the cell; names go below, since a 118-column cell would truncate a model-id list.
   const listed = report.weakModels.map((m) => displayModelId(m));
   const measuredCount = report.measuredModels.length;
   const costNote = weak > 0

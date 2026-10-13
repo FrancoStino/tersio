@@ -110,7 +110,6 @@ export interface AgentRow extends AgentTokenMix {
   key: string;
   /** The provider this row belongs to. Empty when the group is not per provider. */
   provider: string;
-  /** The row's estimate split by billing component. */
   costMix: AgentCostMix;
   requests: number;
   failed: number;
@@ -261,6 +260,8 @@ export interface AgentRequestStats {
   tokens: number;
   costUsd: number;
   unpriced: number;
+  /** Rows that rode along with this payload, at most the server's row cap. */
+  shipped: number;
   medianDurationMs: number;
   p95DurationMs: number;
   medianTtftMs: number;
@@ -356,7 +357,6 @@ export interface AgentTraceToolStat {
   maxMs: number;
 }
 
-/** The headline figures the trace view opens with. */
 export interface AgentTraceSummary {
   wallMs: number;
   modelMs: number;
@@ -370,7 +370,7 @@ export interface AgentTraceSummary {
   costUsd: number;
 }
 
-/** One session transcript as a flamegraph: tracks of spans, markers, totals, and tool stats. */
+/** One session transcript as a flamegraph. */
 export interface AgentSessionTrace {
   sessionFile: string;
   project: string;
@@ -398,7 +398,6 @@ export interface AgentModelPerformancePoint {
 export interface AgentRequestPayload {
   /** The model's message, carried by the journal entry. `null` for a row with no payload. */
   output: unknown;
-  /** The raw journal line for the entry. */
   entry: unknown;
   /** `assistant`, `toolResult`, `user`, or empty when the entry carries no message. */
   messageRole: string;
@@ -462,17 +461,14 @@ export const AGENT_VIEWS: readonly AgentView[] = [
 /** One snapshot per window and view, so returning to a page is instant. */
 const agentCache = new Map<string, AgentStats>();
 
-/**
- * The agent aggregate for one page. Each view asks the server for only the parts it renders,
- * so a page payload stays small; the response is memoized per window and view.
- */
-export function useAgentData(range: AgentRange, view: AgentView): {
+/** The agent aggregate for one page; each view asks only for the parts it renders, keeping the payload small. */
+export function useAgentData(range: AgentRange, view: AgentView, offset = 0): {
   agent: AgentStats | null;
   loading: boolean;
   /** True when the server never answered JSON: a stale process, not an empty database. */
   stale: boolean;
 } {
-  const key = `${range}|${view}`;
+  const key = `${range}|${view}|${offset}`;
   const [agent, setAgent] = useState<AgentStats | null>(() => snapAgent() ?? agentCache.get(key) ?? null);
   const [loading, setLoading] = useState(() => !isFileExport() && !agentCache.has(key) && !snapAgent());
   const [stale, setStale] = useState(false);
@@ -487,15 +483,14 @@ export function useAgentData(range: AgentRange, view: AgentView): {
     let live = true;
     const load = async (): Promise<void> => {
       try {
-        const next = await getJSON<{ agent: AgentStats }>(`api/agent?range=${range}&view=${view}`);
+        const next = await getJSON<{ agent: AgentStats }>(`api/agent?range=${range}&view=${view}&offset=${offset}`);
         if (!live) return;
         agentCache.set(key, next.agent);
         setAgent(next.agent);
         setStale(false);
         setLoading(false);
       } catch {
-        // A newer page against an older server process: the route answers with HTML. Say so,
-        // because "no database" would blame a database that is sitting right there.
+// A newer page against an older server process: the route answers with HTML, so say so rather than blaming the db.
         if (live) {
           setStale(true);
           setLoading(false);
@@ -520,7 +515,7 @@ export function useAgentData(range: AgentRange, view: AgentView): {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("tersio:reload", onDemand);
     };
-  }, [key, range, view]);
+  }, [key, range, view, offset]);
 
   return { agent, loading, stale };
 }

@@ -11,11 +11,7 @@ import { ProviderMark, VendorMark } from "@/components/brand";
 import { Icon } from "./icon";
 import { displayModel, errorRateTone, pct } from "@/lib/format";
 
-/**
- * One chip for an error rate. The severity sits in the chip and the figure stays in ink, so a
- * tinted number never drops under AA on either panel. A quiet rate keeps a neutral chip, since a
- * green 0.0% reads as a problem solved rather than as nothing to see.
- */
+/** One chip for an error rate: severity in the chip, figure in ink, so a tinted number never drops under AA. */
 const ERROR_CHIP = {
   none: "border-line text-dim",
   ok: "border-transparent bg-accent-soft",
@@ -31,11 +27,7 @@ export function ErrorRateBadge({ rate, title }: { rate: number; title?: string }
     </Badge>
   );
 }
-/**
- * The glyph a tool name carries. A tool is not a model, so it never borrows a vendor mark: the
- * shell tools read as a terminal, the file tools read as their own verb, and an unknown name
- * falls back to a wrench rather than to a provider logo.
- */
+/** The glyph a tool name carries; a tool never borrows a vendor mark, so an unknown name falls back to a wrench. */
 const TOOL_ICONS: ReadonlyArray<readonly [string, string]> = [
   ["bash", "terminal"],
   ["ash", "terminal"],
@@ -65,16 +57,12 @@ const TOOL_ICONS: ReadonlyArray<readonly [string, string]> = [
   ["brep", "copy"],
 ];
 
-/** The lucide glyph for a tool name, from the map above or the wrench fallback. */
 export function toolIcon(tool: string | undefined): string {
   const name = (tool ?? "").trim().toLowerCase();
   return TOOL_ICONS.find(([key]) => key === name)?.[1] ?? "wrench";
 }
 
-/**
- * One table cell for a provider. The row already names the provider, so the cell carries its mark
- * and its name alone: a model beneath it would invent a second row's subject.
- */
+/** One cell for a provider: mark and name alone, since a model beneath would invent a second row's subject. */
 export function ProviderCell({ provider }: { provider: string }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
@@ -83,11 +71,7 @@ export function ProviderCell({ provider }: { provider: string }) {
     </span>
   );
 }
-/**
- * One table cell for a model, with the provider beneath it. The request log is the reference, so
- * every table that names a model reads the same: the author's mark beside the model, and the
- * routing service's mark and name under it.
- */
+/** One cell for a model with its provider beneath: the author's mark beside it, the router's mark and name below. */
 export function ModelCell({ model, provider }: { model: string; provider: string }) {
   const name = displayModel(model);
   return (

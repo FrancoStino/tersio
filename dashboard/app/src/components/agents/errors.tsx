@@ -28,10 +28,7 @@ const SIGNATURE_MAX = 180;
 // The side card lists the models, not a page of them.
 const LIST_LIMIT = 12;
 
-/**
- * Mirrors the grouping in extensions/shared/agent-stats.ts. The server ships groups, but a
- * row carries no signature, so the filter below has to derive the same bucket locally.
- */
+/** Mirrors extensions/shared/agent-stats.ts: the server ships groups, but a row has no signature, so bucket here. */
 function errorSignature(message: string | null): string {
   if (!message?.trim()) return "Unknown error";
   const normalized = message

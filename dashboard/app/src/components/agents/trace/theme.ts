@@ -1,5 +1,4 @@
-// Canvas palette for the trace flamegraph, read from the dashboard's own CSS tokens so the
-// drawing follows the active theme and accent without a second palette to maintain.
+// Canvas palette read from the dashboard's CSS tokens, so the flamegraph follows the active theme and accent.
 
 import { useEffect, useState } from "react";
 
@@ -19,7 +18,6 @@ export interface TraceTheme {
   tick: string;
   /** Span label drawn inside a block. */
   spanText: string;
-  /** Selection outline. */
   selection: string;
   /** Canvas backdrop. */
   panel: string;
@@ -62,8 +60,7 @@ function readTheme(): TraceTheme {
 export function useTraceTheme(): TraceTheme {
   const [palette, setPalette] = useState<TraceTheme>(() => readTheme());
 
-  // The tokens land on the root element, so watching it is exact: it catches the settings dialog,
-  // the keyboard shortcut, and the system theme alike.
+  // Tokens land on the root element, so watching it catches the settings dialog, the shortcut, and the system theme.
   useEffect(() => {
     const read = (): void => setPalette(readTheme());
     read();

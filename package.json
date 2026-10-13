@@ -36,9 +36,6 @@
       "./extensions/combo/index.ts",
       "./extensions/commands/index.ts"
     ],
-    "skills": [
-      "./node_modules/@dietrichgebert/ponytail/skills"
-    ],
     "features": {
       "updater": {
         "description": "In-session updater for Ponytail, RTK, and Caveman (/ai-addons)",
@@ -151,6 +148,6 @@
   "dependencies": {
     "@clack/core": "^1.5.1",
     "@clack/prompts": "^1.8.0",
-    "@dietrichgebert/ponytail": "^4.12.0"
+    "@dietrichgebert/ponytail": "^5.1.0"
   }
 }

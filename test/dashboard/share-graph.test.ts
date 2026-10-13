@@ -1,6 +1,4 @@
-// The share card's activity graph. The grid covers the whole range window, not just the days
-// that hold data: the first cell is the Sunday on or before the range's start, the last is the
-// day the server ran, and every quiet day in between is a cell at level zero.
+// The share grid spans the whole range window: from the Sunday on or before its start to the day the server ran.
 import { expect, test } from "vitest";
 
 import { graphOf, graphWeeks, streaksOf, stripOf } from "../../dashboard/app/src/lib/graph.ts";
@@ -103,7 +101,6 @@ test("the strip opens at the range's start and keeps quiet slots", () => {
   const start = Date.UTC(2026, 8, 20);
   const { unit, bars } = stripOf(stats("30d", DAY, [[start + 9 * DAY, 40]], { cutoff: start, generatedAt: start + 9 * DAY }));
   expect(unit).toBe("day");
-  // Nine quiet bars, then the one that carries the window.
   expect(bars).toHaveLength(10);
   expect(bars.slice(0, 9).every((b) => b.tokens === 0)).toBe(true);
   expect(bars[9]!.tokens).toBe(40);
@@ -116,8 +113,6 @@ test("the strip caps at 90 bars and keeps the newest ones", () => {
   expect(bars[0]!.tokens).toBe(0);
   expect(bars[89]!.tokens).toBe(20);
 });
-
-// --- the streak figures ------------------------------------------------------
 
 interface Fact {
   perDay: Map<number, number>;

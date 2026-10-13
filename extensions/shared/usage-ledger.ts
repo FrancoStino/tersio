@@ -1,4 +1,4 @@
-// Shared usage ledger: append-only JSON lines, read by the CLI, `/tersio`, and the Dashboard. Best-effort; corrupt lines are skipped on read.
+// Usage ledger: append-only JSON lines, read by the CLI, `/tersio`, and the Dashboard. Corrupt lines are skipped.
 import fs from 'node:fs';
 import path from 'node:path';
 import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
@@ -50,7 +50,7 @@ export function appendUsage(kind: UsageKind, detail: string): void {
   } catch { /* ledger is best-effort; never break the caller */ }
 }
 
-// --- Session tokens, tokscale-style ------------------------------------------ Assistant messages in the host transcripts carry usage, model, and a timestamp.
+// Session tokens, tokscale-style: assistant messages in the host transcripts carry usage, model, and a timestamp.
 export interface TokenBreakdown {
   input: number;
   output: number;
@@ -67,6 +67,8 @@ export interface RecentRequest {
   o: number;
   t: number;
   d?: number;
+  /** First-token latency, when the host recorded one. */
+  tf?: number;
   /** Which agent wrote the session: pi, omp, or codex. */
   h?: string;
   cr?: number;
@@ -127,7 +129,7 @@ export function durOf(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
-// Measured cost: usage.cost.total, or a bare number in old fixtures. Anything else means unrecorded, which is deliberately not 0.
+// Measured cost: usage.cost.total, or a bare number in old fixtures. Anything else means unrecorded, not 0.
 export function costOf(usage: Record<string, unknown>): number | undefined {
   const c = usage.cost;
   if (typeof c === 'number') return Number.isFinite(c) ? c : undefined;
@@ -162,7 +164,7 @@ function addInto(into: TokenBreakdown, u: { input?: unknown; output?: unknown; c
 export function sessionsDirs(): string[] {
   const override = process.env.TERSIO_SESSIONS_DIR;
   if (override) return [override];
-  // Both hosts, not just the running one: a session on pi is missing from the dashboard entirely if we stop at the first directory that exists.
+  // Both hosts, not just the running one: a pi session is missing if we stop at the first existing directory.
   const dirs = isPiProcess()
     ? [path.join(piAgentDir(), 'sessions'), path.join(homeDir(), '.omp', 'agent', 'sessions')]
     : [path.join(homeDir(), '.omp', 'agent', 'sessions'), path.join(piAgentDir(), 'sessions')];
@@ -204,21 +206,24 @@ export interface OpencodeDbRow {
   id: string;
   created: number;
   row: OpencodeMessage;
+  /** Tool names this message called, comma-joined. Empty when it called none. */
+  tools?: string;
 }
 
-// Two on-disk shapes: legacy `message` (role/modelID/providerID live inside `data`),
-// current `session_message` (role in the `type` column, model under data.model).
-// Scalars only: the `data` blob holds newlines and tabs, which the sqlite3 CLI would split.
+// `message` vs `session_message`: read scalars only, since the blob's newlines split in the sqlite3 CLI.
 const OC_DB_ORDER = ' ORDER BY time_created;';
 const OC_DB_COLUMNS =
-  'json_extract(data,\'$.time.created\'), json_extract(data,\'$.time.completed\'),' +
+  'json_extract(data,\'$.time.created\'), json_extract(data,\'$.time.streamed\'), json_extract(data,\'$.time.completed\'),' +
   ' json_extract(data,\'$.tokens.input\'), json_extract(data,\'$.tokens.output\'),' +
   ' json_extract(data,\'$.tokens.cache.read\'), json_extract(data,\'$.tokens.cache.write\'), json_extract(data,\'$.cost\')';
+const OC_DB_TOOLS =
+  '(SELECT group_concat(json_extract(j.value,\'$.name\')) FROM json_each(data,\'$.content\') j' +
+  ' WHERE json_extract(j.value,\'$.type\')=\'tool\')';
 const ocDbLegacy = (since: number): string =>
-  `SELECT id, time_created, json_extract(data,'$.role'), json_extract(data,'$.providerID'), json_extract(data,'$.modelID'), ${OC_DB_COLUMNS}` +
+  `SELECT id, time_created, json_extract(data,'$.role'), json_extract(data,'$.providerID'), json_extract(data,'$.modelID'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
   ` FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created > ${since}${OC_DB_ORDER}`;
 const ocDbCurrent = (since: number): string =>
-  `SELECT id, time_created, 'assistant', json_extract(data,'$.model.providerID'), json_extract(data,'$.model.id'), ${OC_DB_COLUMNS}` +
+  `SELECT id, time_created, 'assistant', json_extract(data,'$.model.providerID'), json_extract(data,'$.model.id'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
   ` FROM session_message WHERE type='assistant' AND time_created > ${since}${OC_DB_ORDER}`;
 
 // A re-scan window covers tokens that land after the row was created, so a late fill is not lost.
@@ -242,17 +247,18 @@ try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or u
     const rows: OpencodeDbRow[] = [];
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
-      const [id, created, role, providerID, modelID, tCreated, tCompleted, input, output, cacheRead, cacheWrite, cost] = line.split('\t');
+      const [id, created, role, providerID, modelID, tCreated, tStreamed, tCompleted, input, output, cacheRead, cacheWrite, cost, tools] = line.split('\t');
       const n = (v: string | undefined): unknown => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
       rows.push({
         id,
         created: Number(created),
+        tools: tools ?? '',
         row: {
           role,
           modelID,
           providerID,
           tokens: { input: n(input), output: n(output), cache: { read: n(cacheRead), write: n(cacheWrite) } },
-          time: { created: n(tCreated), completed: n(tCompleted) },
+          time: { created: n(tCreated), streamed: n(tStreamed), completed: n(tCompleted) },
           cost: n(cost),
         },
       });
@@ -318,7 +324,7 @@ export interface SessionAccum {
 export function newSessionAccum(): SessionAccum {
   return { byModel: {}, byDay: {}, byDayModel: {}, byTool: {}, byModelMessages: {}, byHost: {}, byAgent: {}, byAgentMessages: {}, byModelMeasured: {}, byModelCostMessages: {}, totals: zeroBreakdown(), messages: 0, costMeasured: 0, recent: [], recentFloor: Number.POSITIVE_INFINITY };
 }
-export function ingestSessionRow(accum: SessionAccum, model: string, usage: Record<string, unknown>, ts: string | number | undefined, durMs?: unknown, run?: { st: RunStatus; code?: number; note?: string }, toolNames?: string[], host?: string, id?: string, agent?: string): boolean {
+export function ingestSessionRow(accum: SessionAccum, model: string, usage: Record<string, unknown>, ts: string | number | undefined, durMs?: unknown, run?: { st: RunStatus; code?: number; note?: string }, toolNames?: string[], host?: string, id?: string, agent?: string, ttftMs?: unknown): boolean {
   const watermark = readResetWatermark();
   const ms = ts === undefined ? NaN : typeof ts === 'number' ? ts : Date.parse(ts);
   if (watermark > 0 && (!Number.isFinite(ms) || ms < watermark)) return false;
@@ -342,11 +348,9 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
   if (Number.isFinite(ms)) {
     const outcome = run ?? { st: 'completed' as RunStatus };
-    // The store holds every message ever recorded, but only the newest few are ever read. Skip
-    // anything older than the floor, and re-read the floor when the list is full, so a 50k-row
-    // store costs 2000 rows of memory instead of 50k.
+    // Only the newest rows are read: skip below the floor, and a 50k-row store costs 2000 rows of memory.
     if (accum.recent.length < RECENT_LIMIT || ms >= accum.recentFloor) {
-      accum.recent.push({ m: key, i: num(usage.input), o: num(usage.output), t: ms, d: durOf(durMs), h: host, cr: num(usage.cacheRead), cw: num(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
+      accum.recent.push({ m: key, i: num(usage.input), o: num(usage.output), t: ms, d: durOf(durMs), tf: durOf(ttftMs), h: host, cr: num(usage.cacheRead), cw: num(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
       if (accum.recent.length > RECENT_LIMIT) {
         let drop = 0;
         for (let k = 1; k < accum.recent.length; k += 1) if (accum.recent[k].t < accum.recent[drop].t) drop = k;
@@ -378,7 +382,7 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
   return true;
 }
 export type SessionLineKind = 'codex_provider' | 'codex_model' | 'token_row' | 'assistant_row' | 'skip';
-export function classifySessionLine(row: { timestamp?: string | number; type?: unknown; message?: { role?: unknown; model?: unknown; usage?: Record<string, unknown>; duration?: unknown; completedAt?: unknown; timestamp?: unknown; stopReason?: unknown; errorStatus?: unknown; errorMessage?: unknown; isError?: unknown; content?: Array<{ type?: unknown; name?: unknown; arguments?: unknown }> }; payload?: { type?: unknown; model?: unknown; model_provider?: unknown; info?: { last_token_usage?: Record<string, unknown> } } }): { kind: SessionLineKind; provider?: string; model?: string; usage?: Record<string, unknown>; durMs?: number; run?: { st: RunStatus; code?: number; note?: string }; tools?: string[]; ms?: number } {
+export function classifySessionLine(row: { timestamp?: string | number; type?: unknown; message?: { role?: unknown; model?: unknown; usage?: Record<string, unknown>; duration?: unknown; ttft?: unknown; completedAt?: unknown; timestamp?: unknown; stopReason?: unknown; errorStatus?: unknown; errorMessage?: unknown; isError?: unknown; content?: Array<{ type?: unknown; name?: unknown; arguments?: unknown }> }; payload?: { type?: unknown; model?: unknown; model_provider?: unknown; info?: { last_token_usage?: Record<string, unknown> } } }): { kind: SessionLineKind; provider?: string; model?: string; usage?: Record<string, unknown>; durMs?: number; ttftMs?: number; run?: { st: RunStatus; code?: number; note?: string }; tools?: string[]; ms?: number } {
   const payload = row.payload;
   if (payload && typeof payload === 'object') {
     if (row.type === 'session_meta' && typeof payload.model_provider === 'string') return { kind: 'codex_provider', provider: payload.model_provider };
@@ -412,7 +416,7 @@ export function classifySessionLine(row: { timestamp?: string | number; type?: u
     const command = (part.arguments as { command?: unknown } | null)?.command;
     tools.push(`bash:${leadBinary(command)}`);
   }
-  return { kind: 'assistant_row', model, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, run: statusOf(msg), tools };
+  return { kind: 'assistant_row', model, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, ttftMs: typeof msg.ttft === 'number' ? msg.ttft : undefined, run: statusOf(msg), tools };
 }
 // True when at least one token bucket holds a positive finite count.
 export function hasPositiveUsage(usage: Record<string, unknown>): boolean {
@@ -428,13 +432,30 @@ export interface OpencodeMessage {
   tokens?: { input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } } | null;
   modelID?: unknown;
   providerID?: unknown;
-  time?: { created?: unknown; completed?: unknown } | null;
+  time?: { created?: unknown; streamed?: unknown; completed?: unknown } | null;
   cost?: unknown;
   finish?: unknown;
+  /** The message's parts. Tool calls sit here, named under a part of type `tool`. */
+  content?: unknown;
+}
+
+/** Tool names an OpenCode message called; v2 passes SQL's comma-joined string as the blob holds newlines. */
+export function opencodeToolNames(message: OpencodeMessage, joined?: string): string[] {
+  if (joined !== undefined) return joined === '' ? [] : joined.split(',');
+  const parts = message?.content;
+  if (!Array.isArray(parts)) return [];
+  const names: string[] = [];
+  for (const part of parts) {
+    if (!part || typeof part !== 'object') continue;
+    if ((part as Record<string, unknown>).type !== 'tool') continue;
+    const name = (part as Record<string, unknown>).name;
+    if (typeof name === 'string' && name) names.push(name);
+  }
+  return names;
 }
 
 // One OpenCode message file; assistant rows carry the token buckets.
-export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined): { model: string; usage: Record<string, unknown>; ms: number | undefined; durMs: number | undefined } | null {
+export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined): { model: string; usage: Record<string, unknown>; ms: number | undefined; durMs: number | undefined; ttftMs: number | undefined } | null {
   if (!obj || typeof obj !== 'object' || obj.role !== 'assistant') return null;
   const t = obj.tokens;
   if (!t || typeof t !== 'object') return null;
@@ -451,15 +472,17 @@ export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined)
   const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
   const created = num(obj.time?.created);
   const completed = num(obj.time?.completed);
+  // `streamed` is when the first token arrived, so it is the host's own first-token latency.
+  const streamed = num(obj.time?.streamed);
   return {
     model: `opencode/${provider}/${model}`,
     usage,
     ms: created,
     durMs: created !== undefined && completed !== undefined && completed > created ? completed - created : undefined,
+    ttftMs: created !== undefined && streamed !== undefined && streamed > created ? streamed - created : undefined,
   };
 }
 
-// One OpenCode message file into the shared accum. The msg id is the file name.
 export function processOpencodeFile(accum: SessionAccum, text: string, file?: string): void {
   let obj: unknown;
   try {
@@ -467,17 +490,18 @@ export function processOpencodeFile(accum: SessionAccum, text: string, file?: st
   } catch {
     return;
   }
-  const parsed = classifyOpencodeMessage(obj as OpencodeMessage);
+  const message = obj as OpencodeMessage;
+  const parsed = classifyOpencodeMessage(message);
   if (!parsed) return;
   const id = file ? path.basename(file).replace(/\.[^.]+$/, '') || undefined : undefined;
-  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', id, 'main');
+  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, opencodeToolNames(message), 'opencode', id, 'main', parsed.ttftMs);
 }
 
 // One v2 message row into the shared accum. The msg id is the row primary key.
 export function ingestOpencodeDbRow(accum: SessionAccum, row: OpencodeDbRow): void {
   const parsed = classifyOpencodeMessage(row.row);
   if (!parsed) return;
-  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, undefined, 'opencode', row.id, 'main');
+  ingestSessionRow(accum, parsed.model, parsed.usage, parsed.ms, parsed.durMs, { st: 'completed' as RunStatus }, opencodeToolNames(row.row, row.tools), 'opencode', row.id, 'main', parsed.ttftMs);
 }
 
 // Fold `:free`/`-free` suffixes and case variants into one chart key.
@@ -490,8 +514,7 @@ export function messageRowId(row: unknown): string | undefined {
   return typeof id === 'string' && id ? id : undefined;
 }
 
-// Vendor names mirror the dashboard map; CLI needs names only. Family first:
-// gateway segments shadow it (minimaxai holds xai, gemma rides nvidia).
+// Vendor names mirror the dashboard map; family first, so gateway segments shadow it (minimaxai holds xai).
 const VENDOR_RES: Array<[RegExp, string]> = [
   [/inclusionai|ling-/i, 'InclusionAI'],
   [/minimax/i, 'MiniMax'],
@@ -617,9 +640,7 @@ export function hostOfSessionFile(file: string): string {
   return 'pi';
 }
 
-// Which agent ran a session file, from its own `session` row: a transcript with a parent
-// session is a subagent's, and everything else is the main agent. The row is the host's own
-// record, so a mirrored transcript carries the same answer as the stats database.
+// A transcript with a parent session ran as a subagent; the host's own row, so a mirror answers the same.
 export function agentOfSessionText(text: string): string {
   if (!text.includes('parentSession')) return 'main';
   for (const line of text.split('\n')) {
@@ -725,7 +746,7 @@ export function processSessionText(accum: SessionAccum, state: { codexProvider: 
         continue;
       }
       if (parsed.kind !== 'assistant_row' || !parsed.model || !parsed.usage) continue;
-      ingestSessionRow(accum, parsed.model, parsed.usage, row.timestamp, parsed.durMs, parsed.run, parsed.tools, host, rid, agent);
+      ingestSessionRow(accum, parsed.model, parsed.usage, row.timestamp, parsed.durMs, parsed.run, parsed.tools, host, rid, agent, parsed.ttftMs);
     } catch { /* skip corrupt lines */ }
   }
 }
@@ -762,7 +783,7 @@ export function leadBinary(command: unknown): string {
   return 'bash';
 }
 
-// --- Pricing lives in ./pricing.ts (live LiteLLM cache + fallback table) ---
+// Pricing lives in ./pricing.ts (live LiteLLM cache + fallback table).
 import { DEFAULT_PRICE, PRICE_TIERS_FIRM, canonicalPriceId, priceFor, pricesOverridePath, refreshPricesIfStale, type PriceHit, type PriceTier } from './pricing.ts';
 import { co2GramsFor, energyWhFor } from './carbon.ts';
 import type { ModelPrice } from './pricing.ts';
@@ -771,11 +792,7 @@ export { DEFAULT_PRICE, PRICE_TIERS_FIRM, priceFor, pricesOverridePath, refreshP
 export { co2GramsFor, energyWhFor };
 export type { PriceHit, PriceTier, ModelPrice };
 
-/**
- * Price one model's tokens. `measured` is the cost the host reported for those tokens; it outranks
- * every rate card, because it is the only figure from the party that billed. Pass undefined rather
- * than 0 for a cost nobody reported: `costOf` keeps the two apart.
- */
+/** Price one model's tokens; `measured` outranks every rate card, so pass undefined when unreported. */
 export function usdCost(t: TokenBreakdown, model?: string, measured?: number): { usd: number; priced: boolean; tier: PriceTier; buckets: { input: number; output: number; cacheRead: number; cacheWrite: number } } {
   const m = 1 / 1_000_000;
   if (measured !== undefined) {
@@ -797,8 +814,7 @@ export function usdCost(t: TokenBreakdown, model?: string, measured?: number): {
   };
   return {
     usd: buckets.input + buckets.output + buckets.cacheRead + buckets.cacheWrite,
-    // A tier the caller cannot stand behind is not a price. `tail` and `default` are estimates,
-    // and a report that sums them beside measured cost reads as a bill it is not.
+    // `tail`/`default` are estimates; summing them beside measured cost reads as a bill it is not.
     priced: PRICE_TIERS_FIRM.includes(hit.tier),
     tier: hit.tier,
     buckets,
@@ -829,7 +845,7 @@ export function readUsage(): UsageRow[] {
   return rows;
 }
 
-// Delete the ledger file and return the rows cleared. Tersio-owned data only: transcripts and the RTK database are never touched.
+// Delete the ledger file and return the rows cleared. Tersio-owned data only: transcripts and the RTK database stay.
 export function clearUsageLedger(): number {
   const rows = readUsage().length;
   try {

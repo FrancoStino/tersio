@@ -85,7 +85,6 @@ test.skipIf(!hasSqlite())("cutoff filters the view without touching the db", () 
       expect(g.commands, "only post-cutoff rows in the view").toBe(1);
       expect(g.saved).toBe(100);
       expect(g.byCommand.length).toBe(1);
-      // The database itself is untouched.
       const all = readRtkGain();
       expect(all.commands).toBe(3);
     });
@@ -149,8 +148,7 @@ test.skipIf(!hasSqlite())("same command across repos folds into one row", () => 
       const grep = g.byCommand.filter((r) => r.command === "rtk grep");
       expect(grep.length, "same command in two repos is one row").toBe(1);
       expect(grep[0].count).toBe(3);
-      // A zero-saving command still reaches the table; the old rows were
-      // ranked by tokens saved and capped at 10, which dropped these entirely.
+      // A zero-saving command still reaches the table; old rows ranked by tokens saved dropped it.
       expect(g.byCommand.some((r) => r.command === "rtk bun run build (passthrough)")).toBeTruthy();
       expect(g.byCommand.find((r) => r.command.startsWith("rtk ls -d "))?.command.length).toBe(200);
     });

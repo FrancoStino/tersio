@@ -8,7 +8,6 @@ import { Icon } from "@/components/icon";
 
 export interface Column<T> {
   key: string;
-  /** Column label. */
   header: string;
   /** Hover tip explaining the number. */
   title?: string;
@@ -25,16 +24,12 @@ export interface DataTableProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
-  /** Sort on mount. */
   initialSort?: { key: string; dir: "asc" | "desc" };
   /** Render rows from this index, one page's worth. */
   offset?: number;
   /** Rows rendered before the pager takes over. */
   limit?: number;
-  /**
-   * Detail for a row, drawn under it and spanning every column. Returning null draws
-   * nothing, so one table can carry a detail for some rows only.
-   */
+  /** Detail drawn under a row across every column; returning null draws nothing, so some rows can have none. */
   detail?: (row: T) => React.ReactNode | null;
   /** Which row currently shows its detail. Controls the row's open state for assistive tech. */
   detailOpenFor?: (row: T) => boolean;
@@ -82,9 +77,7 @@ export function DataTable<T>({
   if (rows.length === 0 && empty) return <>{empty}</>;
 
   return (
-    // A page table chains its wheel to the page. It is a page-level table, not a nested scroller in
-    // a modal, so `overscroll-contain` must stay off it: contain swallows the wheel and the page
-    // above a table that cannot scroll stops scrolling.
+// A page table chains its wheel to the page, so `overscroll-contain` stays off, or the page above stops scrolling.
     <div className={cn("overflow-auto [scrollbar-color:var(--line)_transparent] [scrollbar-width:thin]", className)}>
       <Table className="mono text-[13px]" aria-label={ariaLabel}>
         <TableHeader className="sticky top-0 z-10 bg-panel [&_tr]:border-line [&_tr]:text-left [&_tr]:text-[11px] [&_tr]:uppercase [&_tr]:tracking-[0.14em] [&_tr]:text-dim">
@@ -165,16 +158,13 @@ export function TableSkeleton({ rows = 8, className }: { rows?: number; classNam
   return (
     <div className={cn("flex flex-col gap-2 p-3.5", className)} aria-busy="true" aria-label="Loading table">
       {Array.from({ length: rows }, (_, i) => (
-        <Skeleton key={i} className="h-6 w-full bg-track/60" />
+        <Skeleton key={i} className="h-6 w-full" />
       ))}
     </div>
   );
 }
 
-/**
- * A long table, one page at a time. The page size lives here, so a caller drops its `limit`
- * and the footer carries the count instead of the table clipping.
- */
+/** A long table, one page at a time; the page size lives here, so the footer carries the count, not a clip. */
 export function PagedTable<T>({
   columns,
   rows,

@@ -1,7 +1,7 @@
 // /combo session toggle: off | medium | balanced | max.
 
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   activeModesSummary,
@@ -9,10 +9,12 @@ import {
   getSharedComboState,
   hasModeState,
   normalizeComboLevel,
+  normalizeMode,
   reconcileSharedComboEntries,
   sessionEntries,
   setSharedComboLevel,
   setSharedComboListener,
+  setSharedComboMode,
   setSharedComboModes,
   systemPromptIncludes,
 } from '../shared/session-state.ts';
@@ -27,10 +29,26 @@ import {
   readRtkDefault,
   saveComboSetup,
 } from '../shared/plugin-settings.ts';
-import { findHoistedPackage, isPiProcess } from '../shared/utils.ts';
+import { findHoistedPackage, isPiProcess, piAgentDir } from '../shared/utils.ts';
 import type { ComboState, ExtensionApi, ExtensionCtx, SystemPromptEvent } from '../shared/types.ts';
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** Whether pi declares an upstream Ponytail; read per call so a mid-session settings.json change lands. */
+function piHasUpstreamPonytail(): boolean {
+  const agentDir = piAgentDir();
+  const localEntry = path.join(agentDir, 'ponytail', 'pi-extension', 'index.js');
+  if (existsSync(localEntry)) return true;
+  try {
+    const raw = readFileSync(path.join(agentDir, 'settings.json'), 'utf8');
+    const settings = JSON.parse(raw) as { packages?: unknown };
+    const list = Array.isArray(settings.packages) ? settings.packages : [];
+    // An npm spec names the package; the installer's local copy is a bare `.../ponytail` dir.
+    return list.some((p) => typeof p === 'string' && /ponytail/.test(p));
+  } catch {
+    return false;
+  }
+}
 
 const PONYTAIL_FALLBACK_INTENSITY: Record<string, string> = {
   lite: 'Prefer the simplest correct solution.',
@@ -43,7 +61,7 @@ export function ponytailFallback(mode: string): string {
 }
 
 
-// Ponytail is hoisted, so one upward walk covers every install layout. The hook is CommonJS, so both namespace shapes are tried.
+// Ponytail is hoisted, so one upward walk covers every layout. The hook is CommonJS, so both namespaces are tried.
 async function loadPonytailInstructions(mode: string): Promise<string> {
   const installed = findHoistedPackage('@dietrichgebert/ponytail', EXTENSION_DIR, 'hooks', 'ponytail-instructions.js');
   // The OpenCode tree ships no node_modules; the installer bundles the ruleset beside the extensions.
@@ -150,6 +168,27 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     },
   });
 
+  // Upstream owns /ponytail on pi; this tree registers it only where nothing else does.
+  if (!(isPiProcess() && piHasUpstreamPonytail())) pi.registerCommand?.('ponytail', {
+    description: 'Switch Ponytail intensity (off|lite|full|ultra). Usage: /ponytail [level|status]',
+    handler: async (args, ctx) => {
+      listen(ctx);
+      const arg = String(args || '').trim().toLowerCase();
+      if (!arg || arg === 'status') {
+        announceStatus(ctx);
+        return;
+      }
+      const mode = normalizeMode('ponytail', arg);
+      if (!mode) {
+        ctx?.ui?.notify?.(`Unknown Ponytail level: ${arg}. Use: off | lite | full | ultra`, 'warning');
+        return;
+      }
+      pi.appendEntry?.('ponytail-mode', { mode });
+      setSharedComboMode('ponytail', mode);
+      announceStatus(ctx);
+    },
+  });
+
   async function runFirstRunSetup(ctx?: ExtensionCtx): Promise<void> {
     if (setupPrompted || !ctx?.hasUI || !ctx.ui?.select || isComboSetupComplete()) return;
     setupPrompted = true;
@@ -189,9 +228,9 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   pi.on<SystemPromptEvent>('before_agent_start', async (event, ctx) => {
     if (ctx?.hasUI) reconcile(ctx);
     const mode = getSharedComboState().ponytail;
-    // On pi the upstream ponytail pi-extension is the single injector; it reads these 'ponytail-mode' entries at session start, so Tersio only persists.
-    if (isPiProcess()) return;
-    // Match the level's own header: the shared phrase alone makes every level block every other, so a `/combo` level switch is ignored all session.
+    // On pi, an installed upstream pi-extension is the sole injector, so Tersio only falls back with none.
+    if (isPiProcess() && piHasUpstreamPonytail()) return;
+    // Match the level's own header: a shared phrase makes every level block the rest, so a `/combo` switch does nothing.
     if (mode === 'off' || systemPromptIncludes(event.systemPrompt, `PONYTAIL MODE ACTIVE — level: ${mode}`)) return;
     const instruction = await loadPonytailInstructions(mode);
     // The previous level's block is replaced, not stacked on.

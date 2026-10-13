@@ -76,7 +76,7 @@ function rtkExtensionPath(): string {
   return path.join(home, '.omp', 'agent', 'extensions', 'rtk.ts');
 }
 
-// Append rtk.ts after the existing entries (or create the key) so the wire takes effect on the next OMP start.
+// Append rtk.ts so the wire takes effect on the next OMP start.
 export async function ensureRtkInConfig(options: WiringOptions): Promise<void> {
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const configPath = path.join(home, '.omp', 'agent', 'config.yml');

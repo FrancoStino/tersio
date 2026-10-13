@@ -1,5 +1,4 @@
-// Toast notifications: bottom-right stack, accent icon, title + description,
-// and 4s auto-dismiss.
+// Toast notifications: bottom-right stack, accent icon, title + description, 4s auto-dismiss.
 import { createContext, useCallback, useContext, useState } from "react";
 import { Icon } from "./icon";
 

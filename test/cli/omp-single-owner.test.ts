@@ -1,5 +1,4 @@
-// The OMP agent tree holds rtk's wiring only. An install drops the extension copies an
-// older build wrote, because omp merges the plugin manifest with the dir it discovers.
+// The OMP agent tree holds rtk's wiring only; an install drops older extension copies omp would merge.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -81,7 +80,6 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
     pluginPresent(home);
     const result = run(home, {}, "--yes");
     expect(result.status, result.stderr).toBe(0);
-    // The mode extensions land in the tree the manifest declares.
     expect(existsSync(path.join(pluginExt(home), "combo", "index.ts")), "combo lands in the plugin tree").toBe(true);
     expect(existsSync(path.join(pluginExt(home), "caveman", "index.ts")), "caveman lands in the plugin tree").toBe(true);
     for (const dir of RETIRED) {

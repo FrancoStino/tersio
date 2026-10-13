@@ -56,3 +56,23 @@ test("doctor --fix also drops a leftover rtk plugin entry", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 }, 150000);
+// Same `-session`/`-toggle` leftovers the omp tree grew; install retires them, a rule body in them still resolves.
+test("opencode install retires the legacy `-session` and `-toggle` dirs", () => {
+  const dir = home();
+  try {
+    const plugin = path.join(dir, ".config", "opencode", "plugins", "tersio");
+    for (const name of ["caveman-session", "rtk-session", "combo-toggle"]) {
+      mkdirSync(path.join(plugin, name), { recursive: true });
+      writeFileSync(path.join(plugin, name, "rule.md"), "STALE\n", "utf8");
+    }
+    run(dir, ["install", "--host", "opencode", "--yes"]);
+
+    for (const name of ["caveman-session", "rtk-session", "combo-toggle"]) {
+      expect(existsSync(path.join(plugin, name)), name + " must be retired").toBe(false);
+    }
+    // The current copies are written, so the tree is still complete.
+    expect(existsSync(path.join(plugin, "caveman", "rule.md"))).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 150000);

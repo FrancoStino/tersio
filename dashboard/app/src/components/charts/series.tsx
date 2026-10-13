@@ -1,5 +1,4 @@
-// Chart primitives: one palette, one tooltip, one empty look, so no page draws its own.
-// Geometry is the only new code here: everything else wraps the installed shadcn chart pieces.
+// Chart primitives: one palette, tooltip, and empty look, so no page draws its own; rest wraps shadcn chart pieces.
 import { useMemo } from "react";
 import { cn } from "cn";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -44,9 +43,7 @@ function SeriesChart<T extends object>({
   const config: ChartConfig = Object.fromEntries(
     series.map((s) => [s.key, { label: s.label, color: s.color }]),
   );
-  // A stack with a hole breaks: recharts resets the stack at a null, so each band splits into
-  // disjoint shapes. A stacked series therefore reads zero in a bucket it has no data for, and
-  // only a lone series keeps its nulls, where a gap marks a bucket with nothing to plot.
+  // Recharts resets the stack at a null, so a stacked series reads zero where it lacks data; a lone series keeps nulls.
   const plotted = useMemo(() => {
     if (!stacked) return data;
     const keys = series.map((s) => s.key);
@@ -75,8 +72,7 @@ function SeriesChart<T extends object>({
       <ChartTooltip
         content={
           <ChartTooltipContent
-            // Recharts hands the tooltip the tick's formatted text, or the series name, so the
-            // title comes from the hovered row's own category and the values use the page format.
+            // Recharts hands the tooltip a tick's text or the series name, so the title comes from the hovered row's category.
             labelFormatter={(value, payload) => {
               const row = payload?.[0]?.payload as Record<string, unknown> | undefined;
               const raw = row ? row[xKey] : value;

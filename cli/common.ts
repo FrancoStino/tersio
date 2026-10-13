@@ -21,8 +21,6 @@ const PACKAGE_NAME = '@krtclcdy/tersio';
 const PACKAGE_BIN = 'tersio';
 const { version: PACKAGE_VERSION } = createRequire(import.meta.url)(path.join(findPackageRoot(path.dirname(fileURLToPath(import.meta.url))), 'package.json')) as { version: string };
 
-// --- Types ---
-
 interface InstallOptions {
   dryRun: boolean;
   verbose: boolean;
@@ -43,7 +41,7 @@ const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 const DIAG_SCHEDULES = new Set(['manual', 'daily', 'weekly', 'monthly']);
 
-// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts (rtk as a boolean here), so the combo preset implies all three modes.
+// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all three modes.
 const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string }> = {
   off: { caveman: 'off', rtk: false, ponytail: 'off' },
   medium: { caveman: 'lite', rtk: true, ponytail: 'lite' },
@@ -69,13 +67,11 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-// --- CLI flags ---
-
-const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, usage: true, dashboard: true, reset: true, settings: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, usage: true, dashboard: true, reset: true, settings: true, version: true, help: true };
 const args = process.argv.slice(2);
 const commandArg = args.find((arg) => !arg.startsWith('-'));
 const command = commandArg?.toLowerCase() || null;
-// `tersio settings diagnosis` jumps to one prompt instead of walking the chain. Index-based, so flag values never count as positionals.
+// `tersio settings diagnosis` jumps to one prompt. Index-based, so flag values never count as positionals.
 const settingArg = ((): string | null => {
   const at = args.indexOf(commandArg ?? '');
   const next = at >= 0 ? args[at + 1] : undefined;
@@ -84,6 +80,7 @@ const settingArg = ((): string | null => {
 })();
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
+const reinstall = command === 'reinstall';
 const update = command === 'update';
 const showVersion = command === 'version' || args.includes('--version') || args.includes('-v');
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
@@ -183,7 +180,7 @@ async function writeIfChanged(dest: string, content: string, options: WriteOptio
   return true;
 }
 
-// omp ships 'extensions: null', and list items under a null scalar break YAML: normalize null/~/[]/empty to a mapping key first.
+// omp ships 'extensions: null'; normalize it to a mapping key first, or YAML rejects the list items.
 const EXTENSIONS_KEY_RE = /^\s*extensions\s*:/i;
 const EXTENSIONS_NULL_RE = /^\s*extensions\s*:\s*(?:\[\s*\]|null|~)?\s*$/i;
 
@@ -208,7 +205,7 @@ async function ensureExtensionInConfig(configPath: string, extensionPath: string
   const raw = await readTextIfExists(configPath);
   let lines = (raw || '').split('\n');
 
-  // Drop legacy compiled twins (same dir/name, .js): OMP must never load both copies. Matched on the trailing path so relative entries are caught too.
+  // Drop legacy compiled twins (.js beside the name): OMP must never load both. Matched on the trailing path.
   if (normalizedPath.endsWith('.ts')) {
     const legacyTail = `${normalizedPath.slice(0, -3)}.js`.split('/').slice(-2).join('/');
     lines = lines.filter((l) => !l.trim().replace(/^\.\//, '').endsWith(legacyTail));
@@ -287,6 +284,13 @@ function readPonytailConfig(): { dir: string; path: string } {
   return { dir, path: path.join(dir, 'config.json') };
 }
 
+/** This package's ponytail range, or null; repair pins it, since npm installs the published range. */
+async function bundledPonytailSpec(): Promise<string | null> {
+  const root = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
+  const text = await readTextIfExists(path.join(root, 'package.json'));
+  return parseJsonObject<{ dependencies?: Record<string, string> }>(text)?.dependencies?.['@dietrichgebert/ponytail'] ?? null;
+}
+
 interface PonytailConfig {
   defaultMode?: string;
   hideStatus?: boolean;
@@ -341,6 +345,14 @@ async function ensurePonytailConfigValue<K extends keyof PonytailConfig>(
 
 
 
+// npm prefers a nested copy over the pin when the plugin's range excludes it; only `overrides` reaches it.
+function ponytailOverride(pkg: PluginsPackage): string | null {
+  const overrides = pkg.overrides;
+  if (typeof overrides !== 'object' || overrides === null) return null;
+  const value = (overrides as Record<string, unknown>)['@dietrichgebert/ponytail'];
+  return typeof value === 'string' ? value : null;
+}
+
 // Read plugins/package.json tolerantly; a corrupt or missing file starts fresh with installer-managed defaults.
 async function readPluginsPackage(pkgPath: string): Promise<PluginsPackage & { dependencies: Record<string, string> }> {
   const pkg = parseJsonObject<PluginsPackage>(await readTextIfExists(pkgPath)) ?? {};
@@ -364,7 +376,7 @@ export {
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,
-  install, update, showVersion, showHelp, applyUpdate, args,
+  install, reinstall, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, verbose, doctor, fix, uninstall, usage, dashboard, reset, settings,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
@@ -374,6 +386,6 @@ export {
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,
-  ensurePonytailConfigValue, readPluginsPackage, relTime,
+  ensurePonytailConfigValue, readPluginsPackage, relTime, bundledPonytailSpec, ponytailOverride,
   InstallOptions, PluginsPackage, PonytailConfig, ExecOptions, WriteOptions,
 };

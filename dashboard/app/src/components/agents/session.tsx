@@ -1,14 +1,8 @@
-// One session as a flamegraph: the summary strip, the timeline, the transcript, the tool totals,
-// and the drawer behind a span.
-//
-// The page follows the reference trace viewer's shape: nine headline figures, then a timeline with
-// an axis mode, an idle bridge, a search, a legend, an overview strip, and the flamegraph itself,
-// then the transcript in words and the per-tool totals. Brand marks stay wherever a model or a
-// provider is named.
+// One session as a flamegraph in the reference trace viewer's shape: summary, timeline, transcript, totals, drawer.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
-import { Card, Segmented, Stat, StatGrid } from "@/components/charts";
+import { Card, Segmented, Stat, StatGrid, TraceSkeleton } from "@/components/charts";
 import { EmptyState } from "@/components/common";
 import { useSessionTrace } from "@/lib/data";
 import type { AgentTraceSpan } from "@/lib/data";
@@ -166,7 +160,7 @@ export function SessionTrace({
         </button>
       </div>
 
-      {loading && <p className="mono text-xs text-dim">Reading the transcript…</p>}
+      {loading && <TraceSkeleton />}
       {!loading && !trace && (
         <EmptyState
           icon="file-question"

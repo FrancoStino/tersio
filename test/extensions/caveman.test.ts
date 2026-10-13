@@ -28,12 +28,37 @@ interface TestCtx {
   ui: { setStatus(name: string, value: string | undefined): void; notify(message: string): void };
 }
 
+/** A pi-flavoured harness (no zod) whose `systemPromptOptions` surface proves the pi inject path. */
+function piHarness(entries: SessionEntry[] = []): { pi: TestPi; ctx: TestCtx } {
+  const commands = new Map<string, CommandHandler>();
+  const handlers = new Map<string, EventHandler>();
+  const notifications: string[] = [];
+  const statuses = new Map<string, string>();
+  cavemanSessionExtension({
+    setLabel() {},
+    registerCommand(name: string, config: { handler: CommandHandler }) { commands.set(name, config.handler); },
+    registerTool() {},
+    appendEntry(customType: string, data: Record<string, unknown>) { entries.push({ type: 'custom', customType, data }); },
+    on(event: string, handler: EventHandler) { handlers.set(event, handler); },
+  } as unknown as ExtensionApi);
+  const ctx = {
+    hasUI: true,
+    notifications,
+    statuses,
+    sessionManager: { getBranch: () => entries },
+    ui: {
+      setStatus(name: string, v: string | undefined) { if (v !== undefined) { statuses.set(name, v); if (name === 'tersio') notifications.push(v); } },
+      notify(message: string) { notifications.push(message); },
+    },
+  };
+  return { pi: { commands, handlers }, ctx: ctx as TestCtx };
+}
+
 function harness(entries: SessionEntry[] = []): { pi: TestPi; ctx: TestCtx } {
   const commands = new Map<string, CommandHandler>();
   const handlers = new Map<string, EventHandler>();
   const notifications: string[] = [];
-  // The real setStatus API is keyed; `notifications` mirrors the existing assertions on the
-  // combo line, and `statuses` keeps every key so the caveman slot can be asserted too.
+  // setStatus is keyed: notifications mirrors the combo-line assertions, statuses keeps every key.
   const statuses = new Map<string, string>();
   cavemanSessionExtension({
     // The injected zod is how the extensions recognise an OMP host.
@@ -91,8 +116,9 @@ test("status reports the current mode, unknown args show usage", async () => {
   resetSharedComboState();
   const { pi, ctx } = harness();
   await pi.commands.get("caveman")!("ultra", ctx);
-  await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.notifications.at(-1)).toMatch(/🪨caveman=ULTRA/);
+  await pi.commands.get("caveman")!("status", ctx);
+  expect(ctx.notifications.at(-1)).toBe("Caveman mode: ultra");
   await pi.commands.get("caveman")!("bogus", ctx);
   expect(ctx.notifications.at(-1)).toBe("Usage: /caveman [lite|full|ultra|megacave-lite|megacave-full|megacave-ultra|off|status]");
 });
@@ -103,8 +129,9 @@ test("natural-language off commands switch the mode off", async () => {
     const { pi, ctx } = harness();
     await pi.commands.get("caveman")!("full", ctx);
     await pi.handlers.get("input")!({ text, source: "user" }, ctx);
+    expect(ctx.notifications).toContain("🧩 combo OFF");
     await pi.commands.get("caveman")!("status", ctx);
-    expect(ctx.notifications.at(-1)).toBe("🧩 combo OFF");
+    expect(ctx.notifications.at(-1)).toBe("Caveman mode: off");
   }
 });
 
@@ -113,8 +140,9 @@ test("input from extensions never toggles the mode", async () => {
   const { pi, ctx } = harness();
   await pi.commands.get("caveman")!("full", ctx);
   await pi.handlers.get("input")!({ text: "stop caveman", source: "extension" }, ctx);
-  await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.notifications.at(-1)).toMatch(/🪨caveman=FULL/);
+  await pi.commands.get("caveman")!("status", ctx);
+  expect(ctx.notifications.at(-1)).toBe("Caveman mode: full");
 });
 
 test("session_start restores the persisted mode, fresh sessions use the default", async () => {
@@ -145,9 +173,7 @@ test("legacy plugin default normalizes to megacave-full and injects rules", asyn
     resetSharedComboState();
     const { pi, ctx } = harness();
     await pi.handlers.get("session_start")!({}, ctx);
-    // The legacy `wenyan` value survives the lookup verbatim, so the mode the
-    // session starts in is the normalized one, and it is that mode's block that
-    // lands in the prompt.
+    // The lookup returns `wenyan` verbatim; the session normalizes it and injects that mode's block.
     expect(readCavemanDefault()).toBe("wenyan");
     const injected = await pi.handlers.get("before_agent_start")!({ systemPrompt: "Base." }, ctx) as { systemPrompt: string[] };
     expect(injected.systemPrompt.at(-1)).toMatch(/Caveman megacave-full active/);
@@ -182,12 +208,10 @@ test("full mode injects the rule file", async () => {
   const { pi, ctx } = harness();
   await pi.commands.get("caveman")!("full", ctx);
   const result = await pi.handlers.get("before_agent_start")!({ systemPrompt: "Base." }, ctx) as { systemPrompt: string[] };
-  expect(result.systemPrompt.at(-1)).toMatch(/Caveman full active/);
-  expect(result.systemPrompt.at(-1)).toMatch(/Only fluff die/);
-  expect(result.systemPrompt.at(-1)).toMatch(/ASD-STE100 Simplified Technical English/);
-  expect(result.systemPrompt.at(-1)).toMatch(/No tool-call narration/);
-  expect(result.systemPrompt.at(-1)).toMatch(/megacave-lite\|megacave-full\|megacave-ultra/);
- });
+  // The body is the rule file itself, byte for byte, so quoting phrases would pin upstream's wording.
+  const rule = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extensions", "caveman", "rule.md"), "utf8");
+  expect(result.systemPrompt.at(-1)).toBe(`Caveman full active for this session.\n${rule}`);
+});
 
 
 test("each level injects its own rule file verbatim, with no paraphrase alongside it", async () => {
@@ -244,13 +268,44 @@ test("the body gate rejects the fetches that would poison a rule file", () => {
   expect(ruleBodyProblem("# Heading\n\nshort")).toMatch(/truncated/);
 });
 
-test("the caveman status slot carries the mode for the model's status reply", async () => {
+test("the footer carries one line, and a status request answers with the mode", async () => {
   resetSharedComboState();
   const { pi, ctx } = harness([]);
   await pi.commands.get("caveman")!("ultra", ctx);
-  expect(ctx.statuses.get("caveman")).toBe("Caveman mode: ultra");
+  expect(ctx.statuses.get("caveman")).toBeUndefined();
   expect(ctx.statuses.get("tersio")).toMatch(/🧩 combo CUSTOM: 🪨caveman=ULTRA/);
 
+  await pi.commands.get("caveman")!("status", ctx);
+  expect(ctx.statuses.get("caveman")).toBeUndefined();
+  expect(ctx.notifications.at(-1)).toBe("Caveman mode: ultra");
+
   await pi.commands.get("caveman")!("off", ctx);
-  expect(ctx.statuses.get("caveman")).toBe("Caveman mode: unknown");
+  expect(ctx.statuses.get("caveman")).toBeUndefined();
+  expect(ctx.statuses.get("tersio")).toBe("🧩 combo OFF");
+
+  await pi.commands.get("caveman")!("status", ctx);
+  expect(ctx.notifications.at(-1)).toBe("Caveman mode: off");
+});
+
+// pi has no zod, routing it through a different inject path; nothing asserted the rule body reaches it.
+test("a pi host receives the rule body through its own inject path", async () => {
+  const { pi, ctx } = piHarness();
+  await pi.commands.get("caveman")!("full", ctx);
+
+  const rule = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extensions", "caveman", "rule.md"),
+    "utf8",
+  );
+
+  // pi adapter writes a named section when one is offered.
+  const sections: Record<string, string> = {};
+  await pi.handlers.get("before_agent_start")!({ systemPromptOptions: { sections, appendSystemPrompt: "" } }, ctx);
+  const injected = Object.values(sections).join("\n");
+  expect(injected).toContain(`Caveman full active for this session.\n${rule}`);
+
+  // With no sections it appends to the prompt string, keeping what was already there.
+  const options = { appendSystemPrompt: "Base." };
+  await pi.handlers.get("before_agent_start")!({ systemPromptOptions: options }, ctx);
+  expect(options.appendSystemPrompt).toContain(`Caveman full active for this session.\n${rule}`);
+  expect(options.appendSystemPrompt.startsWith("Base.\n\n")).toBe(true);
 });

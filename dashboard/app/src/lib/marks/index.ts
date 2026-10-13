@@ -1,7 +1,4 @@
-// Brand marks resolve to a URL, never to bytes in this file. The dashboard draws them straight
-// from their host, and the exported single-file dashboard gets the same URLs inlined once by the
-// CLI (`window.__TERSIO_MARKS`), so it stays offline-capable. Marks with no host anywhere stay
-// inline in `inline.ts`.
+// Brand marks resolve to a URL; the CLI export inlines them once (`window.__TERSIO_MARKS`), keeping it offline.
 import { isColoredMark, markUrl } from "../../../../../extensions/shared/brand-marks.ts";
 import { INLINE_MARKS } from "./inline.ts";
 
@@ -17,10 +14,7 @@ export function maskMark(slug: string): string | null {
   return embedded()[slug] ?? INLINE_MARKS[slug] ?? markUrl(slug);
 }
 
-/**
- * A full-color mark for the slug, or null when the mark is monochrome or unknown. Callers draw
- * an image mark first and a maskable one second, so one slug resolves to at most one of them.
- */
+/** A full-color mark for the slug, or null when it is monochrome or unknown, so a slug resolves to one mark. */
 export function imageMark(slug: string): string | null {
   const url = embedded()[slug] ?? INLINE_MARKS[slug] ?? markUrl(slug);
   return isColoredMark(slug) ? url : null;

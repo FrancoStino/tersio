@@ -1,5 +1,4 @@
-// The store is one mirror over every agent Tersio can read: omp and pi transcripts, plus both
-// on-disk shapes OpenCode has used. Each test points the env seams at a fixture home.
+// One mirror over every agent Tersio reads: omp and pi transcripts plus both OpenCode on-disk shapes.
 import { expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -26,11 +25,7 @@ function withNoReset(fn: () => void): void {
 
 const HOME_KEYS = ["HOME", "USERPROFILE", "TERSIO_USAGE_DB", "TERSIO_OPENCODE_DIR", "TERSIO_OPENCODE_DB", "TERSIO_RESET_FILE", "TERSIO_SESSIONS_DIR"] as const;
 
-/**
- * A fixture home. HOME is what picks the two transcript dirs and the reset watermark, so the
- * override vars point at the same fixture: `~/.omp/agent/sessions` and `~/.pi/agent/sessions`,
- * OpenCode's JSON tree and its v2 db.
- */
+/** A fixture home: HOME picks the transcript dirs and reset watermark the override vars point at. */
 function withHome(dir: string, fn: () => void): void {
   const prev = new Map<string, string | undefined>(HOME_KEYS.map((key) => [key, process.env[key]]));
   process.env.HOME = dir;
@@ -119,7 +114,6 @@ test.skipIf(!hasSqlite())("the store records every agent Tersio can read", () =>
       expect(ocModels).toEqual(["opencode/deepseek/deepseek-v4.1-flash", "opencode/kimi/kimi-k2.5"]);
       expect(byHost["opencode/deepseek/deepseek-v4.1-flash"]?.opencode?.output).toBe(20);
       expect(byHost["opencode/kimi/kimi-k2.5"]?.opencode?.output).toBe(25);
-      // Three hosts in total, one per fixture source, and no fourth.
       const names = new Set(Object.values(byHost).flatMap((hosts) => Object.keys(hosts)));
       expect([...names].toSorted()).toEqual(["omp", "opencode", "pi"]);
       expect(stored!.tokens.costMeasured).toBeCloseTo(0.5, 9);
@@ -179,5 +173,47 @@ test("an older row never displaces a newer one once the list is full", () => {
   expect(accum.recent).toHaveLength(RECENT_LIMIT);
   expect(accum.recentFloor).toBe(2_000_000);
   expect(accum.recent.at(-1)!.t).toBe(2_000_000 + RECENT_LIMIT - 1);
+  });
+});
+
+// OpenCode records the first token in `time.streamed`, which is the only latency the page can show for it.
+test.skipIf(!hasSqlite())("OpenCode first-token latency reaches the store", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-ttft-"));
+  try {
+    const created = Date.parse("2026-03-04T10:00:00.000Z");
+    const streamed = created + 1200;
+    const ocDb = path.join(dir, "opencode", "opencode.db");
+    mkdirSync(path.dirname(ocDb), { recursive: true });
+    execFileSync("sqlite3", [ocDb, "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);"], { timeout: 30000 });
+    execFileSync("sqlite3", [ocDb,
+      `INSERT INTO session_message VALUES ('r1','s','assistant',1,${created},${created},'${JSON.stringify({
+        model: { providerID: "deepseek", id: "deepseek-v4.1-flash" },
+        tokens: { input: 40, output: 25, cache: { read: 15, write: 0 } },
+        time: { created, streamed, completed: created + 4000 },
+      }).replace(/'/g, "''")}');`], { timeout: 30000 });
+
+    withHome(dir, () => {
+      expect(syncUsageDb()).toBe(true);
+      const row = readUsageDb()!.tokens.recent.find((r) => r.m.startsWith("opencode/deepseek/"));
+      expect(row, "the OpenCode row reached the store").toBeDefined();
+      expect(row!.tf, "first-token latency is the streamed gap, not the whole duration").toBe(1200);
+      expect(row!.d, "duration stays its own measure").toBe(4000);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// pi writes no `ttft`; omp does. Ingest must carry whichever the host recorded, and null when neither did.
+test("ingest carries first-token latency only when the host recorded one", () => {
+  withNoReset(() => {
+    const accum = newSessionAccum();
+    const base = 3_000_000;
+    ingestSessionRow(accum, "claude-opus-4", { input: 1, output: 1 }, base, 5000, undefined, undefined, "omp", "a", "main", 1234);
+    ingestSessionRow(accum, "gpt-5", { input: 1, output: 1 }, base + 1, 6000, undefined, undefined, "pi", "b", "main");
+    const byId = new Map(accum.recent.map((r) => [r.id, r]));
+    expect(byId.get("a")!.tf, "a recorded latency is kept").toBe(1234);
+    expect(byId.get("a")!.d, "duration stays separate from latency").toBe(5000);
+    expect(byId.get("b")!.tf, "an absent latency stays null, never zero").toBeUndefined();
   });
 });

@@ -56,24 +56,27 @@ const createPi = (): FakePi => {
 
 const ctx = { hasUI: false, ui: { notify: (): void => {} }, cwd: root, sessionManager: { getBranch: () => [] } };
 
-// A resolved value becomes a prompt and starts a model turn, so a handler that
-// already printed everything must resolve undefined.
+// A resolved value starts a model turn, so a handler that already printed everything must resolve undefined.
 test("no tersio command handler resolves a value", async () => {
   const seen: string[] = [];
   for (const name of EXTENSIONS) {
     const install = await loadExtension(name);
     const pi = createPi();
     install(pi);
+    // Without this the loop below would pass vacuously for an extension that registered nothing.
+    expect(pi.commands.size, `${name} must register at least one command`).toBeGreaterThan(0);
     for (const [command, handler] of pi.commands) {
       expect(await handler("", ctx), `/${command} in ${name} must resolve undefined`).toBeUndefined();
       seen.push(`/${command}`);
     }
   }
-  expect(seen.length).toBe(EXTENSIONS.length);
+  // The mode switches the tree owns, so a dropped registration fails here rather than passing quietly.
+  for (const command of ["/caveman", "/rtk", "/combo", "/ponytail", "/tersio", "/ai-addons"]) {
+    expect(seen, `${command} must be registered`).toContain(command);
+  }
 });
 
-// Cancelling the host must not roll the modes back, so every session entry is
-// written before the status line goes out.
+// Cancelling must not roll the modes back, so every session entry is written before the status line goes out.
 test("a combo change is persisted before the host is told about it", async () => {
   const install = await loadExtension(["combo", "index.ts"]);
   const pi = createPi();
@@ -94,6 +97,5 @@ test("a combo change is persisted before the host is told about it", async () =>
     const notices = order.slice(4);
   expect(notices).toEqual([
     "setstatus:🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL",
-    "setstatus:Caveman mode: full",
   ]);
 });

@@ -1,5 +1,4 @@
-// The six host differences, one test each, on both hosts. OMP is the pi fork
-// that injects `pi.zod`; pi does not, and that is the whole detection.
+// The six host differences, one test each; OMP is the pi fork that injects `pi.zod`, which is the detection.
 import { expect, test } from "vitest";
 
 import {
@@ -13,8 +12,7 @@ import {
 import type { ExtensionApi, ExtensionCtx, SystemPromptEvent } from "../../extensions/shared/types.ts";
 
 function zodStub() {
-  // zod chains keep the whole API after min() and describe(); the stub does too
-  // so the adapter is exercised against a faithful shape.
+  // zod chains keep the whole API after min()/describe(); the stub does too, so the adapter meets a faithful shape.
   const chain = (kind: string): Record<string, unknown> => {
     const node: Record<string, unknown> = { kind };
     node.min = (n: number) => chain(`${kind}.min(${n})`);
@@ -39,8 +37,7 @@ function piHost() {
   const labels: string[] = [];
   const events: string[] = [];
   const pi = {
-    // pi's setLabel(entryId, label) marks a session entry, so it takes two
-    // arguments; calling it with an extension name would be wrong.
+    // pi's setLabel(entryId, label) marks a session entry, so it takes two arguments, not an extension name.
     setLabel: (entryId: string, label?: string) => { labels.push(`${entryId}:${label ?? ""}`); },
     on: (event: string) => { events.push(event); },
   } as unknown as ExtensionApi;

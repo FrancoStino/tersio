@@ -1,4 +1,4 @@
-// Serves the built Dashboard with local usage APIs. Binds 127.0.0.1 only; --export writes a file instead. No Promise.withResolvers: Node 20.12 lacks it.
+// Dashboard server + usage APIs. Binds 127.0.0.1; --export writes a file. No Promise.withResolvers (Node 20.12).
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -20,7 +20,7 @@ import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from './backups.ts';
-import { readBackupSchedule } from '../extensions/shared/usage-store.ts';
+import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
 
@@ -64,10 +64,15 @@ async function brandDataUri(): Promise<string> {
 /** The range a page opens on, matching the reference dashboard. */
 const DEFAULT_AGENT_RANGE: RangeKey = '24h';
 
-/** The omp aggregate spawns a sqlite3 process per query group, so a repeat poll reuses it. */
+/** Poll memo TTL: the aggregate spawns sqlite3 per query group, so a repeat poll reuses it. */
 const AGENT_REFRESH_MS = 5000;
 
-let agentMemo: { range: RangeKey; view: AgentView; stamp: string; at: number; value: AgentStats } | null = null;
+/** A sync walks every transcript, so it runs at most this often even while a poll outruns it. */
+const AGENT_SYNC_MS = 15_000;
+
+let agentMemo: { range: RangeKey; view: AgentView; offset: number; stamp: string; at: number; value: AgentStats } | null = null;
+
+let lastSyncAt = 0;
 
 function fileStamp(file: string): string {
   try {
@@ -78,15 +83,25 @@ function fileStamp(file: string): string {
   }
 }
 
-/** Reads the omp databases, unless the same window and view were read recently and nothing moved. */
-function agentStats(range: RangeKey, view: AgentView = 'all'): AgentStats {
-  const stamp = `${fileStamp(statsDbPath())}|${fileStamp(agentDbPath())}`;
+/** Both sources: the usage store carries every host's rows, agent.db only omp's quota snapshots. */
+function storeStamp(): string {
+  return `${fileStamp(statsDbPath())}|${fileStamp(agentDbPath())}`;
+}
+
+/** Syncs before reading past the throttle; without it a page misses pi and OpenCode rows. */
+function agentStats(range: RangeKey, view: AgentView = 'all', offset = 0): AgentStats {
   const held = agentMemo;
-  if (held && held.range === range && held.view === view && held.stamp === stamp && Date.now() - held.at < AGENT_REFRESH_MS) {
+  if (held && held.range === range && held.view === view && held.offset === offset && held.stamp === storeStamp() && Date.now() - held.at < AGENT_REFRESH_MS) {
     return held.value;
   }
-  const value = readAgentStats(range, view);
-  agentMemo = { range, view, stamp, at: Date.now(), value };
+  if (Date.now() - lastSyncAt >= AGENT_SYNC_MS) {
+    lastSyncAt = Date.now();
+    try {
+      syncUsageDb();
+    } catch { /* a store that will not write still reads the rows it already holds */ }
+  }
+  const value = readAgentStats(range, view, Date.now(), offset);
+  agentMemo = { range, view, offset, stamp: storeStamp(), at: Date.now(), value };
   return value;
 }
 
@@ -105,8 +120,15 @@ function viewFrom(url: string): AgentView {
   return isAgentView(raw) ? raw : 'all';
 }
 
-function agentJson(range: RangeKey, view: AgentView): string {
-  return JSON.stringify({ range, view, agent: agentStats(range, view) });
+/** `?offset=` in whole rows, floored; a later page starts further back instead of clamping at the cap. */
+function offsetFrom(url: string): number {
+  const raw = queryParam(url, 'offset');
+  const value = raw === null ? 0 : Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function agentJson(range: RangeKey, view: AgentView, offset: number): string {
+  return JSON.stringify({ range, view, offset, agent: agentStats(range, view, offset) });
 }
 
 // Runs outside any agent session, so it reports the persisted defaults.
@@ -309,7 +331,7 @@ function computeDoctorRows(): DoctorRow[] {
   } catch { /* missing config is reported by extension rows */ }
   const duplicateExtensions = [...new Set(explicitEntries.filter((entry, index) => explicitEntries.indexOf(entry) !== index))];
   addon('Unique config registrations', true, 'ok', 'Extensions');
-  // A listed extension whose file is gone makes the host warn on every load, so surface it rather than leaving the user with only a startup message.
+  // A listed extension whose file is gone makes the host warn on every load, so surface it here.
   const dangling = explicitEntries
     .filter((entry) => entry.includes(`extensions${path.sep}`) || entry.includes('extensions/'))
     .filter((entry) => !ok(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
@@ -338,7 +360,7 @@ function computeDoctorRows(): DoctorRow[] {
   return rows;
 }
 
-// Recompute when forced, missing, or past the schedule; a report holding a retired label is stale by definition.
+// A report holding any of these labels is stale by definition.
 const RETIRED_DIAG_LABELS = new Set([
   'OMP CLI',
   'Tersio CLI',
@@ -361,11 +383,10 @@ function isRetiredReport(report: DoctorReport): boolean {
   return report.rows.some((r) => RETIRED_DIAG_LABELS.has(r.label));
 }
 
-// Recompute when forced, missing, retired, or past the schedule.
+// Recompute when forced, missing, retired, or past schedule; manual schedules recompute on open, dated ones reuse.
 function getDoctorReport(force: boolean): DoctorReport {
   const saved = readDiagReport();
   const ttl = saved ? DIAG_TTL_MS[saved.schedule] : 0;
-  // Manual recomputes on open; a dated schedule reuses the saved report.
   if (!force && saved && !isRetiredReport(saved) && ttl > 0 && Date.now() - saved.checkedAt < ttl) return saved;
   const report: DoctorReport = { rows: computeDoctorRows(), checkedAt: Date.now(), schedule: saved?.schedule ?? 'manual' };
   writeDiagReport(report);
@@ -451,7 +472,7 @@ function openBrowser(url: string): void {
   spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
 }
 
-// Replacers throughout: session data holds `$'` (shell quoting) and literal `</script>`, which String.replace would mangle.
+// Replacers throughout: session data holds `$'` (shell quoting) and `</script>`, which String.replace would mangle.
 function escapeInline(json: string): string {
   return json.replace(/<\/(script)/gi, '<\\/$1');
 }
@@ -473,20 +494,13 @@ function parseOwnJson(json: string, field: string): Record<string, unknown> {
 async function exportDashboard(exportFile: string, currency: CurrencyCode): Promise<void> {
   requireDashboardBundle();
   const [bundle, icon] = await Promise.all([readSegment(DASHBOARD_INDEX), brandDataUri()]);
-  // The bundle is minified, so the brand fetch reaches the file as `fetch(\`brand.webp\`)` or
-  // `fetch("brand.webp")` depending on the bundler's quote choice. Match either, or the exported
-  // card silently loses its mark. `atob` returns one char per byte, and a Blob encodes a string
-  // as UTF-8, so the bytes go through a Uint8Array first: a webp is binary and every byte at or
-  // above 0x80 would otherwise double and corrupt the image.
+  // Minified: fetch reads `fetch(\`brand.webp\`)` or `fetch("brand.webp")`; a mismatch loses the card's mark.
   const b64 = icon.split(',')[1] ?? '';
-  // atob yields one char per byte; a Blob encodes a string as UTF-8, so the bytes pass through a
-  // Uint8Array or every byte at or above 0x80 doubles and the webp comes out corrupt.
+  // atob yields one byte per char, so a Uint8Array is needed or bytes >= 0x80 double and corrupt the webp.
   const brandBytes = `(() => { const c = atob(${JSON.stringify(b64)}); const v = new Uint8Array(c.length); for (let i = 0; i < c.length; i++) v[i] = c.charCodeAt(i); return v; })()`;
   const inline = bundle
     .replace('window.__TERSIO_SNAP = null;', () => `window.__TERSIO_SNAP = ${escapeInline(JSON.stringify({ currency, agent: agentStats(DEFAULT_AGENT_RANGE), health: parseOwnJson(healthJson(), 'health'), doctor: getDoctorReport(false) }))};`)
-    // A mark reaches the bundle three ways: an HTML attribute in `index.html`, and a JSX prop
-    // esbuild compiled with a backtick. Match any of `"`, `'`, and `` ` ``, or an exported file
-    // keeps a bare reference that file:// cannot resolve.
+    // A mark is an HTML attribute or JSX prop; match every quote or the file keeps an unresolvable reference.
     .replace(/((?:src|href)[=:][ \t]*)([`"'])brand\.webp\2/g, (_all, head: string, quote: string) => `${head}${quote}${icon}${quote}`)
     .replace(/fetch\(([`"])brand\.webp\1\)/g, () => `Promise.resolve({ ok: true, blob: async () => new Blob([${brandBytes}], { type: "image/webp" }) })`);
   await fs.writeFile(exportFile, inline, 'utf8');
@@ -594,7 +608,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     }
     if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(agentJson(rangeFrom(req.url), viewFrom(req.url)));
+      res.end(agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
       return;
     }
     if (req.url?.startsWith('/api/agent/session')) {
@@ -701,4 +715,4 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   });
 }
 
-export { runDashboard, saveDashboardCurrency, readDiagSchedule, setDiagSchedule, DiagSchedule };
+export { runDashboard, saveDashboardCurrency, readDiagSchedule, setDiagSchedule, DiagSchedule, offsetFrom };

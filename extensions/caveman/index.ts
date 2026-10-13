@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, normalizeInputCommand, normalizeMode, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
 import { dirname, join } from 'node:path';
 import { injectPromptText, onHostEvent, setExtensionLabel } from '../shared/host.ts';
-import { announceStatus } from '../shared/status.ts';
+import { announceStatus, formatCavemanStatus } from '../shared/status.ts';
 import { readCavemanDefault } from '../shared/plugin-settings.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
@@ -71,6 +71,8 @@ export default function cavemanSessionExtension(pi: ExtensionApi): void {
       }
       if (arg === 'status') {
         announceStatus(ctx);
+        // The footer carries one line, so the mode is answered here instead of standing as a second status key.
+        ctx?.ui?.notify?.(formatCavemanStatus(currentMode), 'info');
         return;
       }
       if (!setMode(arg, ctx)) {
@@ -88,7 +90,7 @@ export default function cavemanSessionExtension(pi: ExtensionApi): void {
     const entries = sessionEntries(ctx);
     // A subagent's branch has no Tersio entries; reconciling it would wipe shared state.
     if (hasModeState(entries)) reconcileSharedComboEntries(entries);
-    // Persisted state wins, then a mode already chosen this session, then the configured default. `off` is the start value, not "unset".
+    // Persisted state wins, then a mode already chosen, then the default. `off` is the start value, not unset.
     const persisted = resolveMode(entries, '');
     const alreadyChosen = currentMode !== DEFAULT_MODE;
     currentMode = persisted || (alreadyChosen ? currentMode : normalizeMode('caveman', readCavemanDefault())) || DEFAULT_MODE;

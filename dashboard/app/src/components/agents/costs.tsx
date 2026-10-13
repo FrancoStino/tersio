@@ -1,5 +1,4 @@
-// Costs page: what the usage in range would cost at public API rates. Every figure is an
-// estimate from a rate card, never a bill.
+// Costs page: usage in range priced at public API rates, an estimate from a rate card, never a bill.
 import { useMemo, useState } from "react";
 import {
   Card,

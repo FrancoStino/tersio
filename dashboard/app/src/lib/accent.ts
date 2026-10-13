@@ -1,5 +1,4 @@
-// Accent catalog. index.css owns the live token values; these hexes only paint
-// swatches, so keep them equal to the `html[data-accent=...]` blocks there.
+// Accent catalog: index.css owns the live token values; keep these swatches equal to its `html[data-accent=...]`.
 
 export const ACCENT_IDS = ["emerald", "violet", "slate", "cyan", "rose", "amber", "orange"] as const;
 

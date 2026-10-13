@@ -4,8 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { ensureExtensionInConfig, normalizeExtensionsKey, removeExtensionFromConfig } from "../../cli/common.ts";
 
-// The normalizer lives in cli/common.ts (import-safe: no CLI side effects),
-// so this exercises the shared behavior directly instead of the source text.
+// The normalizer lives in cli/common.ts (import-safe), so this exercises shared behavior directly.
 test("config writer normalizes `extensions: null` before appending list items", () => {
   for (const candidate of ["extensions: null", "extensions: ~", "extensions: []", "extensions:"]) {
     const lines = ["foo: 1", candidate, "bar: 2"];

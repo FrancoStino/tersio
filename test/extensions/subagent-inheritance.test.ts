@@ -1,9 +1,11 @@
 import { afterEach, expect, test } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 import cavemanSessionExtension from "../../extensions/caveman/index.ts";
 import comboToggleExtension from "../../extensions/combo/index.ts";
+import { findHoistedPackage } from "../../extensions/shared/utils.ts";
 import rtkSessionExtension from "../../extensions/rtk/session.ts";
 import {
   OMP_SUBAGENT_MARKER,
@@ -14,12 +16,10 @@ import {
 } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, SessionEntry } from "../../extensions/shared/types.ts";
 
-// ponytail: hermetic HOME — session-start fallbacks read the real lock file,
-// so without this the suite depends on the developer's own defaults.
+// ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
 process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
 process.env.USERPROFILE = process.env.HOME;
-// The bare fixture is HOME to a dozen sibling files, so the data home must sit
-// under it: afterEach below deletes what TERSIO_HOME names.
+// The bare fixture is HOME to a dozen siblings, so TERSIO_HOME must sit under it: afterEach deletes it.
 process.env.TERSIO_HOME = join(process.env.HOME, ".tersio");
 
 const MARKED_PROMPT = `System instructions.\n${OMP_SUBAGENT_MARKER}`;
@@ -105,6 +105,21 @@ function instruction(result: { systemPrompt?: string[] } | undefined) {
   return result?.systemPrompt?.at(-1) || "";
 }
 
+/** The Ponytail body the hoisted package ships, read as `combo/index.ts` does. */
+async function upstreamPonytail(level: string): Promise<string> {
+  // The package's `exports` names only the plugin entry, so the subpath is reached by walking the filesystem.
+  const extensionDir = fileURLToPath(new URL("../../extensions/combo/index.ts", import.meta.url));
+  const file = findHoistedPackage('@dietrichgebert/ponytail', dirname(extensionDir), 'hooks', 'ponytail-instructions.js');
+  expect(file, "the hoisted ponytail package carries its instruction builder").toBeTypeOf("string");
+  const mod = (await import(pathToFileURL(file!).href)) as {
+    getPonytailInstructions?: (l: string) => string;
+    default?: { getPonytailInstructions?: (l: string) => string };
+  };
+  const build = mod.getPonytailInstructions ?? mod.default?.getPonytailInstructions;
+  expect(build, "the hoisted ponytail package exports its instruction builder").toBeTypeOf("function");
+  return build!(level);
+}
+
 // The last status line, filtered out from the other notify traffic.
 function status(notifications: string[]): string {
   return notifications.filter((n) => n.startsWith("🧩 combo")).at(-1) || "";
@@ -129,7 +144,8 @@ test("parent Combo max is inherited by separately instantiated marked children",
   expect(ponytail).toMatch(/# Ponytail/);
   expect(ponytail).toMatch(/PONYTAIL MODE ACTIVE — level: ultra/);
   expect(ponytail).toMatch(/root cause/i);
-  expect(ponytail).toMatch(/YAGNI/);
+  // Compares against the hoisted package, not quoted words: v5 reworded the ladder and dropped "YAGNI".
+  expect(ponytail.startsWith(await upstreamPonytail("ultra"))).toBe(true);
 });
 
 test("medium maps to Caveman lite, RTK on, and Ponytail lite", async () => {
@@ -310,8 +326,7 @@ test("redundant trailing entries do not drop a matching preset (#21)", async () 
   const combo = instantiate(comboToggleExtension, entries);
   const ctx = context(entries, true);
   await command(combo, "combo", "max", ctx);
-  // Entry replay on resume / upstream re-affirming its mode: same values,
-  // appended after combo-level. The preset must survive.
+  // Entry replay on resume: same values appended after combo-level, so the preset must survive.
   entries.push({ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } });
   entries.push({ type: "custom", customType: "caveman-mode", data: { mode: "ultra" } });
   entries.push({ type: "custom", customType: "rtk-mode", data: { enabled: true } });
@@ -395,8 +410,7 @@ test("rtk restores enabled state from session_branch instead of using stale in-m
 });
 
 
-// The literal prompt read out of the installed omp binary. MARKED_PROMPT feeds
-// the constant back into the suite, so it cannot catch the marker drifting.
+// The literal prompt read out of the installed omp binary; MARKED_PROMPT would not catch the marker drifting.
 const REAL_OMP_SUBAGENT_PROMPT = `Worker agent: delegated tasks.
 
 Tools: FULL access (edit, write, bash, grep, read, etc.); MUST use as needed to complete task.
@@ -412,8 +426,7 @@ test("caveman and rtk reach a subagent on the real omp prompt", async () => {
   const parent = instantiate(comboToggleExtension);
   await command(parent, "combo", "max", context([], true));
 
-  // A subagent starts with its own flags at off, so this only passes when the
-  // prompt is recognised and shared state is used.
+  // A subagent starts with flags off, so this passes only on a recognised prompt plus shared state.
   expect(instruction(await inject(instantiate(cavemanSessionExtension), REAL_OMP_SUBAGENT_PROMPT)))
     .toMatch(/Caveman ultra active/);
   expect(instruction(await inject(instantiate(rtkSessionExtension), REAL_OMP_SUBAGENT_PROMPT)))

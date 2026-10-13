@@ -153,7 +153,6 @@ function HealthPane() {
   );
 }
 
-/** One file a snapshot holds. */
 interface DataFile {
   label: string;
   source: string;
@@ -183,11 +182,7 @@ function dataSize(bytes: number): string {
   return `${bytes}B`;
 }
 
-/**
- * The snapshot label: the month, the day, and the year in words, then the time of day. The
- * directory name on disk carries a machine stamp, so the row names the moment instead, and the
- * hover tip keeps the raw name for a restore or a delete by hand.
- */
+/** The snapshot label in words, not the directory's machine stamp; the hover tip keeps the raw name. */
 function dataStamp(mtime: number): string {
   const d = new Date(mtime);
   const date = d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
@@ -195,14 +190,7 @@ function dataStamp(mtime: number): string {
   return `${date} - ${clock}`;
 }
 
-/**
- * Data: the snapshots that can put this machine's data back, and the schedule that takes them.
- *
- * The moves read as one flow: the schedule decides when a snapshot happens by itself, the schedule
- * card carries the button that takes one now, and one picked row of the list opens restore behind a
- * confirm that names the files. The list never restores on its own, so a stray click cannot copy a
- * snapshot over live data.
- */
+/** The restore snapshots and their schedule; the list never restores alone, so a stray click cannot overwrite. */
 function DataPane() {
   const toast = useToast();
   const [backups, setBackups] = useState<DataBackupRow[] | null>(null);
@@ -212,7 +200,6 @@ function DataPane() {
   /** The snapshot the footer works on. A name the list no longer holds reads as no pick. */
   const [picked, setPicked] = useState<string | null>(null);
   const [asking, setAsking] = useState<string | null>(null);
-  /** The snapshot a confirmed delete is about to remove. */
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -314,7 +301,6 @@ function DataPane() {
   };
 
   const target = (backups ?? []).find((b) => b.name === asking) ?? null;
-  /** The snapshot a confirmed delete would remove. */
   const doomed = (backups ?? []).find((b) => b.name === confirming) ?? null;
   /** The footer works on the picked row, unless a restore confirm owns the screen. */
   const chosen = (backups ?? []).find((b) => b.name === picked) ?? null;
@@ -409,9 +395,7 @@ function DataPane() {
             No snapshots yet. Take one above, or let the schedule take it.
           </p>
         ) : (
-          // Six rows at a time: a longer history scrolls inside the card, so the footer with
-          // the picked row's actions stays in one place under it. The cap is a max-height, so a
-          // short list keeps the card compact instead of holding an empty band.
+// Six rows at a time; the cap is a max-height, so a long history scrolls in the card and a short list stays tight.
           <div className="max-h-[19rem] overflow-y-auto">
             <div className="divide-y divide-line">
               {backups.map((b) => {
@@ -658,8 +642,6 @@ function DoctorPane() {
   );
 }
 
-
-/** The three panes the dialog offers. */
 const PANES: Array<{ id: Pane; label: string; icon: string }> = [
   { id: "general", label: "General", icon: "settings" },
   { id: "connection", label: "Connection", icon: "plug" },
@@ -667,7 +649,6 @@ const PANES: Array<{ id: Pane; label: string; icon: string }> = [
   { id: "diagnosis", label: "Diagnosis", icon: "stethoscope" },
 ];
 
-/** One title per pane, so the header names the pane in force. */
 const TITLES: Record<Pane, string> = {
   general: "Settings",
   connection: "Connection",

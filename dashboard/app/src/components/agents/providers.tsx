@@ -61,9 +61,7 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
 
   const selected = useMemo(() => resolveWindow(agent.windowInsights, picked), [agent.windowInsights, picked]);
 
-  // One palette slot per provider, shared by both burn charts, so a provider keeps its color
-  // whether the bars are per bucket or per hour. The slot order is the cost order the burn chart
-  // already uses, so the legend in one chart labels the other.
+  // One palette slot per provider, shared by both burn charts, so a provider keeps its color across buckets and hours.
   const colors = useMemo(() => {
     const top = [...agent.seriesByProvider]
       .toSorted(
@@ -243,11 +241,7 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
   );
 }
 
-/**
- * The window charted below the insights table: the user's pick when it still
- * exists, else the first window of the picked provider, else the most-burned
- * window (the insights table's first row).
- */
+/** The charted window: the user's pick if it exists, else that provider's first window, else the most-burned. */
 function resolveWindow(insights: readonly AgentWindowInsight[], picked: WindowRef | null): WindowRef | null {
   if (picked && insights.some((i) => i.provider === picked.provider && i.windowKey === picked.windowKey)) return picked;
   const fallback =
@@ -259,9 +253,7 @@ function resolveWindow(insights: readonly AgentWindowInsight[], picked: WindowRe
   return fallback ? { provider: fallback.provider, windowKey: fallback.windowKey } : null;
 }
 
-// ---------------------------------------------------------------------------
 // Provider totals
-// ---------------------------------------------------------------------------
 
 function ProviderTotalsTable({
   providers,
@@ -422,9 +414,7 @@ function TokenMix({ provider }: { provider: AgentRow }) {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Peak burn hours
-// ---------------------------------------------------------------------------
 
 /** A sentinel, not an empty string: the select treats "" as no value and shows a blank trigger. */
 const ALL_PROVIDERS = "__all__";
@@ -433,8 +423,7 @@ function PeakHoursCard({ hourly, providers, colors }: { hourly: AgentProviderHou
   const [provider, setProvider] = useState(ALL_PROVIDERS);
   const current = provider === ALL_PROVIDERS || providers.some((p) => p.provider === provider) ? provider : ALL_PROVIDERS;
 
-  // One stacked bar per provider, in the burn chart's order and colors, so a provider reads the
-  // same color in both charts. One provider picked collapses the stack to that provider's bar.
+  // One stacked bar per provider, same order and colors as the burn chart; a picked provider collapses to one bar.
   const shown = useMemo(() => {
     const picked = current === ALL_PROVIDERS ? providers.map((p) => p.provider) : [current];
     const names = picked.filter((name) => colors.has(name) || hourly.some((p) => p.provider === name));
@@ -517,9 +506,7 @@ function PeakHoursCard({ hourly, providers, colors }: { hourly: AgentProviderHou
   );
 }
 
-// ---------------------------------------------------------------------------
 // Subscription window insights
-// ---------------------------------------------------------------------------
 
 function WindowInsightsTable({
   insights,
@@ -642,9 +629,7 @@ const INSIGHT_COLUMNS: Array<Column<AgentWindowInsight>> = [
   },
 ];
 
-// ---------------------------------------------------------------------------
 // Window utilization
-// ---------------------------------------------------------------------------
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -662,11 +647,7 @@ const UTIL_STEPS = [
   DAY_MS,
 ];
 const MAX_UTIL_SLOTS = 240;
-/**
- * Snapshots are recorded whenever usage is fetched, so an account's samples
- * are irregular. A reading holds until the next one, but only this long:
- * longer silences render as gaps rather than invented plateaus.
- */
+/** A reading holds until the next snapshot, but only this long; longer silences render as gaps, not plateaus. */
 const MAX_HOLD_MS = 6 * HOUR_MS;
 
 interface AccountRow {

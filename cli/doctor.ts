@@ -1,18 +1,22 @@
 // cli/doctor.ts — installation health checks.
-import { existsSync, statSync, promises as fs } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_NAME, PACKAGE_VERSION,
   args, dryRun, fix, yes,
+  BUN_BIN_DIR, OMP_BIN,
   execP, parseJsonObject, relTime,
 } from './common.ts';
-import { detectHosts, hostExtensionsDir, ompPackageDir, piTersioSource } from './hosts.ts';
+import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, piTersioSource } from './hosts.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { readTextIfExists, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
+import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
-import { TREE_FILES } from './manifest.ts';
+import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
+import { TREE_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
+import { serviceRunning, serviceState } from './doctor-fix.ts';
 
 /** Bytes at the scale a transcript gap reads in: `5.6M`, not `5571992`. */
 function shortBytes(bytes: number): string {
@@ -31,21 +35,79 @@ interface DoctorSummary {
 async function runDoctor(recheck = false): Promise<DoctorSummary> {
   console.log('\n=== Tersio Doctor ===');
 
-  // OMP loads the plugin from its plugins dir; pi loads the same package as a pi package, which its own settings.json declares and its npm dir holds.
+  // OMP loads the plugin from its plugins dir; pi from its npm dir, per its settings.json.
   const pluginsDir = OMP_PLUGINS_DIR;
   const rtkBin = resolveRtkBinary();
-
-  // Ponytail
-  const ponytailPkg = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
+  // OpenCode's own binary, when installed: `~/.opencode/bin` first, then PATH.
+  const opencodeBin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   // One source for the installed plugin path, so the doctor follows a package rename.
   const tersioPluginDir = ompPackageDir();
+
+  // Node resolves npm's nested copy before the top-level one, so the top-level copy is a decoy no host loads.
+  const ponytailHook = 'hooks/ponytail-instructions.js';
+  const ponytailHookPath = (dir: string): string => path.join(dir, ponytailHook);
+  const ponytailPkg = findHoistedPackage('@dietrichgebert/ponytail', tersioPluginDir, 'package.json')
+    ?? path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
   const cavemanIndex = path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts');
   const cavemanRule = (name: string) => path.join(tersioPluginDir, 'extensions', 'caveman', name);
   const rtkIndex = path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts');
   const updaterIndex = path.join(tersioPluginDir, 'extensions', 'updater', 'index.ts');
 
-  // Independent probes start concurrently; sections report in fixed order as their data settles. Every probe resolves instead of rejecting.
+  // Probes start concurrently and report in fixed order as data settles; each resolves instead of rejecting.
   const hosts = detectHosts();
+
+  // Every host keeps a copy, so resolve the reference as Node does: the omp extensions' copy, not a pinned sibling.
+  const ponytailRef = findHoistedPackage('@dietrichgebert/ponytail', tersioPluginDir, ponytailHook);
+  // pi's settings.json names the local package that loads, and `extensions/ponytail` is not a pi path at all.
+  const piPonytailDir = piPonytailPackageDir(piAgentDir());
+  const piPonytailHook = ponytailHookPath(piPonytailDir);
+  const ponytailLoads: Record<string, string> = {
+    omp: ponytailHookPath(path.join(tersioPluginDir, 'extensions')),
+    pi: piPonytailHook,
+    opencode: ponytailHookPath(path.join(hostExtensionsDir('opencode'), 'ponytail-bundle')),
+  };
+  const ponytailStale: string[] = [];
+  if (ponytailRef) {
+    const ref = await readTextIfExists(ponytailRef);
+    for (const host of hosts.filter((h) => h.installed)) {
+      const dir = ponytailLoads[host.id];
+      if (!dir) continue;
+      const theirs = await readTextIfExists(dir);
+      if (theirs === null || ref === null) continue;
+      if (theirs !== ref) ponytailStale.push(host.id);
+    }
+  }
+  // One comparison per read file catches three directions: dropped, not received, debris left under a dropped name.
+  const treeStale: string[] = [];
+  const treeMissing: string[] = [];
+  const treeOrphan: string[] = [];
+  for (const host of hosts.filter((h) => h.installed)) {
+    // omp's is the package tree, so it holds every manifest entry and is compared against the full set.
+    const isPackageTree = host.id === 'omp';
+    const treeId = isPackageTree ? 'opencode' : host.id;
+    const base = isPackageTree
+      ? path.join(tersioPluginDir, 'extensions')
+      : hostExtensionsDir(host.id);
+    const onDisk = new Set(hostTreeFiles(base).filter((rel) => path.extname(rel) !== '.js'));
+    const expected = new Set(treeFilesFor(treeId));
+    const every = new Set([...onDisk, ...expected]);
+    for (const rel of every) {
+      // Reference is this CLI's own definition, not `tersioPluginDir`, which compares the tree to itself.
+      const reference = treeFileText(rel);
+      const at = path.join(base, ...rel.split('/'));
+      // One debris definition for detection and repair, so a row can only name what a repair removes.
+      if (isObsoleteTreeFile(rel, treeId)) treeOrphan.push(`${host.id}/${rel}`);
+      else if (!expected.has(rel)) continue;
+      else if (!onDisk.has(rel)) treeMissing.push(`${host.id}/${rel}`);
+      // No reference means this build dropped the entry: debris, not a mismatch.
+      else if (reference === null) continue;
+      else {
+        const theirs = await readTextIfExists(at);
+        if (theirs === null) treeMissing.push(`${host.id}/${rel}`);
+        else if (theirs !== reference) treeStale.push(`${host.id}/${rel}`);
+      }
+    }
+  }
   const probes = {
     ompPkgText: readTextIfExists(path.join(ompPackageDir(), 'package.json')),
     configText: readTextIfExists(path.join(OMP_AGENT_DIR, 'config.yml')),
@@ -69,7 +131,11 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       return err.stdout?.trim() || err.stderr?.trim() || null;
     },
   ) : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanUltraText, cavemanMegacaveText, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  // A manager that lost its daemonized process reads stopped, while the orphan still holds the port.
+  const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
+    ? Promise.resolve(serviceState())
+    : Promise.resolve(null);
+  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanUltraText, cavemanMegacaveText, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -91,9 +157,10 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       probes.ponytailMtime,
       probes.pricesMtime,
     ]),
+    Promise.all([opencodeServiceProbe]),
   ]));
 
-  // Categorized output with a tally; success rows stay quiet (no path echoes) while failures print the expected path or fix so they stay actionable.
+  // Success rows stay quiet (no path echoes); failures print the expected path or fix so they stay actionable.
   const tally = { ok: 0, missing: 0, warn: 0 };
   function absDate(ms: number): string {
     const d = new Date(ms);
@@ -109,7 +176,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     tally.warn++;
     console.log(`  ⚠️ ${label}: warn ${detail}`);
   }
-  // A host you do not use is not a fault, so it stays out of the tally and only carries the one line that installs it.
+  // An unused host is not a fault: out of the tally, carrying only the one line that installs it.
   function unused(label: string, detail: string): void {
     console.log(`  —  ${label}: not installed ${detail}`);
   }
@@ -125,7 +192,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       continue;
     }
     if (!host.installed) {
-      // A pi declaration without the tree or the package is a broken install, so it stays a counted row rather than reading as "not installed".
+      // A pi declaration without tree or package is a broken install: a counted row, not "not installed".
       if (host.declared) check(host.label, false, `declared (${host.declared}) but not installed`);
       else unused(host.label, `· ${host.installCmd}`);
       continue;
@@ -133,6 +200,18 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     // One line per host, omp style: kind and version, no path echo.
     const kind = host.via === 'tree' ? 'extensions' : 'package';
     check(host.label, true, `${kind} ${PACKAGE_NAME}${host.version ? ` ${host.version}` : ''}`);
+  }
+
+  // A manager that lost its daemonized process reads stopped, while the orphan still holds the port.
+  if (opencodeService) {
+    const running = serviceRunning(opencodeService.status);
+    if (!running && opencodeService.live) {
+      warnLine('OpenCode service', `a serve process is alive but the service reads ${opencodeService.status} — run: tersio doctor --fix service`);
+    } else if (running && !opencodeService.live) {
+      warnLine('OpenCode service', 'the service reports running but no serve process is alive — run: tersio doctor --fix service');
+    } else {
+      check('OpenCode service', true, opencodeService.status);
+    }
   }
 
   section('Extensions & plugins');
@@ -154,8 +233,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   console.log(`  Usage DB (tersio-owned · local hosted): ${usageDbPath()}`);
   const pricesAge = pricesMtime ? `(pulled ${relTime(Date.now() - pricesMtime.mtimeMs)} · ${absDate(pricesMtime.mtimeMs)})` : '';
   check('Prices feed', pricesMtime !== null, pricesAge || pricesCachePath());
-  // The pages read omp's own index, which only advances while an omp process owns it. A stalled
-  // index reads as an empty dashboard, so name the gap instead of leaving a user to guess.
+  // Pages read omp's own index, which advances only while an omp process owns it, so a stall reads as empty.
   const indexLag = statsIndexLag();
   if (indexLag) warnLine('omp stats index', indexLag);
 
@@ -169,6 +247,25 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     const problem = ruleBodyProblem(text);
     if (problem) warnLine(`Caveman ${name}`, `unusable body (${problem}) — run: tersio install`);
   }
+  // A verbatim sentence read out of omp's own prompt, so a re-worded release stops Caveman reaching subagents.
+  const subagentGap = subagentMarkerStatus(ompBinary());
+  if (subagentGap) warnLine('Caveman subagent marker', subagentGap);
+  // A tree on an older body serves until its install step runs: stale, missing and orphan are one hole.
+  if (treeStale.length > 0) {
+    warnLine('Per-host add-on files',
+      `stale in ${treeStale.length} file${treeStale.length === 1 ? '' : 's'}: ${treeStale.slice(0, 6).join(', ')}` +
+      `${treeStale.length > 6 ? ` +${treeStale.length - 6} more` : ''} — run: tersio install --host <host>`);
+  }
+  if (treeMissing.length > 0) {
+    warnLine('Per-host add-on files',
+      `never installed in ${treeMissing.length} file${treeMissing.length === 1 ? '' : 's'}: ${treeMissing.join(', ')}` +
+      ` — run: tersio install --host <host>`);
+  }
+  if (treeOrphan.length > 0) {
+    warnLine('Per-host add-on files',
+      `orphaned in ${treeOrphan.length} file${treeOrphan.length === 1 ? '' : 's'}: ${treeOrphan.join(', ')}` +
+      ` — run: tersio install --host <host>`);
+  }
   const rtkAge = rtkMtime ? `(updated ${relTime(Date.now() - rtkMtime.mtimeMs)} · ${absDate(rtkMtime.mtimeMs)})` : '';
   check('RTK binary', rtkBin !== null, rtkBinText === null ? 'not found in PATH' : [rtkVersion, rtkAge].filter(Boolean).join(' '));
   // rtk_run needs a host exec API, which doctor cannot assume.
@@ -178,6 +275,12 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
   const ponytailVer = parseJsonObject<{ version?: string }>(ponytailPkgText)?.version ?? '';
   check('Ponytail', ponytailPkgText !== null, [ponytailVer, ponytailAge].filter(Boolean).join(' '));
+  if (ponytailStale.length > 0) {
+    warnLine('Ponytail per-host bodies', `stale in ${ponytailStale.join(', ')} — run: tersio update --apply-update --yes`);
+  }
+  // Offline-safe: the registry call is best-effort, and silence means no row rather than a stale one.
+  const ponytailVersionGap = await ponytailLatestGap(ponytailPkgText);
+  if (ponytailVersionGap) warnLine('Ponytail version', `${ponytailVersionGap} — run: tersio update --apply-update --yes`);
 
   const total = tally.ok + tally.missing + tally.warn;
   console.log(`\n  Summary: ${total} checks — ✅ ${tally.ok} ok, ⚠️ ${tally.warn} warn, ❌ ${tally.missing} missing`);
@@ -190,7 +293,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   return tally;
 }
 
-type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli';
+type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli' | 'service';
 type FixRequest = FixTarget | 'all';
 
 function fixScope(): FixTarget | null {
@@ -208,7 +311,7 @@ function fixScope(): FixTarget | null {
 }
 
 function checkFixScope(raw: string): FixTarget {
-  const valid: FixTarget[] = ['extensions', 'registrations', 'rtk', 'ponytail', 'cli'];
+  const valid: FixTarget[] = ['extensions', 'registrations', 'rtk', 'ponytail', 'cli', 'service'];
   if (!valid.includes(raw as FixTarget)) {
     console.error(`[fail] Invalid --fix scope: ${raw}. Valid: ${valid.join(', ')}`);
     process.exit(1);
@@ -216,25 +319,88 @@ function checkFixScope(raw: string): FixTarget {
   return raw as FixTarget;
 }
 
+/** omp's binary on PATH, or null, resolved against omp's own name the way `resolveRtkBinary` walks for rtk. */
+function ompBinary(): string | null {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, OMP_BIN);
+    if (existsSync(candidate)) return candidate;
+  }
+  const managed = path.join(BUN_BIN_DIR, OMP_BIN);
+  return existsSync(managed) ? managed : null;
+}
+
+// The rule bodies a per-host tree carries. rule.md is the bundled fork; the others track upstream.
+const CAVEMAN_BODIES = ['rule.md', 'rule-ultra.md', 'rule-megacave.md'] as const;
+
+/** `"installed < latest"` when npm answers, else null: silence means "no row", not "stale". */
+async function ponytailLatestGap(installedPkgText: string | null): Promise<string | null> {
+  const local = parseJsonObject<{ version?: string }>(installedPkgText)?.version;
+  if (!local) return null;
+  try {
+    const meta = await fetchJson<{ version?: string }>('https://registry.npmjs.org/@dietrichgebert/ponytail/latest');
+    const remote = meta?.version;
+    if (!remote || remote === local) return null;
+    return `${local} installed, ${remote} is the latest`;
+  } catch {
+    return null;
+  }
+}
+
+/** Add-on files under a host's tree, repo-relative, empty when absent: `node_modules` is skipped as a hoisted dep. */
+function hostTreeFiles(base: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name === 'node_modules' || entry.name === '.DS_Store') continue;
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), child);
+      else out.push(child);
+    }
+  };
+  walk(base, '');
+  return out;
+}
+
+/** Whether omp's strings still carry Caveman's marker sentence: null = no gap, string = warning; pi unchecked. */
+function subagentMarkerStatus(ompBin: string | null): string | null {
+  if (!ompBin) return null;
+  let haystack: string;
+  try {
+    haystack = execFileSync(ompBin, ['--version'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] })
+      + readFileSync(ompBin, 'utf8');
+  } catch {
+    // A binary that will not run is the version row's problem, not this one's.
+    return null;
+  }
+  if (haystack.includes(OMP_SUBAGENT_MARKER)) return null;
+  return `not found in ${path.basename(ompBin)} — Caveman will not reach subagents until OMP_SUBAGENT_MARKER in extensions/shared/session-state.ts is updated`;
+}
+
 async function runDoctorFix(tally: DoctorSummary): Promise<void> {
   const problems: string[] = [];
   if (tally.missing > 0) problems.push(`${tally.missing} missing`);
   if (tally.warn > 0) problems.push(`${tally.warn} warn`);
-  if (dryRun) {
-    console.log(`\n  [dry-run] would repair ${problems.join(' + ')} (extensions, stale config.yml entries, rtk wiring, ponytail refresh, CLI update)`);
-    return;
-  }
   const scoped = fixScope();
   let targets: FixRequest[];
   if (scoped) {
     targets = [scoped];
-    if (!yes) {
-      const go = await askInteractiveConfirm(`Repair "${scoped}" now?`);
-      if (go.status !== 'confirmed' || !go.value) { process.exitCode = 130; return; }
-    }
-  } else if (yes) {
-    targets = ['all'];
   } else {
+    targets = ['all'];
+  }
+  // A dry run still reaches the repairs: each write is guarded, so the flag only skips prompts a preview cannot ask.
+  if (dryRun) {
+    console.log(`\n  [dry-run] would repair ${problems.join(' + ') || 'nothing'} (extensions, stale config.yml entries, rtk wiring, ponytail refresh, CLI update, opencode service)`);
+    const { runDoctorRepairs } = await import('./doctor-fix.ts');
+    await runDoctorRepairs(targets);
+    return;
+  }
+  if (scoped && !yes) {
+    const go = await askInteractiveConfirm(`Repair "${scoped}" now?`);
+    if (go.status !== 'confirmed' || !go.value) { process.exitCode = 130; return; }
+  } else if (!scoped && !yes) {
     const picked = await askInteractiveChoice('Doctor — what should I repair?', [
       { value: 'all', label: 'Fix everything', hint: `${tally.missing + tally.warn} rows` },
       { value: 'extensions', label: 'Missing extension files', hint: 'copy sources from this CLI' },
@@ -242,6 +408,7 @@ async function runDoctorFix(tally: DoctorSummary): Promise<void> {
       { value: 'rtk', label: 'RTK binary + wiring', hint: 'download checksum-verified binary, rtk init' },
       { value: 'ponytail', label: 'Ponytail package', hint: 'bundled reinstall via tersio dep' },
       { value: 'cli', label: 'CLI update', hint: 'latest tersio + delegated refresh' },
+      { value: 'service', label: 'OpenCode service', hint: 'stop an orphaned serve process, then start it' },
     ], 'all');
     if (picked.status !== 'selected') { process.exitCode = 130; return; }
     if (picked.value === 'all') targets = ['all'];
@@ -268,24 +435,18 @@ async function runDoctorFix(tally: DoctorSummary): Promise<void> {
   else console.log(`  Doctor --fix: still ${again.missing} missing + ${again.warn} warn — rerun or repair manually.`);
 }
 
-/**
- * How far omp's own transcript index falls behind the transcripts on disk, or null when nothing is
- * behind or the index cannot be read. omp advances the offsets only while one of its processes owns
- * the index, so a closed dashboard leaves the newest turns unread and the pages read as empty.
- */
+/** How far omp's transcript index lags the transcripts on disk, or null when behind or unreadable. */
 function statsIndexLag(): string | null {
   const statsDb = statsDbPath();
   if (!existsSync(statsDb)) return null;
   try {
-    // The same WAL-safe reader the aggregate uses, so this probe never creates side files beside a
-    // database omp has open, and never trips over them either.
+    // Same WAL-safe reader as the aggregate, so this probe creates no side files beside a database omp has open.
     const rows = sqliteScript(statsDb, 'SELECT session_file, offset FROM file_offsets;\n')
       .split('\n')
       .filter((line: string) => line.includes('\t'))
       .map((line: string) => line.split('\t'));
     if (rows.length === 0) return null;
-    // The gap behind the freshest transcript is what a page shows as "no requests", so the newest
-    // file sets the number rather than the sum of every file's gap.
+    // A page shows the gap behind the freshest transcript, so the newest file sets the number, not the sum.
     let worstBytes = 0;
     let freshest = '';
     for (const [file, offsetText] of rows) {

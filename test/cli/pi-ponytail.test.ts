@@ -52,9 +52,7 @@ test("pi install writes every Caveman rule body", () => {
       cwd: root, encoding: "utf8", timeout: 120000, env: offline(dir),
     });
     const caveman = path.join(dir, ".pi", "agent", "extensions", "caveman");
-    // rule.md is our own fork and ships verbatim. The other two track upstream, so a newer
-    // upstream body is the expected install result and byte equality would flake on every
-    // upstream edit.
+    // rule.md is our fork and ships verbatim; the other two track upstream, so byte equality would flake.
     expect(readFileSync(path.join(caveman, "rule.md"), "utf8")).toBe(readFileSync(path.join(root, "extensions", "caveman", "rule.md"), "utf8"));
     for (const name of ["rule-ultra.md", "rule-megacave.md"]) {
       const body = readFileSync(path.join(caveman, name), "utf8");

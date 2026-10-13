@@ -1,9 +1,4 @@
-// The trace's virtual time axis: three ways to lay a session out, and the ruler they share.
-//
-// A session is not evenly spent. The default axis is wall clock with idle gaps bridged, so a
-// twenty-minute gap between two prompts takes the width of a pause instead of the width of an hour.
-// The other two axes throw time away and give every turn, or every call boundary, the same width,
-// which is what a comparison wants.
+// The virtual time axis: default bridges idle gaps, so a pause costs a pause's width; turns and calls weigh equally.
 
 import type { AgentTraceSpan, AgentTraceTrack } from "@/lib/data";
 
@@ -118,7 +113,6 @@ function equalWidth(tracks: AgentTraceTrack[], mode: AxisMode): TraceScale {
   return piecewise(times, times.map((_, index) => index * width));
 }
 
-/** The axis for the mode over every track. */
 export function buildScale(tracks: AgentTraceTrack[], mode: AxisMode, compressIdle: boolean): TraceScale {
   if (tracks.every((track) => track.spans.length === 0)) {
     return piecewise([0, 1], [0, 1]);
@@ -127,14 +121,12 @@ export function buildScale(tracks: AgentTraceTrack[], mode: AxisMode, compressId
   return equalWidth(tracks, mode);
 }
 
-/** One ruler tick. */
 export interface Tick {
   u: number;
   label: string;
   major: boolean;
 }
 
-/** Target spacing between ticks. */
 const TICK_TARGET_PX = 90;
 /** Padding in px between two tick labels. */
 const MIN_TICK_PX = 54;
@@ -202,7 +194,6 @@ export function buildTicks(scale: TraceScale, u0: number, u1: number, widthPx: n
 /** The lanes one track draws: its span kinds, in reading order. */
 export const LANE_ORDER: readonly string[] = ["turn", "model", "tool", "background"];
 
-/** Lane label for a span kind. */
 export const LANE_LABEL: Record<string, string> = {
   turn: "Input",
   model: "Model",

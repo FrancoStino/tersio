@@ -1,6 +1,4 @@
-// Pure helpers for graphs that are not chart series: the weeks-by-weekday activity grid, the
-// bar strip, and the streak figures. Both the share card and any future page read it, so the
-// layout rules live here instead of in a component.
+// Pure graph helpers — weeks-by-weekday grid, bar strip, streaks — shared by the share card.
 import { bucketWord, tsFull } from "./format.ts";
 import type { AgentStats } from "./data.ts";
 
@@ -18,37 +16,30 @@ export const BAND_MAX_WEEKS = 18;
 export interface GraphCell {
   week: number;
   day: number;
-  /** Tokens inside the cell, and the bucket it came from. */
   tokens: number;
   ts: number;
   /** UTC day key, which is what the card tooltip reads. */
   label: string;
   level: 0 | 1 | 2 | 3 | 4;
-  /** The calendar month the cell falls in, which is what a month label reads. */
   month: string;
 }
 
 /** A run of consecutive days with activity, the way a contribution graph reads one. */
 export interface Streak {
-  /** How many days the run holds, today or yesterday included for a live streak. */
+  /** How many days the run holds; a live run includes today or yesterday. */
   days: number;
-  /** The run's newest day, or null when no day in the window holds activity. */
+  /** The run's newest day; null when the window holds no activity. */
   endTs: number | null;
-  /** The run's oldest day. */
   startTs: number | null;
 }
 
 /** The streak and peak figures the card's right panel reads. */
 export interface GraphStreaks {
-  /** The run that is still live today or yesterday; zero when the window is quiet right now. */
+  /** The run still live today or yesterday; zero days when the window is quiet. */
   current: Streak;
-  /** The longest run anywhere in the window. */
   longest: Streak;
-  /** How many days in the window hold activity. */
   activeDays: number;
-  /** The busiest day's tokens. */
   peakTokens: number;
-  /** The busiest day, or null when the window is empty. */
   peakTs: number | null;
   /** Every day in the window, oldest first, so a panel can walk them. */
   days: Array<{ ts: number; tokens: number }>;
@@ -56,7 +47,7 @@ export interface GraphStreaks {
 
 const utcDay = (ts: number): number => Math.floor(ts / DAY_MS) * DAY_MS;
 
-/** The window's own day bounds, and every day's token total inside it. */
+/** The window's day bounds and each day's token total. */
 export interface DayTotals {
   perDay: Map<number, number>;
   /** The oldest day the grid draws, the Sunday on or before the range's start. */
@@ -84,7 +75,7 @@ const dayTotalsOf = (agent: AgentStats): DayTotals => {
   return { perDay, start: windowStart - new Date(windowStart).getUTCDay() * DAY_MS, end };
 };
 
-/** How many days in the window hold activity, the busiest one, and the longest single request. */
+/** The busiest day and longest single request, on top of the day totals. */
 export interface DayFact {
   activeDays: number;
   peakTokens: number;
@@ -112,13 +103,7 @@ export function dayFactsOf(agent: AgentStats): DayFact {
   return { activeDays, peakTokens, peakTs, perDay, start, end };
 }
 
-/**
- * The buckets become a weeks-by-weekday grid that covers the whole window, not just the days
- * that hold data. The oldest cell is the Sunday on or before the range's start and the newest
- * is today, so a window that opens mid-month still draws that month's leading days as empty
- * boxes and the current month fills out to the right edge. GitHub's own graph behaves this way:
- * a run of quiet days reads as its own shape rather than being cut out of the picture.
- */
+/** A weeks-by-weekday grid covering the whole window, not just days with data, so a mid-month window draws leads. */
 export function graphOf(agent: AgentStats): GraphCell[] {
   const { perDay, start, end } = dayTotalsOf(agent);
   // A window with no activity draws no graph, so the card's empty state reads.
@@ -151,11 +136,7 @@ export function graphWeeks(cells: GraphCell[]): number {
   return cells.reduce((max, c) => Math.max(max, c.week + 1), 0);
 }
 
-/**
- * The streak and peak figures, read off the same day grid so a card never counts twice.
- * A streak is a run of consecutive days that hold activity; the current one is live only when
- * it reaches today or yesterday, because a day still open is not a missed day.
- */
+/** Streaks off the same day grid; the current streak is live only if it reaches today or yesterday, not an open day. */
 export function streaksOf(facts: DayFact): GraphStreaks {
   const all: Array<{ ts: number; tokens: number }> = [];
   for (let ts = facts.start; ts <= facts.end; ts += DAY_MS) {
@@ -182,8 +163,7 @@ export function streaksOf(facts: DayFact): GraphStreaks {
     (best, r) => (r.days > best.days ? { days: r.days, startTs: r.startTs, endTs: r.endTs } : best),
     { days: 0, startTs: null, endTs: null },
   );
-  // Live means the last run reaches today or yesterday: today is still open, yesterday is the
-  // newest day that can be missed.
+  // Live means the last run reaches today or yesterday; today is still open.
   const last = runs.length > 0 ? runs[runs.length - 1]! : null;
   const current: Streak =
     last !== null && [facts.end, facts.end - DAY_MS].includes(last.endTs)
@@ -199,7 +179,7 @@ export function streaksOf(facts: DayFact): GraphStreaks {
   };
 }
 
-/** One day of a month band: a cell the band draws left to right. */
+/** One day of a month band. */
 export interface BandCell {
   ts: number;
   tokens: number;
@@ -211,7 +191,7 @@ export interface BandCell {
 
 /** One month of a band chart: a full row of days, oldest month first and newest last. */
 export interface MonthBand {
-  /** Sort key: the month's own year and month. */
+  /** Sort key: the month's year and month. */
   key: string;
   /** Short month name, which is what the row labels. */
   label: string;
@@ -221,12 +201,7 @@ export interface MonthBand {
   cells: BandCell[];
 }
 
-/**
- * The window becomes one row per calendar month, every day of that month as a cell, oldest month
- * at the top and the current month last. A three month window reads as three even rows instead of
- * a fourteen column grid that a card cannot fill, and a month that opened before the range keeps
- * its earlier days as boxes marked outside the window, so the row's length still names the month.
- */
+/** One row per calendar month, oldest at top, every day a cell, so a three-month window reads as three even rows. */
 export function monthBandsOf(facts: DayFact, peak: number): MonthBand[] {
   const bands = new Map<string, MonthBand>();
   for (let ts = facts.start; ts <= facts.end; ts += DAY_MS) {
@@ -246,7 +221,7 @@ export function monthBandsOf(facts: DayFact, peak: number): MonthBand[] {
   return [...bands.values()].toSorted((a, b) => a.cells[0]!.ts - b.cells[0]!.ts);
 }
 
-/** Every day of one month, in order, with the level each day earns against the window's peak. */
+/** Every day of one month, each with the level it earns against the window's peak. */
 function daysOfMonth(year: number, month: number, facts: DayFact, peak: number): BandCell[] {
   const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const cells: BandCell[] = [];
@@ -268,7 +243,6 @@ const toCell = (ts: number, tokens: number, peak: number, inWindow: boolean): Ba
   return { ts, tokens, level, inWindow, label: new Date(ts).toISOString().slice(0, 10) };
 };
 
-/** One bar of the activity strip. */
 export interface ActivityBar {
   ts: number;
   tokens: number;
@@ -276,10 +250,7 @@ export interface ActivityBar {
   label: string;
 }
 
-/**
- * The buckets become a bar strip, one bar per slot, with quiet slots kept at zero so a gap still
- * reads in the shape. A window that spans too few weeks for a calendar reads better this way.
- */
+/** A bar strip, one bar per slot, quiet slots at zero so a gap still reads; for windows too short for a calendar. */
 export function stripOf(agent: AgentStats): { unit: string; bars: ActivityBar[] } {
   const step = agent.bucketMs > 0 ? agent.bucketMs : DAY_MS;
   const perSlot = new Map<number, number>();
@@ -292,8 +263,7 @@ export function stripOf(agent: AgentStats): { unit: string; bars: ActivityBar[] 
   const first = Math.min(...perSlot.keys());
   const last = Math.max(...perSlot.keys());
   const bars: ActivityBar[] = [];
-  // The window starts at the range's first slot, so a quiet lead-in shows its gap, and never
-  // stretches past the bar cap, so a bar stays a bar.
+  // Starts at the range's first slot so a quiet lead-in shows its gap, and never stretches past the bar cap.
   const windowStart = agent.cutoff > 0 ? Math.floor(agent.cutoff / step) * step : first;
   for (let ts = Math.max(windowStart, last - (STRIP_BARS - 1) * step); ts <= last; ts += step) {
     bars.push({

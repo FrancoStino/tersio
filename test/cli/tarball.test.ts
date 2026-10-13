@@ -5,11 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-// Every extensions/<base> value import needs its compiled .js (CLI runtime,
-// under dist/) and its .ts source (OMP loads TS) packed; v2.20.0 shipped .ts
-// only and crashed on first run.
+// Each extensions/<base> import needs packed .js (CLI) and .ts (OMP); v2.20.0 shipped .ts only and crashed.
 function cliExtensionBases(): Set<string> {
   const bases = new Set<string>();
   for (const file of readdirSync(path.join(root, "cli"))) {
@@ -60,16 +60,11 @@ test("packed tarball carries every Caveman rule body", () => {
   for (const name of ["rule.md", "rule-ultra.md", "rule-megacave.md"]) {
     expect(packed, `manifest-loaded Caveman must receive ${name}`).toContain(`extensions/caveman/${name}`);
   }
-  const source = readFileSync(path.join(root, "extensions", "caveman", "rule.md"), "utf8");
-  // Each body documents only the levels it serves.
-  for (const level of ["lite", "full"]) {
-    expect(source, `rule.md documents ${level}`).toMatch(new RegExp(`\\b${level}\\b`));
+  // Bodies load at runtime; rule.md aliases `ultra`/`wenyan`; contract in test/extensions/caveman.test.ts.
+  for (const name of ["rule.md", "rule-ultra.md", "rule-megacave.md"]) {
+    expect(ruleBodyProblem(readFileSync(path.join(root, "extensions", "caveman", name), "utf8")),
+      `${name} must pass the install-time body gate`).toBeNull();
   }
-  for (const level of ["ultra", "wenyan"]) {
-    expect(source, `rule.md must not carry ${level}`).not.toMatch(new RegExp(`\\*\\*${level}`));
-  }
-  expect(source).toMatch(/ASD-STE100 Simplified Technical English/);
-  expect(source).toMatch(/No tool-call narration/);
 });
 
 // A packed tree can list every file and still not boot, so run the packed CLI itself.

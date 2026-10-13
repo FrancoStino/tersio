@@ -244,6 +244,48 @@ test.skipIf(!hasSqlite())("v10 databases gain the id column without re-parsing",
   }
 });
 
+test.skipIf(!hasSqlite())("v12 databases gain the ttft column and backfill it from the transcripts", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-usage-ttft-"));
+  try {
+    withEnv(dir, () => {
+      const db = process.env.TERSIO_USAGE_DB!;
+      mkdirSync(path.join(dir, "sessions"), { recursive: true });
+      const file = path.join(dir, "sessions", "s.jsonl");
+      writeFileSync(
+        file,
+        `{"timestamp":"2026-09-01T10:00:00.000Z","message":{"role":"assistant","model":"m","duration":4000,"ttft":900,"usage":{"input":10,"output":1}}}\n`,
+        "utf8",
+      );
+      execFileSync("sqlite3", [db, [
+        `CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`,
+        `CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size REAL NOT NULL);`,
+        `CREATE TABLE messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
+        ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
+        ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);`,
+        `INSERT INTO files (path, mtime, size) VALUES ('${file}',1,2);`,
+        `INSERT INTO messages (file_id, t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, a, id)` +
+        ` VALUES (1,1,'m',10,1,4000,0,0,NULL,'completed',NULL,NULL,'[]','pi','main','row-1');`,
+        `INSERT INTO meta VALUES ('parser_version','12');`,
+      ].join("")]);
+
+      // The column arrives and the transcript is re-read once so existing rows gain latency, not NULL.
+      expect(syncUsageDb()).toBe(true);
+      const cols = execFileSync("sqlite3", [db, "PRAGMA table_info(messages);"], { encoding: "utf8" });
+      expect(cols).toMatch(/[,|]tf[,|]/);
+      const latencies = execFileSync("sqlite3", [db, "SELECT CAST(tf AS INTEGER) FROM messages;"], { encoding: "utf8" }).trim();
+      expect(latencies).toBe("900");
+      // No row is lost and the guard never trips: the ALTER moves nothing.
+      expect(readUsageDb()?.tokens.messages).toBe(1);
+      expect(reparseGuardReport()).toBe(null);
+      // The marker closes the window, so the next sync does not re-read the transcript again.
+      expect(syncUsageDb()).toBe(true);
+      expect(readUsageDb()?.tokens.messages).toBe(1);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("usageDbPath migrates the legacy plugins copy into ~/.tersio", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-home-"));
   const prevHome = process.env.HOME;

@@ -1,5 +1,4 @@
-// The dashboard owns display currency: a pick POSTs to /currency and the
-// server persists it, since each run is a new origin and localStorage dies.
+// The server owns display currency: each run is a new origin, localStorage dies, so a pick POSTs to /currency.
 import { expect, test } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

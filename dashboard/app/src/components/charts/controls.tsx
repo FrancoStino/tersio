@@ -93,11 +93,11 @@ export function QueryView({
 export function ChartSkeleton({ className, height = 220 }: { className?: string; height?: number }) {
   return (
     <div className={cn("flex flex-col gap-3", className)} aria-busy="true" aria-label="Loading chart">
-      <Skeleton style={{ height }} className="w-full rounded-xl bg-track/60" />
+      <Skeleton style={{ height }} className="w-full rounded-xl" />
       <div className="flex gap-3">
-        <Skeleton className="h-3 w-20 bg-track/60" />
-        <Skeleton className="h-3 w-16 bg-track/60" />
-        <Skeleton className="h-3 w-24 bg-track/60" />
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-3 w-24" />
       </div>
     </div>
   );

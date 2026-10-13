@@ -43,7 +43,6 @@ export function rtkActive(entries: SessionEntry[] | null | undefined): boolean {
 /** The text in a result's content parts, or null when the parts are not plain text. */
 export function filterableText(parts: unknown): string | null {
   if (!Array.isArray(parts) || parts.length === 0) return null;
-  // An image or a mixed result is not text to filter.
   if (parts.some((part) => (part as { type?: unknown } | null)?.type !== 'text')) return null;
   return parts.map((part) => (part as { text?: unknown } | null)?.text ?? '').join('\n');
 }

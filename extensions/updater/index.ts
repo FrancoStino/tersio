@@ -1,4 +1,4 @@
-// /ai-addons manual updater. Node built-ins only. RTK ships SHA256 checksums with no signature, so checksum-only is the best available.
+// /ai-addons manual updater. Node built-ins only. RTK ships unsigned SHA256 checksums, so checksum-only it is.
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -32,9 +32,7 @@ const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PONYTAIL_REMOTE = 'https://raw.githubusercontent.com/DietrichGebert/ponytail/main/package.json';
 const RTK_BINARY = resolveRtkBinary();
-// Beside this file, not a host path: these are the rules /caveman reads. A retired
-// agent-tree copy has no `caveman` sibling, so the OMP plugin install is the
-// fallback: it is the one the plugin manifest loads from.
+// Beside this file: a retired agent-tree copy has no `caveman` sibling, so fall back to the OMP plugin.
 const CAVEMAN_SIBLING = (name: string): string => path.join(EXTENSION_DIR, '..', 'caveman', name);
 
 function cavemanRule(name: string): string {
@@ -52,12 +50,10 @@ const CAVEMAN_TRACKED: ReadonlyArray<{ file: string; remote: string }> = [
 // Host-neutral: this updater runs inside pi, OMP, and OpenCode alike.
 const RELOAD_MSG = 'Reminder: restart your agent (or reload extensions) for updates to take effect.';
 
-// Ponytail is a hoisted dependency, so the installed copy is found by walking up rather than by naming a host directory.
+// Ponytail is hoisted, so the installed copy is found by walking up, not by naming a host directory.
 function ponytailLocal(): string | null {
   return findHoistedPackage('@dietrichgebert/ponytail', EXTENSION_DIR, 'package.json');
 }
-
-// --- Types ---
 
 interface AddonUpdaterCtx {
   cwd?: string;
@@ -196,7 +192,6 @@ async function checkAddons(ctx: AddonUpdaterCtx): Promise<string> {
   return lines.join('\n');
 }
 
-// Ponytail is a hoisted dependency; replace its package dir from the npm tarball.
 async function updatePonytail(pi: AddonUpdaterPi, ctx: AddonUpdaterCtx, dryRun = false): Promise<string> {
   void pi;
   const localPkg = ponytailLocal();

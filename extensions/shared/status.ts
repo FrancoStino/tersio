@@ -1,4 +1,4 @@
-// One status string every surface renders: host footer bar, CLI menu title, dashboard banner. Nothing else formats mode state.
+// One status string every surface renders: host footer, CLI title, dashboard banner. Nothing else formats mode state.
 import { getSharedComboState } from './session-state.ts';
 import type { ExtensionCtx, UiApi } from './types.ts';
 
@@ -17,9 +17,9 @@ export function formatStatus(state: StatusState): string {
   return `🧩 combo ${label}: 🪨caveman=${caveman.toUpperCase()} ⚡rtk=${rtk.toUpperCase()} 🦥ponytail=${ponytail.toUpperCase()}`;
 }
 
-// The string upstream's skill tells the model to relay for `/caveman status`.
+// The string upstream's skill tells the model to relay for `/caveman status`; `off` is a mode, so it reads as one.
 export function formatCavemanStatus(mode: string): string {
-  return `Caveman mode: ${mode && mode !== 'off' ? mode : 'unknown'}`;
+  return `Caveman mode: ${mode || 'unknown'}`;
 }
 
 // Stale ctx access throws, so never let it abort a mode restore.
@@ -38,6 +38,7 @@ let lastText: string | undefined;
 let lastUi: UiApi | undefined;
 
 // Paint the host footer bar; same text on the same UI is skipped, a new ctx repaints it.
+// One key only: the combo line already names the caveman mode, and a second key renders as a second footer line.
 export function announceStatus(ctx: ExtensionCtx | undefined): void {
   const state = getSharedComboState();
   const text = formatStatus(state);
@@ -48,5 +49,4 @@ export function announceStatus(ctx: ExtensionCtx | undefined): void {
   lastText = text;
   lastUi = ui;
   ui.setStatus?.('tersio', text);
-  ui.setStatus?.('caveman', formatCavemanStatus(state.caveman));
 }

@@ -1,5 +1,4 @@
-// The shell: a glass topbar (brand, mode banner, range, theme) over a rail that jumps between pages,
-// with the app's own Settings action in the rail's footer.
+// The shell: a glass topbar (brand, mode banner, range, theme) over a page-jumping rail whose footer holds Settings.
 import { useEffect, useState } from "react";
 import { cn } from "cn";
 import {
@@ -70,12 +69,7 @@ const MODE_GLYPHS = [
   { key: "ponytail", glyph: "🦥", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
 ] as const;
 
-/**
- * The mode banner: the combo preset this machine starts sessions with, and the three modes under
- * it, each with its own glyph. It replaces the page name in the navbar, because the page is already
- * in the rail, while the modes are the one thing the dashboard cannot show anywhere else. A click
- * opens Settings, where each mode is changed.
- */
+/** The combo preset this machine starts sessions with and the three modes under it; a click opens Settings. */
 export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen: () => void }) {
   const level = modes?.comboDefault ?? "off";
   const on = level !== "off";
@@ -90,8 +84,7 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
       <span className="shrink-0 text-[13px]">🧩</span>
       <span className={cn("min-w-0 truncate", on ? "font-semibold text-ink" : "text-dim")}>{label}:</span>
       {/* A block, not a flex: only a block truncates, so the modes cut with an ellipsis in a
-          narrow topbar instead of clipping mid-word against the range picker. Below `lg` they drop
-          out entirely, because a 256 pixel rail leaves no room for even the first one. */}
+          narrow topbar instead of clipping mid-word. Below `lg` they drop out entirely. */}
       <span className="mono hidden min-w-0 truncate lg:block">
         {MODE_GLYPHS.map((m) => (
           <span key={m.key} className="mr-1.5 inline-flex items-center gap-0.5 align-middle">
@@ -107,8 +100,7 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
 
 /** The window every page reads. An exported file carries one, so it is a label there. */
 export function RangePicker({ range, onPick }: { range: AgentRange; onPick: (next: AgentRange) => void }) {
-  // A phone has no width for six ranges beside the mode banner and the three buttons, so the two
-  // longest drop out. The `1`-`6` keys still pick every window.
+// Too narrow on a phone for six ranges beside the banner and buttons, so two drop out; `1`-`6` still pick all.
   const compact = useIsMobile();
   const options = AGENT_RANGES.filter((value) => !compact || value === "1h" || value === "24h" || value === "7d" || value === "all");
   if (isFileExport()) {
@@ -194,8 +186,7 @@ export function AppSidebar({
   agentAvailable: boolean;
   onSettings: () => void;
 }) {
-  // z-50 keeps the rail's own header above the inset's sticky one, so the trigger stays clickable
-  // in the icon width, where the two headers overlap by a few pixels.
+  // z-50 keeps the rail header above the inset's sticky one, so the trigger stays clickable where the two overlap.
   return (
     <Sidebar collapsible="icon" className="z-50 border-r border-line bg-panel text-ink">
       <SidebarHeader className="h-12 shrink-0 justify-center border-b border-line p-0 px-2">
@@ -301,10 +292,7 @@ export function Topbar({
   return (
     <header
       className={cn(
-        // The rule below always shows, so it lines up with the rail header's own rule at rest.
-        // Below `sm` the row wraps: a phone has no width for the mode banner, six ranges, and the
-        // three buttons on one line, so the buttons take a second row instead of squeezing the
-        // modes into a clip. At `sm` and up it stays one 48 pixel row.
+        // The rule always shows, lining up with the rail header's; below `sm` the row wraps rather than clipping the modes.
         "sticky top-0 z-40 flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line px-3 py-1.5 backdrop-blur-md transition-[background] duration-200 sm:h-12 sm:flex-nowrap sm:gap-2 sm:py-0",
         scrolled ? "bg-panel/85" : "bg-transparent",
       )}

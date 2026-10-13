@@ -23,7 +23,9 @@ test("folded labels pass through untouched", () => {
 });
 
 test("labels skip a redundant vendor prefix and keep unknowns readable", () => {
-  expect(displayModel("Deepseek-V4.1-Flash")).toBe("Deepseek-V4.1-Flash");
+  // DeepSeek spells itself with a capital S, so the label says the vendor once in its own spelling.
+  expect(displayModel("Deepseek-V4.1-Flash")).toBe("DeepSeek - V4.1-Flash");
+  expect(displayModel("deepseek/deepseek-reasoner")).toBe("DeepSeek - Reasoner");
   expect(displayModel("opencode/Github-Copilot/oswe-Vscode-Prime")).toBe("Github-Copilot - Oswe-Vscode-Prime");
   expect(displayModel("llama-3.3-70b")).toBe("Meta - Llama-3.3-70B");
 });

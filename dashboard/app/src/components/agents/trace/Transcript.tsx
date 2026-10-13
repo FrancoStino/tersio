@@ -1,9 +1,4 @@
-// The transcript: every span in order, one row each, bidirectionally synced with the timeline.
-//
-// A session holds thousands of spans, so the list is windowed: it renders the rows the scroll
-// position puts on screen plus a little overrun, and keeps the rest as spacer height. A row holds
-// the span's kind as a chip, its name, the first line of its text, and how long it held alongside
-// the offset from the start of the session, the shape the reference transcript uses.
+// Every span in order, one row each, synced with the timeline; the list is windowed, a session can hold thousands.
 
 import { memo, useEffect, useRef, useState } from "react";
 import { VendorMark } from "@/components/brand";
@@ -23,12 +18,9 @@ export interface TranscriptRow {
 
 /** One row's height. The list is windowed against it, so it must stay fixed. */
 const ROW_H = 28;
-/** Rows kept on either side of the window. */
 const OVERSCAN = 12;
-/** The list's height. */
 const LIST_H = 360;
 
-/** Flatten every track's spans into one chronological list. */
 export function buildTranscriptRows(tracks: AgentTraceTrack[]): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   for (const track of tracks) for (const span of track.spans) rows.push({ key: span.id, time: span.start, span, track });

@@ -1,6 +1,4 @@
-// The share card: one image of what the range holds, built from the agent statistics database.
-// The card is an SVG so the canvas can rasterize it at 1200x850 for a PNG, and the text line
-// beside it is plain so a network without image paste still gets the figures.
+// The share card: an SVG of the range, rasterized at 1200x850 for a PNG; a text line covers image-less networks.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/icon";
@@ -25,15 +23,10 @@ interface Card {
   errorRate: number;
   /** Which activity picture the window earns: a bar strip, month bands, the calendar, or none. */
   kind: "empty" | "strip" | "bands" | "calendar";
-  /** The bar strip, for a window that spans too few weeks to read as a calendar. */
   strip: { unit: string; bars: ActivityBar[] };
-  /** The weeks-by-weekday calendar, for a window wide enough to need one. */
   graph: GraphCell[];
-  /** How many week columns the calendar spans. */
   weeks: number;
-  /** One row per calendar month, for a window of a few months. */
   bands: MonthBand[];
-  /** The streak and peak figures read off the same day grid. */
   streaks: GraphStreaks;
   /** The longest single request in the range; null when none carries a duration. */
   maxDurationMs: number | null;
@@ -100,7 +93,6 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
     `<text x="${x}" y="${y}" font-family="monospace" font-size="20" letter-spacing="3" fill="${dim}">${e(label)}</text>` +
     `<text x="${x}" y="${y + 44}" font-family="monospace" font-size="38" font-weight="bold" fill="${ink}">${e(value)}</text>`;
 
-  // --- the activity picture -------------------------------------------------
   let graph = "";
   let months = "";
   let legend = "";
@@ -149,9 +141,7 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
       `<text x="${boxRight}" y="${baseY + 34}" text-anchor="end" font-family="monospace" font-size="18" letter-spacing="1" fill="${dim}">${e(endText)}</text>`;
     note = `activity per ${card.strip.unit}`;
   } else if (card.kind === "bands") {
-    // One row per calendar month, every day of the month as a cell, the current month last.
-    // A three month window reads as three even rows, where a fourteen column grid would leave
-    // most of a 1200 pixel card empty.
+// One row per calendar month, current month last, so a three-month window reads as three even rows.
     const maxCells = Math.max(...card.bands.map((band) => band.cells.length), 1);
     const gap = 3;
     const labelW = 92;
@@ -168,15 +158,13 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
       const ringed: number[] = [];
       for (const [d, c] of band.cells.entries()) {
         const x = bandLeft + d * (cell + gap);
-        // A day before the window opened is still a box, at a lower weight, so the row keeps
-        // the length of its month and the range boundary stays visible.
+        // A day before the window opened still draws a lighter box, so the row keeps its length and the edge stays visible.
         const fill = c.level > 0 ? levelInk[c.level] : emptyInk;
         const opacity = c.inWindow ? 1 : 0.3;
         if (ring.has(c.ts)) ringed.push(d);
         graph += `<g><title>${e(band.title)} ${new Date(c.ts).getUTCDate()}: ${fmtShort(c.tokens)} tokens${c.inWindow ? "" : " (outside the range)"}</title><rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="${Math.min(4, Math.round(cell / 5))}" fill="${fill}" opacity="${opacity}"/></g>`;
       }
-      // One outline around the whole live run, rather than one per cell: nine overlapping
-      // boxes read as a scalloped bracket instead of a band.
+      // One outline around the whole live run, not per cell: overlapping boxes read as a scalloped bracket.
       if (ringed.length > 0) {
         const x0 = bandLeft + ringed[0]! * (cell + gap) - 3;
         const x1 = bandLeft + ringed[ringed.length - 1]! * (cell + gap) + cell + 3;
@@ -201,8 +189,7 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
       `<text x="${legendLeft + lessW + swatchW + 8}" y="${legendY}" font-family="monospace" font-size="16" letter-spacing="1" fill="${dim}">${e("more")}</text>`;
     note = `${s.activeDays} active days across ${card.bands.length} months`;
   } else if (card.kind === "calendar") {
-    // The grid keeps the GitHub proportions: rounded squares with a three pixel gap, one column
-    // per week, Monday, Wednesday and Friday labeled on the left, and the months above the grid.
+    // GitHub proportions: rounded squares on a three-pixel gap, one column per week, Mon/Wed/Fri left, months above.
     const top = 366;
     const gap = 3;
     const box = boxRight - gridLeft;
@@ -216,8 +203,7 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
       const y = top + row * (cell + gap) + Math.round(cell * 0.82);
       months += `<text x="${left}" y="${y}" font-family="monospace" font-size="15" letter-spacing="1" fill="${dim}">${e(weekText[i]!)}</text>`;
     }
-    // Month labels hang above the column that opens the month. A label that would touch the
-    // previous one is dropped, so the row never collides, as GitHub's own row does.
+    // Month labels sit above the column opening the month; one touching the previous drops, so the row never collides.
     const seenMonths = new Set<string>();
     let lastLabelX = -Infinity;
     // The live run's first and last column, so one outline can wrap it.
@@ -267,10 +253,7 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
     note = `${card.weeks} ${card.weeks === 1 ? "week" : "weeks"} of activity`;
   }
 
-  // The brand mark, so the card carries the same face the app and the CLI do. The corners are
-  // rounded with a clip path, because `rx` is not an attribute of `<image>`. It ends on
-  // `boxRight`, the same gutter the rest of the card keeps. A browser that refuses the data URL
-  // still gets the rest of the card.
+  // Brand mark, rounded via clip path since `rx` is not an `<image>` attribute; a refused data URL still shows it.
   const avatar =
     brand === null
       ? ""
@@ -418,8 +401,7 @@ export function ShareDialog({
     toast("Saved", "Card downloaded as PNG.", "download");
   };
 
-  // The card is a picture, so the clipboard gets the picture. A browser with no image clipboard
-  // still gets the file, which pastes into most hosts that take an image.
+  // The clipboard gets the picture; a browser without image clipboard still gets the file, pasting into most hosts.
   const copyImage = async (): Promise<void> => {
     if (!card) return;
     setBusy(true);

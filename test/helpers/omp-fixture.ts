@@ -1,36 +1,23 @@
-// Reads a live omp stats database. Fixtures here mirror the on-disk shape so the aggregate can be
-// pinned without an omp install: same column names, same nullable columns, same defaults.
+// Fixtures for the three schemas the aggregate reads: the usage store, omp's quota db, and a session journal.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const SCHEMA = `
-CREATE TABLE messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_file TEXT NOT NULL, entry_id TEXT NOT NULL, folder TEXT NOT NULL,
-  model TEXT NOT NULL, provider TEXT NOT NULL, api TEXT NOT NULL,
-  timestamp INTEGER NOT NULL, duration INTEGER, ttft INTEGER,
-  stop_reason TEXT NOT NULL, error_message TEXT,
-  input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
-  cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL,
-  premium_requests REAL NOT NULL,
-  cost_input REAL NOT NULL, cost_output REAL NOT NULL, cost_cache_read REAL NOT NULL,
-  cost_cache_write REAL NOT NULL, cost_total REAL NOT NULL, cost_no_cache_input REAL,
-  agent_type TEXT NOT NULL DEFAULT 'main', cost_unpriced INTEGER NOT NULL DEFAULT 0, service_tier TEXT,
-  UNIQUE(session_file, entry_id)
-);
-CREATE INDEX idx_messages_timestamp ON messages(timestamp);
-CREATE TABLE tool_calls (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_file TEXT NOT NULL, entry_id TEXT NOT NULL, tool_call_id TEXT NOT NULL, folder TEXT NOT NULL,
-  tool_name TEXT NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL, timestamp INTEGER NOT NULL,
-  agent_type TEXT NOT NULL DEFAULT 'main', calls_in_turn INTEGER NOT NULL DEFAULT 1,
-  args_chars INTEGER NOT NULL DEFAULT 0, result_chars INTEGER, is_error INTEGER,
-  UNIQUE(session_file, tool_call_id)
-);
+/** The usage store, as `usage-store.ts` writes it. */
+const STORE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,
+  i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,
+  usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);
+CREATE INDEX idx_messages_file ON messages(file_id);
+CREATE INDEX idx_messages_t ON messages(t);
+CREATE INDEX idx_messages_h_t ON messages(h, t);
+CREATE INDEX idx_messages_model ON messages(model);
 `;
 
-const AGENT_SCHEMA = `
+/** omp's quota snapshots, the one thing only omp records. */
+const QUOTA_SCHEMA = `
 CREATE TABLE usage_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   recorded_at INTEGER NOT NULL, provider TEXT NOT NULL, account_key TEXT NOT NULL,
@@ -41,43 +28,27 @@ CREATE INDEX idx_usage_history_series ON usage_history(provider, account_key, li
 `;
 
 export interface MessageFixture {
+  /** Absolute transcript path. Its `<root>/sessions/<project>/` segment names the project. */
   session: string;
+  /** The store's row id. */
   entry: string;
-  folder: string;
+  /** Full model id. Its first segment names the gateway, which is how the aggregate reads provider. */
   model: string;
-  provider: string;
   ts: number;
   stop?: string;
   error?: string | null;
   duration?: number | null;
+  /** First-token latency in ms. Absent reads as null, the way a host that records none does. */
   ttft?: number | null;
   input?: number;
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
-  total?: number;
-  cost?: number;
-  noCacheCost?: number | null;
-  costInput?: number;
-  costOutput?: number;
-  costRead?: number;
-  costWrite?: number;
+  /** The cost the host reported. Absent when the host priced nothing, which reads as $0.00. */
+  cost?: number | null;
   agentType?: string;
-  costUnpriced?: number;
-}
-
-export interface ToolFixture {
-  session: string;
-  entry: string;
-  toolCallId: string;
-  tool: string;
-  model: string;
-  provider: string;
-  ts: number;
-  callsInTurn?: number;
-  argsChars?: number;
-  resultChars?: number | null;
-  isError?: number;
+  /** Tool names this message handed off to, as the store keeps them. */
+  tools?: string[];
 }
 
 export interface WindowFixture {
@@ -106,42 +77,33 @@ function insert(table: string, columns: string[], rows: Array<Array<string | num
   return `INSERT INTO ${table} (${columns.join(',')}) VALUES ${values};`;
 }
 
-export function writeAgentStatsDb(file: string, fixture: {
-  messages: MessageFixture[];
-  tools?: ToolFixture[];
-}): string {
+/** A transcript path under a session root; use an absolute root so strings stay stable across platforms. */
+export function sessionPath(root: string, project: string, file: string): string {
+  return path.join(root, 'agent', 'sessions', project, file);
+}
+
+export function writeUsageStore(file: string, fixture: { messages: MessageFixture[] }): string {
   mkdirSync(path.dirname(file), { recursive: true });
-  const script = [SCHEMA];
-  script.push(insert(
-    'messages',
-    ['session_file', 'entry_id', 'folder', 'model', 'provider', 'api', 'timestamp', 'duration', 'ttft',
-      'stop_reason', 'error_message', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens',
-      'total_tokens', 'premium_requests', 'cost_input', 'cost_output', 'cost_cache_read', 'cost_cache_write',
-      'cost_total', 'cost_no_cache_input', 'agent_type', 'cost_unpriced'],
-    fixture.messages.map((m) => [
-      m.session, m.entry, m.folder, m.model, m.provider, 'openai-completions', m.ts,
-      m.duration ?? null, m.ttft ?? null, m.stop ?? 'stop', m.error ?? null,
-      m.input ?? 0, m.output ?? 0, m.cacheRead ?? 0, m.cacheWrite ?? 0, m.total ?? 0,
-      0, m.costInput ?? 0, m.costOutput ?? 0, m.costRead ?? 0, m.costWrite ?? 0,
-      m.cost ?? 0, m.noCacheCost ?? null, m.agentType ?? 'main', m.costUnpriced ?? 0,
-    ]),
-  ));
-  script.push(insert(
-    'tool_calls',
-    ['session_file', 'entry_id', 'tool_call_id', 'folder', 'tool_name', 'model', 'provider', 'timestamp',
-      'calls_in_turn', 'args_chars', 'result_chars', 'is_error'],
-    (fixture.tools ?? []).map((t) => [
-      t.session, t.entry, t.toolCallId, '', t.tool, t.model, t.provider, t.ts,
-      t.callsInTurn ?? 1, t.argsChars ?? 0, t.resultChars ?? null, t.isError ?? 0,
-    ]),
-  ));
+  // One file row per distinct transcript, because the store holds the path once and joins on it.
+  const paths = [...new Set(fixture.messages.map((m) => m.session))];
+  const script = [STORE_SCHEMA,
+    insert('files', ['path', 'mtime', 'size'], paths.map((p) => [p, 0, 0])),
+    ...paths.map((p, index) => insert('messages',
+      ['file_id', 't', 'model', 'i', 'o', 'd', 'tf', 'cr', 'cw', 'usd', 'st', 'note', 'tools', 'h', 'a', 'id'],
+      fixture.messages.filter((m) => m.session === p).map((m) => [
+        index + 1, m.ts, m.model,
+        m.input ?? 0, m.output ?? 0, m.duration ?? null, m.ttft ?? null, m.cacheRead ?? 0, m.cacheWrite ?? 0,
+        m.cost ?? null, m.stop === 'stop' || m.stop === undefined ? 'completed' : m.stop, m.error ?? null,
+        JSON.stringify(m.tools ?? []), 'omp', m.agentType ?? 'main', m.entry,
+      ]))),
+  ];
   execFileSync('sqlite3', [file], { input: script.join('\n'), timeout: 30_000 });
   return file;
 }
 
-export function writeOmpAgentDb(file: string, windows: WindowFixture[]): string {
+export function writeQuotaDb(file: string, windows: WindowFixture[]): string {
   mkdirSync(path.dirname(file), { recursive: true });
-  const script = [AGENT_SCHEMA, insert(
+  const script = [QUOTA_SCHEMA, insert(
     'usage_history',
     ['recorded_at', 'provider', 'account_key', 'email', 'account_id', 'limit_id', 'label', 'window_label',
       'used_fraction', 'status', 'resets_at'],
@@ -154,13 +116,7 @@ export function writeOmpAgentDb(file: string, windows: WindowFixture[]): string 
   return file;
 }
 
-/**
- * One session transcript, in the shape omp writes under `agent/sessions`.
- *
- * A message's `timestamp` is the ISO stamp of its journal line; `startedAt`, when given, is the
- * epoch-ms stamp the message itself carries, which is when the work began rather than when it
- * landed. The line timestamp alone cannot tell the two apart, so the trace reader needs both.
- */
+/** A session transcript as omp writes it: the trace reader needs both `timestamp` and `startedAt`. */
 export function writeSessionFixture(file: string, messages: Array<Record<string, unknown>>): string {
   mkdirSync(path.dirname(file), { recursive: true });
   const lines = [

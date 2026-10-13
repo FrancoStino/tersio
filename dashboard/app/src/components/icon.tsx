@@ -1,5 +1,4 @@
-// Dynamic Lucide icons by name. The original dashboard referenced icons by
-// string (data-lucide); this keeps that language over lucide-react.
+// Dynamic Lucide icons by name, keeping the original's string-based (data-lucide) language over lucide-react.
 import { CircleQuestionMark, icons } from "lucide-react";
 import { useMemo } from "react";
 

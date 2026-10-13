@@ -1,5 +1,4 @@
-// Per-tool duration totals for one trace, longest first. The columns follow the reference's tool
-// aggregates: calls, the failed calls, and total, mean, and longest duration.
+// Per-tool duration totals for one trace, longest first: calls, failed calls, total, mean, and longest duration.
 import { Card, CellBar, PagedTable } from "@/components/charts";
 import type { Column } from "@/components/charts";
 import { Badge } from "@/components/ui/badge";

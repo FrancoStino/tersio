@@ -1,6 +1,4 @@
-// Brand marks, served not vendored: a tile resolves to its mark's URL, and the CLI export
-// inlines those same URLs once, so the exported file still works with the network off.
-// Two marks, two jobs: VendorMark names the model's author, ProviderMark the routing service.
+// Brand marks served, not vendored: a tile resolves its mark's URL, inlined once by the CLI export for offline use.
 import { cn } from "cn";
 import { MARK_BG, MARK_SCALE, contrastInk } from "../../../../extensions/shared/brand-marks.ts";
 import { providerColor, providerMeta, vendorOf } from "@/lib/format";
@@ -36,27 +34,17 @@ function MaskedGlyph({ className, src, color = "currentColor" }: { className: st
   return <span className={cn("block", className)} style={maskedGlyph(src, color)} />;
 }
 
-// One proportional radius for every tile size. An absolute radius reads as a circle once the tile
-// shrinks, so the corner tracks the tile instead: 22% of the side is a rounded square at any size.
+// A proportional radius, 22% of the side, stays a rounded square at any size; an absolute one would read as a circle.
 const TILE = "relative grid shrink-0 place-items-center overflow-hidden rounded-[22%] border border-line";
 const TILE_SMALL = "size-9";
 /** One line of a dense table, where a bigger tile would inflate the row. */
 const TILE_TINY = "size-[21px]";
-/** A wide table row, where a bigger tile would inflate the row. It scales with the row's own
- *  type, so a dense table keeps its mark small and a larger row grows it. */
+/** A wide table row: it scales with the row's own type, so a dense table keeps its mark small. */
 const TILE_ROW = "h-[1.85em] w-[1.85em]";
-/** The art's share of a row tile: the square grows while the mark keeps its size. */
-const ROW_INK = 0.88;
+/** The art's share of its tile. The remainder is breathing room, so no mark crowds its border. */
+const MARK_INK = 0.78;
 
-/**
- * One tile, one mark. The chain is fixed: an image mark, then a mask, then a monogram, then a
- * generic glyph. A provider with no findable mark keeps its monogram, never another vendor's logo.
- * A slug with a known brand color fills its tile with it and draws the glyph in the opposite ink,
- * so the tile reads as the brand instead of as a small logo on the panel. A mark runs to the tile
- * edge, so the tile reads as the brand's own square, and only a mark whose artwork overruns its
- * own box scales back. The one exception is a table row: its square grows with the row, so its
- * mark holds a fixed share and never grows with it.
- */
+/** One tile, one mark: image, mask, monogram, glyph; no findable mark keeps the monogram, not a logo. */
 function Mark({ slug, initial, color, small, tiny, row }: { slug: string; initial: string; color: string; small?: boolean; tiny?: boolean; row?: boolean }) {
   // Only a mark whose art overruns its own box scales back, so no tile crops the ink.
   const scale = slug ? (MARK_SCALE[slug] ?? 1) : 1;
@@ -64,7 +52,7 @@ function Mark({ slug, initial, color, small, tiny, row }: { slug: string; initia
   const glyph = cn("size-[var(--mark-ink)]", scale !== 1 && "scale-[var(--mark-scale)]");
   const tile = cn(TILE, "size-11", small && TILE_SMALL, tiny && TILE_TINY, row && TILE_ROW);
   const bg = slug ? MARK_BG[slug] : undefined;
-  const fill = { background: bg, "--mark-scale": scale, "--mark-ink": row ? `${ROW_INK * 100}%` : "100%" } as React.CSSProperties;
+  const fill = { background: bg, "--mark-scale": scale, "--mark-ink": `${MARK_INK * 100}%` } as React.CSSProperties;
   const surface = bg ? undefined : "bg-panel";
   const ink = bg ? contrastInk(bg) : "currentColor";
   if (slug === "openai") {

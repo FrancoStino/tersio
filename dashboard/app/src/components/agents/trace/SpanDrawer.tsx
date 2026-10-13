@@ -1,8 +1,4 @@
-// The span drawer: the full payload behind one span, read on demand from the journal.
-//
-// A span carries a one line detail, so the drawer fetches the journal entry by id and shows what
-// the row only named: the model's usage grid, the tool's arguments and result, or the prompt text.
-// Brand marks stay, so a model span reads the same here as it does in the timeline and the tables.
+// The payload behind one span, fetched from the journal by id: a model's usage grid, a tool's args, or text.
 
 import { useEffect, useState } from "react";
 import { ProviderMark, VendorMark } from "@/components/brand";

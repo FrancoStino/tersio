@@ -8,12 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
 
-// A finished `tersio update` refreshes the price cache, which fetches LiteLLM's whole price feed —
-// a fetch the child is allowed to stall on for fifteen seconds. That is longer than this file's
-// spawn timeouts, so under a loaded machine the child is killed mid-fetch and the first test fails
-// on `status === 0` for a reason that has nothing to do with update. Point the fetch at a port with
-// nothing on it and the cache at a throwaway file: the refresh then returns in milliseconds and
-// writes nothing the developer owns.
+// `tersio update` refreshes the price cache; a dead port and temp file keep it off the spawn timeout.
 const deadPricesEnv = (): Record<string, string> => ({
   TERSIO_PRICES_URL: "http://127.0.0.1:1/prices.json",
   TERSIO_PRICES_FILE: path.join(mkdtempSync(path.join(os.tmpdir(), "tersio-update-prices-")), "prices.json"),

@@ -134,8 +134,7 @@ test("delete refuses a path outside the backup directory", () => {
     writeFileSync(outside, "precious");
     seedSnapshot("usage-20260101000000.db", "a");
 
-    // Absolute, relative traversal, and a bare traversal all resolve to a
-    // basename, so none of them can leave the backup dir.
+    // Absolute, relative, and bare traversals all resolve to a basename, so none can leave the backup dir.
     for (const attempt of [outside, "../not-a-snapshot.db", "../../etc/hosts", "/etc/hosts"]) {
       expect(deleteUsageBackup(attempt), attempt).toBe(false);
     }

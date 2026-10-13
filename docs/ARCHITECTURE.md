@@ -55,40 +55,47 @@ sequenceDiagram
   A->>A: turn runs (rtk_run → rtk binary when on)
 ```
 
-## Data sources, and the split between them
+## Data sources, and the one store both readers share
 
-Two read paths. **They do not meet**, which is the single fact to hold onto.
+One read path. **The aggregate and the report read the same store.**
 
 ```mermaid
 flowchart LR
-  subgraph READ["what the ten pages read — omp only"]
-    SDB["~/.omp/stats.db<br/>messages · tool_calls"]
-    ADB["~/.omp/agent/agent.db<br/>usage_history"]
-    JRN["~/.omp/agent/sessions/*.jsonl<br/>journal"]
-    ASTS["agent-stats.ts<br/>one sqlite3 batch per query group"]
-    API["/api/agent?range=&view="]
-    SESS["/api/agent/session · /entry"]
-  end
-  subgraph MIRROR["what pi and opencode feed — tersio's own mirror"]
+  subgraph FEED["what every host feeds"]
+    OMPJ["~/.omp/agent/sessions/*.jsonl"]
     PIJ["~/.pi/agent/sessions/*.jsonl"]
     OCJ["opencode/storage/message/*.json<br/>one file per message"]
     OCD["opencode.db<br/>message + session_message"]
+  end
+  subgraph STORE["tersio's own store"]
     UDB["~/.tersio/usage.db<br/>files · messages · meta"]
   end
+  subgraph READ["what the ten pages read"]
+    ASTS["agent-stats.ts<br/>one sqlite3 batch per query group"]
+    API["/api/agent?range=&view="]
+    SESS["/api/agent/session · /entry"]
+    JRN["session journal, read per trace"]
+  end
+  ADB["~/.omp/agent/agent.db<br/>usage_history — omp's quota only"]
   DASH["the ten dashboard pages"]
   CLI["tersio usage"]
 
-  SDB & ADB & JRN --> ASTS
-  ASTS --> API --> DASH
+  OMPJ & PIJ & OCJ & OCD --> UDB
+  UDB --> ASTS --> API --> DASH
+  UDB --> CLI
   JRN --> SESS --> DASH
-  PIJ & OCJ & OCD --> UDB --> CLI
-  UDB -.->|"no route opens it"| API
+  ADB --> ASTS
 ```
 
-- **The dashboard reads omp only.** `agent-stats.ts` opens `~/.omp/stats.db` and `~/.omp/agent/agent.db`, which only omp writes. Every one of the ten pages — Overview, Models, Providers, Costs, Carbon, Requests, Errors, Traces, Tools, Projects — and both transcript routes come out of those two files plus the omp journal.
-- **pi and opencode land in the mirror, which no page reads.** `usage-ledger.ts` walks the pi sessions dir, the OpenCode JSON tree, and the OpenCode v2 sqlite, and `usage-store.ts` folds them into `~/.tersio/usage.db`. That store is read by `tersio usage` on the CLI and by nothing else: no dashboard route opens it, and the export snapshot carries no usage rows. So pi and opencode tokens, cost, tool names, duration, host, and main-versus-subagent kind are recorded and reportable, and invisible to the dashboard.
-- **OpenCode has no trace at any price.** `readSessionTrace` bails on anything that is not `.jsonl`, and OpenCode writes one JSON per message or one sqlite row. The Traces page and its drawer therefore draw their empty state for an OpenCode session, while pi transcripts trace in full from the same reader.
-- **The split is per row, not per page.** `usage.db` holds omp too, so an omp session appears in both the agent pages and `tersio usage`, and the two can disagree only by design: the agent pages price against omp's own cost columns, `tersio usage` against `extensions/shared/pricing.ts`.
+- **One store feeds both readers.** `agent-stats.ts` opens `~/.tersio/usage.db`, the same file `tersio usage` aggregates. Every one of the ten pages — Overview, Models, Providers, Costs, Carbon, Requests, Errors, Traces, Tools, Projects — reads every host: omp, pi, and OpenCode. A dashboard figure and a report figure are the same figure by construction, not by coincidence.
+- **The dashboard syncs before it reads.** `cli/dashboard.ts` runs `syncUsageDb()` behind a 15s throttle, so a page reads what the transcripts hold rather than what the last `tersio usage` wrote. The 5s memo still collapses a burst of polls, keyed on the store's own mtime and size.
+- **omp's quota snapshots stay omp's.** Only omp records `usage_history`, so the Providers page still reads `~/.omp/agent/agent.db` for it. Nothing in the store replicates them, and the page's window figures degrade to empty when that database is absent.
+- **A trace is still a journal read.** `readSessionTrace` and `readAgentRequestEntry` open the session transcript itself, because the store keeps facts, not message bodies. OpenCode writes no `.jsonl`, so its traces keep drawing the empty state, while pi transcripts trace in full from the same reader.
+- **What the store does not carry reads as a literal, never as an estimate.** omp's schema held a per-component cost split, a route name, a per-request premium count, and a service tier. The store holds none of these, so `COL` in `agent-stats.ts` maps each to `NULL`, or `''`, in one place: cost reads whole with no split, a route reads empty. The provider column is not stored either, so it derives from the model id's first segment, spelled the way the dashboard marks it. First-token latency *is* stored, in `tf`, and it is omp-only: pi and OpenCode record none, so their rows read null and their latency averages read null rather than zero, because a zero would draw a flat line and claim no wait at all.
+- **Every host's tool names are read, from three shapes.** omp and pi transcripts name tools beside the message. OpenCode's v1 JSON tree names them in the message's `content` parts. OpenCode's v2 sqlite puts those parts inside a `data` blob that holds newlines and tabs, so the blob cannot be read through the CLI; the names are extracted inside SQL with `json_each` and `group_concat` instead, and land in the same `tools` list. A store written before that reader holds every OpenCode row at `[]`, so a version marker (`opencode_tools` in `meta`) widens the watermark scan to the whole table exactly once. That marker matters: bumping `PARSER_VERSION` instead rebuilds the store from whatever transcripts still exist, which silently drops the history of every rotated transcript — that is a far larger loss than the one the backfill repairs.
+- **An added column backfills itself, and a version bump does not.** Three store columns arrived after the first release: `id`, then `a`, then `tf`. Each one took a bare `ALTER TABLE ... ADD COLUMN`, which moves no row and forces no re-parse, so the existing history survives what a rebuild could not reconstruct from rotated transcripts. The new column then reads NULL on history, which a marker closes: `opencode_tools` widens the OpenCode watermark scan once so old rows gain their tool names, and `ttft_backfill` clears the `files` mtimes once so the ordinary incremental path rewrites each transcript and fills its latency. Both markers are written only after the rows commit, so a sync that dies midway leaves the window open and retries instead of publishing half a backfill. The rule: an additive change never justifies a `PARSER_VERSION` rebuild.
+- **The request log ships one capped page, and the page's totals come from the aggregate, not from that page.** A log slice cannot answer "how many requests ran in this window": the cap is 200 rows, and a busy hour produces thousands. So `requestStats` takes its count, failure count, tokens and cost from the `overall` block, which is one exact aggregate row over the whole range, and leaves only the percentiles and the aborted count to the shipped rows. `shipped` records how many those were, and the page labels them, because a p95 over 200 of 2,400 rows describes those 200 only. `?offset=` walks the range back in row-sized steps — the alternative, computing the header from the shipped rows, is what made a full range read as exactly 200 requests with nothing older than an hour reachable.
+- **Bucketing needs a cast.** The store keeps timestamps REAL, and a REAL division does not floor, so the bucket expression casts to INTEGER first. Without the cast every row lands in its own bucket and a series reads as noise.
 
 ## The aggregate
 

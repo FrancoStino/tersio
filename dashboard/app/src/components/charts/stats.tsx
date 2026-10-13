@@ -7,7 +7,7 @@ import { HoverTip } from "@/components/common";
 import { Sparkline } from "./series";
 import { Icon } from "@/components/icon";
 
-/** The page title block. Every routed page opens with one. */
+/** The page title block. */
 export function PageHeader({
   title,
   description,
@@ -28,10 +28,10 @@ export function PageHeader({
   );
 }
 
-/**
- * A page block. `flush` drops the body padding so a table can span the card.
- * `footer` sits under the body as one strip, so a row stretched by a sibling pins it down.
- */
+/** Card chrome shared by the real card and its loading placeholder, so both reveal and sit the same way. */
+export const CARD_CHROME = "translate-y-[18px] gap-0 overflow-hidden border-line bg-panel opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(.16,1,.3,1)] data-[reveal=in]:translate-y-0 data-[reveal=in]:opacity-100 dark:[color-scheme:dark]";
+
+/** A page block; `flush` drops body padding so a table spans the card, `footer` sits as one strip under the body. */
 export function Card({
   title,
   icon,
@@ -59,9 +59,8 @@ export function Card({
       id={id}
       data-reveal
       className={cn(
-        "translate-y-[18px] gap-0 overflow-hidden border-line bg-panel opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(.16,1,.3,1)] data-[reveal=in]:translate-y-0 data-[reveal=in]:opacity-100 dark:[color-scheme:dark]",
-        // The shell never pads: the header owns its top and the body owns its bottom, so a
-        // flush table reaches the card edge and a normal card keeps one rhythm.
+        CARD_CHROME,
+        // The shell never pads: header owns its top, body its bottom, so a flush table reaches the edge.
         "py-0",
         className,
       )}
@@ -157,19 +156,9 @@ export function StatGrid({
     6: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6",
     7: "grid-cols-2 sm:grid-cols-4 lg:grid-cols-7",
   };
-  // One solid band with a rule between cells, the same strip shape everywhere: no translucent
-  // tiles, and one path, so a strip never falls back to loose tiles.
+  // One solid band, a rule between cells everywhere: no translucent tiles, so a strip never falls back to loose tiles.
   const cells = (Array.isArray(children) ? children : [children]).filter((c): c is ReactNode => Boolean(c));
-  // A cell takes a rule on its left unless it opens a row, and a rule above it unless it sits in
-  // the first row, so the rule count follows the columns the tier draws: two below `sm`, three
-  // (four for the seven-wide strip) from `sm`, and `cols` from `lg`. Each tier carries a `max-`
-  // partner so exactly one tier claims a cell at any width; two tiers sharing a width disagree on
-  // which cells open a row, and the later rule wins.
-  //
-  // The classes are written out per column count rather than built from `cols`, because Tailwind
-  // reads class names out of the source at build time. A name assembled at runtime never reaches
-  // its scanner, so the whole tier emits no CSS and the band draws no rules at that width — which
-  // is how the seven-wide strip lost its dividers at a desktop width.
+// Rules are written per column count, not from `cols`: Tailwind scans source at build time; a built name has no CSS.
   const RULES: Record<number, string> = {
     // A strip that stays two per row at every width needs no breakpoint.
     2: "[&>*:not(:nth-child(2n+1))]:border-l [&>*:nth-child(n+3)]:border-t",
@@ -190,7 +179,7 @@ export function StatGrid({
       + " sm:max-lg:[&>*:not(:nth-child(4n+1))]:border-l sm:max-lg:[&>*:nth-child(n+5)]:border-t"
       + " lg:[&>*:not(:nth-child(7n+1))]:border-l lg:[&>*:nth-child(n+8)]:border-t",
   };
-  // The columns each tier draws, which is what a short final row counts its leftover slots from.
+  // Columns each tier draws; a short final row counts its leftover slots against this.
   const perRow = [2, cols === 7 ? 4 : 3, cols];
   // A row that fills leaves nothing to merge, so an even split spans one slot like any cell.
   const mergeSpan = (slots: number): number => (cells.length % slots === 0 ? 1 : slots - (cells.length % slots) + 1);
@@ -204,8 +193,7 @@ export function StatGrid({
         RULES[cols] ?? RULES[2],
         className,
       )}
-      // The merge spans arrive as custom properties, one per tier, because a class name built
-      // from a count is invisible to Tailwind's scanner while a property value is not.
+      // Merge spans arrive as custom properties: a class name built from a count is invisible to Tailwind's scanner.
       style={{
         "--stat-band-span-sm": mergeSpan(perRow[0]),
         "--stat-band-span-md": mergeSpan(perRow[1]),

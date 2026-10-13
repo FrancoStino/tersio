@@ -1,5 +1,4 @@
-// Pins the omp aggregate against a fixture database: every rule in the metric contract has one
-// assertion here, so a change in the reader fails loudly instead of drifting from the reference.
+// Pins the aggregate against a fixture store: one assertion per metric-contract rule, so drift fails loudly.
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -7,7 +6,7 @@ import path from 'node:path';
 
 import { errorSignature, readAgentStats, readSessionTrace } from '../../extensions/shared/agent-stats.ts';
 import { hasSqlite } from '../helpers/env.ts';
-import { writeOmpAgentDb, writeAgentStatsDb, writeSessionFixture } from '../helpers/omp-fixture.ts';
+import { sessionPath, writeQuotaDb, writeSessionFixture, writeUsageStore } from '../helpers/omp-fixture.ts';
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -28,23 +27,21 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Five requests: two priced and cached, one free with no duration, one error, one aborted. */
+/** Five rows: two priced and cached, one free with no duration, one error, one aborted. */
 function seed(): { now: number } {
   const now = Date.now();
-  process.env.TERSIO_AGENT_STATS_DB = writeAgentStatsDb(path.join(dir, 'stats.db'), {
+  const s1 = sessionPath(dir, '-proj-a', 's1.jsonl');
+  const s2 = sessionPath(dir, '-proj-b', 's2.jsonl');
+  process.env.TERSIO_AGENT_STATS_DB = writeUsageStore(path.join(dir, 'usage.db'), {
     messages: [
-      { session: 's1.jsonl', entry: 'e1', folder: '-proj-a', model: 'priced-model', provider: 'commandcode', ts: now - 5 * HOUR, duration: 2000, ttft: 500, input: 1000, output: 500, cacheRead: 4000, total: 5500, cost: 0.10, noCacheCost: 0.50, costInput: 0.01, costOutput: 0.05, costRead: 0.04 },
-      { session: 's1.jsonl', entry: 'e2', folder: '-proj-a', model: 'priced-model', provider: 'commandcode', ts: now - 4 * HOUR, duration: 4000, ttft: 1000, input: 2000, output: 1000, cacheRead: 8000, total: 11000, cost: 0.20, noCacheCost: 1.00, costInput: 0.02, costOutput: 0.10, costRead: 0.08 },
-      { session: 's2.jsonl', entry: 'e3', folder: '-proj-b', model: 'free-model', provider: 'magpie', ts: now - 3 * HOUR, duration: null, ttft: null, input: 100, output: 50, total: 150, agentType: 'subagent' },
-      { session: 's2.jsonl', entry: 'e4', folder: '-proj-b', model: 'free-model', provider: 'xai-oauth', ts: now - 2 * HOUR, stop: 'error', error: '429 Too Many Requests retry-after-ms=37044000 req_abcdef123456', duration: 3000, ttft: 600, input: 10, total: 10, agentType: 'advisor', costUnpriced: 1 },
-      { session: 's1.jsonl', entry: 'e5', folder: '-proj-a', model: 'free-model-2', provider: 'xai-oauth', ts: now - 10 * 60_000, stop: 'aborted', duration: 1000, ttft: 100, input: 20, total: 20 },
-    ],
-    tools: [
-      { session: 's1.jsonl', entry: 'e1', toolCallId: 't1', tool: 'read', model: 'priced-model', provider: 'commandcode', ts: now - 5 * HOUR, callsInTurn: 2, argsChars: 100, resultChars: 200 },
-      { session: 's1.jsonl', entry: 'e1', toolCallId: 't2', tool: 'bash', model: 'priced-model', provider: 'commandcode', ts: now - 5 * HOUR, callsInTurn: 2, argsChars: 50, resultChars: null, isError: 1 },
+      { session: s1, entry: 'e1', model: 'commandcode/priced-model', ts: now - 5 * HOUR, duration: 2000, ttft: 500, input: 1000, output: 500, cacheRead: 4000, cost: 0.10, tools: ['read', 'bash'] },
+      { session: s1, entry: 'e2', model: 'commandcode/priced-model', ts: now - 4 * HOUR, duration: 4000, ttft: 1500, input: 2000, output: 1000, cacheRead: 8000, cost: 0.20 },
+      { session: s2, entry: 'e3', model: 'magpie/free-model', ts: now - 3 * HOUR, duration: null, input: 100, output: 50, agentType: 'subagent' },
+      { session: s2, entry: 'e4', model: 'xai-oauth/free-model', ts: now - 2 * HOUR, stop: 'error', error: '429 Too Many Requests retry-after-ms=37044000 req_abcdef123456', duration: 3000, input: 10, agentType: 'advisor' },
+      { session: s1, entry: 'e5', model: 'xai-oauth/free-model-2', ts: now - 10 * 60_000, stop: 'aborted', duration: 1000, input: 20 },
     ],
   });
-  process.env.TERSIO_AGENT_SESSIONS_DB = writeOmpAgentDb(path.join(dir, 'agent.db'), [
+  process.env.TERSIO_AGENT_SESSIONS_DB = writeQuotaDb(path.join(dir, 'agent.db'), [
     { ts: now - 3 * HOUR, provider: 'openai-codex', accountKey: 'oauth|a', email: 'a@example.com', limitId: 'openai-codex:primary', label: '30 days', windowLabel: '30 days', usedFraction: 0.2, status: 'ok', resetsAt: now + DAY },
     { ts: now - 2 * HOUR, provider: 'openai-codex', accountKey: 'oauth|a', email: 'a@example.com', limitId: 'openai-codex:primary', label: '30 days', windowLabel: '30 days', usedFraction: 0.6, status: 'ok', resetsAt: now + DAY },
   ]);
@@ -68,23 +65,23 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     expect(omp.overall.total).toBe(16680);
     expect(omp.overall.cacheRate).toBeCloseTo(12000 / 15130, 12);
     expect(omp.overall.costUsd).toBeCloseTo(0.3, 12);
-    expect(omp.overall.unpricedRequests).toBe(2);
+    // The store keeps only the host's reported cost, never a split, so nothing reads as an unpriced route.
+    expect(omp.overall.unpricedRequests).toBe(0);
     expect(omp.overall.avgDurationMs).toBeCloseTo(2500, 9);
-    expect(omp.overall.avgTtftMs).toBeCloseTo(550, 9);
+    // Two of the five rows carry a latency, so the average covers only those two: 500ms and 1500ms.
+    expect(omp.overall.avgTtftMs).toBeCloseTo(1000, 9);
     expect(omp.overall.avgTokensPerSecond).toBeCloseTo(125, 9);
     // The fixture spans five hours, minus the ten minutes of the newest row.
     expect(omp.overall.lastTs! - omp.overall.firstTs!).toBe(5 * HOUR - 10 * 60_000);
   });
 
-  test('splits the estimate by billing component, per row and overall', () => {
+  test('reports the host cost whole, with no per-component split', () => {
     seed();
     const omp = readAgentStats('all');
 
-    // The two priced rows: input 0.01 + 0.02, cache read 0.04 + 0.08, no cache write, and the
-    // output cost is the remainder of the total.
-    const mix = omp.byModel.find((row) => row.key === 'priced-model')?.costMix;
-    expect(mix?.input).toBeCloseTo(0.03, 12);
-    expect(mix?.cacheRead).toBeCloseTo(0.12, 12);
+    const mix = omp.byModel.find((row) => row.key === 'commandcode/priced-model')?.costMix;
+    expect(mix?.input).toBe(0);
+    expect(mix?.cacheRead).toBe(0);
     expect(mix?.cacheWrite).toBe(0);
     expect(mix?.total).toBeCloseTo(0.3, 12);
     expect(mix!.input + mix!.output + mix!.cacheRead + mix!.cacheWrite).toBeCloseTo(mix!.total, 12);
@@ -96,12 +93,12 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     const omp = readAgentStats('all');
 
     expect(omp.byModel.map((row) => `${row.key}|${row.provider}`).toSorted()).toEqual([
-      'free-model-2|xai-oauth',
-      'free-model|magpie',
-      'free-model|xai-oauth',
-      'priced-model|commandcode',
+      'commandcode/priced-model|commandcode',
+      'magpie/free-model|magpie',
+      'xai-oauth/free-model-2|xai-oauth',
+      'xai-oauth/free-model|xai-oauth',
     ]);
-    expect(omp.byModel[0].key).toBe('priced-model');
+    expect(omp.byModel[0].key).toBe('commandcode/priced-model');
     expect(omp.byModel[0].requests).toBe(2);
     expect(omp.byModel[0].costUsd).toBeCloseTo(0.3, 12);
 
@@ -155,30 +152,28 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     const omp = readAgentStats('all');
     expect(omp.recent.length).toBe(5);
     expect(omp.recent[0].entryId).toBe('e5');
-    expect(omp.recent[0].unpriced).toBe(true);
+    // e1 carries 500ms and e5 none, so a row reads its own latency or null, never a fill value.
     expect(omp.recent.find((row) => row.entryId === 'e1')?.ttftMs).toBe(500);
+    expect(omp.recent.find((row) => row.entryId === 'e5')?.ttftMs).toBe(null);
 
     expect(omp.errorGroups.length).toBe(1);
     expect(omp.errorGroups[0].count).toBe(1);
     expect(omp.errorGroups[0].latest.entryId).toBe('e4');
-    expect(omp.errorGroups[0].models).toEqual([{ model: 'free-model', provider: 'xai-oauth', count: 1 }]);
-    expect(omp.errorModels).toEqual([{ model: 'free-model', provider: 'xai-oauth', count: 1 }]);
+    expect(omp.errorGroups[0].models).toEqual([{ model: 'xai-oauth/free-model', provider: 'xai-oauth', count: 1 }]);
+    expect(omp.errorModels).toEqual([{ model: 'xai-oauth/free-model', provider: 'xai-oauth', count: 1 }]);
     expect(omp.errorGroups[0].signature).toBe('429 Too Many Requests retry-after-ms=N <id>');
   });
 
-  test('averages throughput and first-token latency per model, provider, and bucket', () => {
+  test('averages throughput per model, provider, and bucket', () => {
     seed();
     const omp = readAgentStats('all', 'models');
-    const priced = omp.modelPerformance.find((series) => series.model === 'priced-model' && series.provider === 'commandcode');
+    const priced = omp.modelPerformance.find((series) => series.model === 'commandcode/priced-model' && series.provider === 'commandcode');
     expect(priced).toBeDefined();
-    // The two rows sit an hour apart, so they share a day bucket for nineteen hours of the day
-    // and straddle UTC midnight for the other five. Assert what holds either way rather than
-    // pinning the bucket count: both rows together, and each running at 250 tokens per second.
+    // Rows an hour apart may straddle UTC midnight; assert only what holds either way: 250 tok/s each.
     expect(priced?.points.reduce((sum, point) => sum + point.requests, 0)).toBe(2);
     expect(priced?.points.every((point) => point.avgTokensPerSecond === 250)).toBe(true);
-    // e1: 500 out over 2000ms, e2: 1000 out over 4000ms. Both run at 250 tok/s.
-    // The ttft is the mean of the rows a bucket holds: one alone, or both together.
-    expect(priced?.points.every((point) => [500, 750, 1000].includes(Math.round(point.avgTtftMs!)))).toBe(true);
+    // e1: 500/2000ms, e2: 1000/4000ms, both 250 tok/s; latencies average 1000ms, a point reads the mean.
+    expect(priced?.points.every((point) => point.avgTtftMs === 1000)).toBe(true);
     // A provider with no timed message carries null, not a zero that would draw a flat line.
     const magpie = omp.modelPerformance.find((series) => series.provider === 'magpie');
     expect(magpie?.points.every((p) => p.avgTokensPerSecond === null && p.avgTtftMs === null)).toBe(true);
@@ -186,23 +181,25 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     expect(readAgentStats('all', 'traces').modelPerformance).toEqual([]);
   });
 
-  test('attributes tool tokens by the calls in the invoking turn', () => {
+  test('counts a tool name as one whole call of its message', () => {
     seed();
     const omp = readAgentStats('all');
     const read = omp.tools.find((row) => row.tool === 'read');
     const bash = omp.tools.find((row) => row.tool === 'bash');
     expect(omp.tools.length).toBe(2);
     expect(read?.calls).toBe(1);
-    expect(read?.argsChars).toBe(100);
-    expect(read?.resultChars).toBe(200);
-    expect(read?.totalTokensShare).toBeCloseTo(5500 / 2, 9);
-    expect(read?.outputTokensShare).toBeCloseTo(500 / 2, 9);
-    expect(read?.costShare).toBeCloseTo(0.10 / 2, 12);
-    expect(bash?.errors).toBe(1);
-    expect(bash?.resultChars).toBe(0);
+    expect(read?.model).toBe('commandcode/priced-model');
+    // The store keeps names, not per-call rows, so one name is one whole call: tokens and cost are its share.
+    expect(read?.totalTokensShare).toBeCloseTo(5500, 9);
+    expect(read?.outputTokensShare).toBeCloseTo(500, 9);
+    expect(read?.costShare).toBeCloseTo(0.10, 12);
+    expect(read?.argsChars).toBe(0);
+    expect(read?.resultChars).toBe(0);
+    expect(read?.errors).toBe(0);
+    expect(bash?.calls).toBe(1);
     expect(omp.tools[0].tool).toBe('read');
     expect(omp.toolsByModel.length).toBe(2);
-    expect(omp.toolsByModel[0].model).toBe('priced-model');
+    expect(omp.toolsByModel[0].model).toBe('commandcode/priced-model');
     expect(omp.toolSeries.reduce((sum, point) => sum + point.calls, 0)).toBe(2);
   });
 
@@ -211,7 +208,7 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     const traces = readAgentStats('all').traces;
     expect(traces.length).toBe(2);
     const first = traces[0];
-    expect(first.sessionFile).toBe('s1.jsonl');
+    expect(first.sessionFile).toBe(sessionPath(dir, '-proj-a', 's1.jsonl'));
     expect(first.requests).toBe(3);
     expect(first.toolCalls).toBe(2);
     expect(first.lastTs).toBeGreaterThan(first.firstTs);
@@ -302,23 +299,18 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
 
   test('folds a subagent transcript into its root session row', () => {
     const now = Date.parse('2026-01-01T12:00:00.000Z');
-    const sessionsDir = path.join(dir, 'agent', 'sessions');
-    const root = path.join(sessionsDir, '-proj-a', 'root.jsonl');
-    const child = path.join(sessionsDir, '-proj-a', 'root', 'PageTile.jsonl');
+    const root = sessionPath(dir, '-proj-a', 'root.jsonl');
+    const child = path.join(path.dirname(root), 'root', 'PageTile.jsonl');
     // The root file carries the session's own line and title, which the row reads from its head.
     writeSessionFixture(root, [
       { role: 'user', timestamp: '2026-01-01T11:00:00.000Z', content: [{ type: 'text', text: 'hello' }] },
     ]);
     mkdirSync(path.dirname(child), { recursive: true });
     writeFileSync(child, '');
-    process.env.TERSIO_AGENT_STATS_DB = writeAgentStatsDb(path.join(dir, 'stats.db'), {
+    process.env.TERSIO_AGENT_STATS_DB = writeUsageStore(path.join(dir, 'usage.db'), {
       messages: [
-        { session: root, entry: 'e1', folder: '-proj-a', model: 'priced-model', provider: 'commandcode', ts: now - 2 * HOUR, duration: 2000, total: 100, cost: 0.10 },
-        { session: child, entry: 'e2', folder: '-proj-a', model: 'sub-model', provider: 'commandcode', ts: now - 1 * HOUR, duration: 3000, total: 200, cost: 0.20, agentType: 'subagent' },
-      ],
-      tools: [
-        { session: root, entry: 'e1', toolCallId: 't1', tool: 'read', model: 'priced-model', provider: 'commandcode', ts: now - 2 * HOUR },
-        { session: child, entry: 'e2', toolCallId: 't2', tool: 'edit', model: 'sub-model', provider: 'commandcode', ts: now - 1 * HOUR },
+        { session: root, entry: 'e1', model: 'commandcode/priced-model', ts: now - 2 * HOUR, duration: 2000, input: 100, cost: 0.10, tools: ['read'] },
+        { session: child, entry: 'e2', model: 'commandcode/sub-model', ts: now - 1 * HOUR, duration: 3000, input: 200, cost: 0.20, agentType: 'subagent', tools: ['edit'] },
       ],
     });
 
@@ -330,7 +322,7 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     expect(row.requests).toBe(2);
     expect(row.toolCalls).toBe(2);
     expect(row.subagents).toBe(1);
-    expect(row.models).toEqual(['priced-model', 'sub-model']);
+    expect(row.models).toEqual(['commandcode/priced-model', 'commandcode/sub-model']);
     expect(row.tokens).toBe(300);
     expect(row.costUsd).toBeCloseTo(0.3, 9);
     // The row's clock spans both files and counts the last message's duration.
@@ -355,6 +347,82 @@ describe.skipIf(!hasSqlite())('omp aggregate', () => {
     const omp = readAgentStats('all');
     expect(omp.available).toBe(false);
     expect(omp.windowInsights.length).toBe(1);
+  });
+});
+
+/** An uncapped range once hid everything older than the newest page and reported the cap as its total. */
+describe.skipIf(!hasSqlite())('request log paging', () => {
+  const CAP = 200;
+
+  /** One transcript of `count` assistant rows, one minute apart, inside the last 24 hours. */
+  function seedRows(count: number): number {
+    const now = Date.now();
+    const file = sessionPath(dir, '-proj-a', 's.jsonl');
+    process.env.TERSIO_AGENT_STATS_DB = writeUsageStore(path.join(dir, 'usage.db'), {
+      messages: Array.from({ length: count }, (_, k) => ({
+        session: file,
+        entry: `e${String(k).padStart(4, '0')}`,
+        model: 'commandcode/paged-model',
+        ts: now - (count - k) * 60_000,
+        duration: 1000,
+        input: 10,
+        output: 5,
+        cost: 0.01,
+        // The oldest row is the one the cap used to hide; give it a name to look for.
+        tools: k === 0 ? ['read'] : [],
+      })),
+    });
+    return now;
+  }
+
+  test('reports the range total, not the shipped row cap', () => {
+    seedRows(CAP + 50);
+    const omp = readAgentStats('all', 'requests');
+    // The aggregate row is exact over the range; the shipped rows stop at the cap.
+    expect(omp.requestStats.requests).toBe(CAP + 50);
+    expect(omp.recent.length).toBe(CAP);
+    expect(omp.requestStats.shipped).toBe(CAP);
+    // Tokens and cost come from the same aggregate, so they cover every row, not just these 200.
+    expect(omp.requestStats.tokens).toBe((CAP + 50) * 15);
+    expect(omp.requestStats.costUsd).toBeCloseTo((CAP + 50) * 0.01, 9);
+  });
+
+  test('pages back without a gap or an overlap, down to the row the cap used to hide', () => {
+    seedRows(CAP + 50);
+    const newest = readAgentStats('all', 'requests', Date.now(), 0).recent;
+    const older = readAgentStats('all', 'requests', Date.now(), CAP).recent;
+
+    // The two payloads are contiguous: the older one starts where the newer one ends.
+    expect(older.length).toBe(CAP + 50 - CAP);
+    expect(Math.max(...older.map((row) => row.ts))).toBeLessThanOrEqual(Math.min(...newest.map((row) => row.ts)));
+    const last = older.reduce((a, b) => (a.ts <= b.ts ? a : b));
+    expect(last.entryId).toBe('e0000');
+    expect(last.input).toBe(10);
+  });
+
+  test('a negative or fractional offset floors to whole rows', () => {
+    seedRows(CAP + 20);
+    const bad = readAgentStats('all', 'requests', Date.now(), -5).recent;
+    const good = readAgentStats('all', 'requests', Date.now(), 0).recent;
+    expect(bad.map((row) => row.entryId)).toEqual(good.map((row) => row.entryId));
+    // 3.7 floors to 3, so the run starts three rows in and keeps its full limit.
+    const halfway = readAgentStats('all', 'requests', Date.now(), 3.7).recent;
+    const overlap = good.slice(3);
+    expect(halfway.slice(0, overlap.length).map((row) => row.entryId)).toEqual(overlap.map((row) => row.entryId));
+    expect(halfway.length).toBe(overlap.length + 3);
+    // Past the cap the floor still holds, and the run reaches the oldest row in the range.
+    const past = readAgentStats('all', 'requests', Date.now(), CAP + 3 + 0.9).recent;
+    expect(past.map((row) => row.entryId))
+      .toEqual(readAgentStats('all', 'requests', Date.now(), CAP + 3).recent.map((row) => row.entryId));
+    expect(past[past.length - 1].entryId).toBe('e0000');
+  });
+
+  test('an offset past the end of the range returns nothing but keeps the true total', () => {
+    seedRows(30);
+    const omp = readAgentStats('all', 'requests', Date.now(), 500);
+    expect(omp.recent).toEqual([]);
+    expect(omp.requestStats.requests).toBe(30);
+    expect(omp.requestStats.shipped).toBe(0);
   });
 });
 

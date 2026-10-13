@@ -1,3 +1,27 @@
+## Unreleased
+
+### Added
+ - `tersio reinstall` is back: it lists the agents that have Tersio installed now, asks which one to refresh, reinstalls it, then runs the doctor to prove the result. The interactive menu carries it under `Install add-ons`. `--host` picks without asking.
+ - Brand marks for the WorkBuddy and DeepSeek providers, so their rows show the service's own logo instead of a monogram. `deepseek`, `deepseek-web`, and `workbuddy-ai` now resolve to marks.
+ - Brand marks for Trae, Kiro, and Meituan: each shows its own logo. Kiro no longer borrows the AWS cloud mark, and the Meituan LongCat line no longer draws a letter.
+ - Brand tiles now carry breathing room: the artwork fills 78% of its tile instead of 88% or 100%, so no mark crowds its border. One rule covers every size, table rows and drawers alike.
+
+### Changed
+ - Every dashboard page now loads into a skeleton of itself. The stat strip, the chart cards, and the table block hold the page's own shape until the data arrives, in place of two generic boxes. The session trace gets the same treatment.
+ - Placeholders draw their tone from the panel ink, so they read in both themes. The chart and table placeholders before this used a tint that nearly vanished in light mode.
+
+### Fixed
+ - The host footer carried the caveman mode twice: the combo banner, and a separate `Caveman mode: full` line beside it. The mode now reads once, in the combo line, and `/caveman status` answers with the mode in a message.
+ - Time to first token read `—` for every pi request: pi records the response's total duration but no first-token latency, and nothing timed it. A new pi-only extension times the first streamed delta and stamps `ttft` onto the message, which is where the parser already looked.
+ - OpenCode's first-token latency was dropped in two places: the v2 read never selected `time.streamed`, and the stored row hardcoded `tf` to undefined. Both carry it now, so OpenCode rows report latency instead of zero coverage.
+ - The dashboard's own read of the usage store never selected the `tf` column, so first-token latency was discarded on every load even when the store held it.
+ - pi lost every RTK mode surface: `rtk/session.ts` and `rtk/filter.ts` were written to disk but never reachable, because pi discovers a subdirectory only through an `index.ts` or a `package.json` with `pi.extensions`. The installer now writes `rtk/package.json`, so `/rtk`, `rtk_run`, the prompt block, and the grep and glob filter all load on pi.
+ - OpenCode lost five of six Ponytail skills and `/ponytail`: the bundle shipped one `SKILL.md` where pi shipped six, and no host surface registered them. All six now ship, and the plugin registers them through the skill API.
+ - On OpenCode, `/rtk off` silenced the prompt block but not the bash rewrite: `execute.before` rewrote commands with no mode check, while the filter hook below it had one. Both read the mode now.
+ - `package.json` declared a Ponytail skills path through `node_modules`, which npm hoists out of every installed package, so it never resolved outside a checkout. Removed; the dependency declares its own skills, and it is what loads them on omp.
+ - pi could fail to start with `Cannot find module '../ai-addons-updater/index.ts'`: a stale `tersio-commands/` extension survived every install, because the debris list named `ai-addons-updater` but not the directory that imported it. A repair now also drops the whole debris directory, not just the files inside it, so no empty shell of a retired extension is left behind.
+ - `opencode service start` and `service restart` could fail with `port 49374 is already in use` while `service status` read `stopped`: the service manager had lost its daemonized `serve` process, so neither `stop` nor `restart` could reach it. `tersio doctor` now reports the mismatch, and `tersio doctor --fix service` stops the orphan by pid and starts the service again. The pid comes from `pgrep` and is validated, because it is another process's output.
+
 ## v2.25.5
 
 ### Added

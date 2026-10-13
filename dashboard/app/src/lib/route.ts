@@ -1,5 +1,4 @@
-// The dashboard lives in the URL hash, the same shape the agent-stats dashboard uses:
-// `#/models?range=7d`, plus `&s=<sessionFile>` for a deep-linked trace.
+// The dashboard lives in the URL hash, agent-stats' shape: `#/models?range=7d`, plus `&s=<sessionFile>` to deep link.
 import { useCallback, useEffect, useState } from "react";
 import { isAgentRange } from "./data";
 import type { AgentRange } from "./data";
@@ -29,10 +28,7 @@ export function buildHash({ section, range, session }: HashRoute): string {
   return `#/${section}?range=${range}${session ? `&s=${encodeURIComponent(session)}` : ""}`;
 }
 
-/**
- * Setters update state synchronously and push a history entry, so the view never waits on the
- * `hashchange` round trip. Back and forward still work through the listener.
- */
+/** Setters update state sync and push history, so the view never waits on the `hashchange` round trip. */
 export function useHashRoute(): HashRoute & {
   setSection: (section: SectionId) => void;
   setRange: (range: AgentRange) => void;

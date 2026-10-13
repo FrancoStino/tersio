@@ -8,8 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const script = path.join(root, "install.sh");
 
-// POSIX sh script, skipped on Windows. A fake npm answers the commands
-// install.sh uses and a fake tersio records the follow-up invocation.
+// POSIX sh script, skipped on Windows; fake npm/bun answer install.sh's calls and a fake tersio logs the follow-up.
 function fakeEnv(): { bin: string; prefix: string; tersioLog: string } {
   const bin = mkdtempSync(path.join(os.tmpdir(), "tersio-curl-bin-"));
   const prefix = mkdtempSync(path.join(os.tmpdir(), "tersio-curl-prefix-"));
@@ -153,8 +152,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      // Isolated PATH: no system dirs, so a real tersio cannot shadow the
-      // fake prefix binary the bun lane resolves.
+      // Isolated PATH: no system dirs, so a real tersio cannot shadow the fake prefix binary the bun lane resolves.
       env: { ...process.env, PATH: `${bin}${path.delimiter}${prefix}/bin${path.delimiter}/usr/bin${path.delimiter}/bin` },
     });
 

@@ -109,8 +109,7 @@ test("a successful run returns combined output and no error", async () => {
 });
 
 test("RTK no longer registers a natural-language input handler", () => {
-  // "use rtk" is ordinary English, and combo-toggle dropped its input hook for
-  // exactly that reason; RTK kept one and matched both directions.
+  // "use rtk" is ordinary English; combo-toggle dropped its input hook for that reason, and RTK does too.
   expect(harness().events).not.toContain("input");
 });
 
@@ -145,8 +144,7 @@ test("the tool falls back to bare `rtk` when no binary resolves", async () => {
   });
 });
 
-// A subagent spawned after the parent switches modes registers its bridge
-// listener late, so it keeps the session default and needs the shared-state fallback.
+// A late subagent registers its listener late, so it keeps the session default and needs shared state.
 test("rtk_run uses shared state when a late subagent's own flag is off", async () => {
   resetSharedComboState();
   await withPath("", async () => {

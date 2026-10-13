@@ -89,12 +89,7 @@ function JsonBlock({ title, data, copy }: { title: string; data: unknown; copy?:
   );
 }
 
-/**
- * One raw JSON payload behind a fold. The summary names the payload and carries its byte count
- * and copy, so expanding it shows only the text: an earlier shape nested a bordered `JsonBlock`
- * inside a bordered fold, which read as three boxes deep for one payload and repeated its label
- * in two rows.
- */
+/** One raw JSON payload behind a fold; its summary carries the name and byte count, so expanding shows the text. */
 function JsonFold({ title, data, copy }: { title: string; data: unknown; copy?: string }) {
   const [copied, setCopied] = useState(false);
   const body = data === null || data === undefined ? "" : JSON.stringify(data, null, 2);

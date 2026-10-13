@@ -6,3 +6,4 @@ export { Card, MeterCell, Page, PageHeader, Stat, StatGrid } from "./stats";
 export { DataTable, PagedTable, TableSkeleton } from "./table";
 export type { Column } from "./table";
 export { ChartSkeleton, QueryView, SearchInput, Segmented } from "./controls";
+export { PageSkeleton, TraceSkeleton } from "./skeleton";

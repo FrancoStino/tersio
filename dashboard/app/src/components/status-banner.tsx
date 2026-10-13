@@ -1,10 +1,7 @@
-// The status line from GET /status. Renders nothing until one arrives, so a
-// server without the endpoint — or a file:// export — leaves the viewport alone.
+// The status line from GET /status; a server without it, or a file:// export, leaves the viewport alone.
 import { cn } from "cn";
 
-// Full width and flush to the bottom edge, so the toaster's `bottom-4 right-4`
-// stack grows upward over the banner instead of beside it. z-100 ties the
-// toaster; it renders after children, so toasts win at equal z-index.
+// Full width, flush to the bottom, so the toaster's `bottom-4 right-4` stack grows upward over it; z-100 ties it.
 const CLS =
   "pointer-events-none fixed inset-x-0 bottom-0 z-100 flex justify-center px-3 pb-2 " +
   "sm:px-4 sm:pb-3";

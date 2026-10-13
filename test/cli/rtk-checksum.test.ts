@@ -1,5 +1,4 @@
-// An RTK binary runs with the user's privileges, so an unverifiable download
-// must not be installed. These pin the rule across all three call sites.
+// An RTK binary runs with the user's privileges, so an unverifiable download must not be installed.
 import { expect, test } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

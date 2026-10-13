@@ -1,9 +1,4 @@
-// The trace timeline: a minimap of the whole session, a ruler, and the flamegraph itself.
-//
-// Everything here is plain canvas plus a DOM gutter. The canvas draws the ruler, the turn bands,
-// the span blocks, and the markers; the gutter names the lanes on the left so the canvas never
-// spends width on words. One component owns the viewport so the minimap, the canvas, and the
-// caller's selection stay in step.
+// The trace timeline: minimap, ruler, flamegraph on a canvas; a DOM gutter names the lanes, so it draws no words.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ProviderMark, VendorMark } from "@/components/brand";
@@ -28,15 +23,10 @@ export interface TimelineProps {
   matchIds: ReadonlySet<string> | null;
 }
 
-/** Height of the ruler strip above the lanes. */
 const RULER_H = 20;
-/** Height of one lane. */
 const LANE_H = 18;
-/** Gap between lanes. */
 const LANE_GAP = 5;
-/** Width of the DOM gutter. */
 const GUTTER_W = 150;
-/** Minimap height. */
 const MINIMAP_H = 44;
 /** Smallest window the viewport can hold, in virtual units. */
 const MIN_WINDOW_U = 10;
@@ -259,7 +249,6 @@ export function Timeline({
       }
     }
 
-    // Ruler.
     const ticks = buildTicks(scale, viewport.u0, viewport.u1, size.width);
     for (const tick of ticks) {
       const left = at(tick.u);
@@ -281,7 +270,6 @@ export function Timeline({
     ctx.lineTo(size.width, RULER_H - 0.5);
     ctx.stroke();
 
-    // Spans.
     for (const row of rows) {
       if (row.lane.kind === "turn") continue;
       for (const span of row.lane.spans) {
@@ -438,14 +426,12 @@ export function Timeline({
   );
 }
 
-/** The axis choices the toolbar offers. */
 export const AXIS_MODES: ReadonlyArray<{ value: AxisMode; label: string; title: string }> = [
   { value: "time", label: "Duration", title: "Wall clock, with long idle gaps bridged" },
   { value: "turns", label: "Turns", title: "Equal width per user turn" },
   { value: "calls", label: "Calls", title: "Equal width per model or tool call" },
 ];
 
-/** The legend, one swatch per span kind. */
 export function TraceLegend() {
   const theme = useTraceTheme();
   const items: ReadonlyArray<{ kind: AgentTraceSpanKind; label: string }> = [

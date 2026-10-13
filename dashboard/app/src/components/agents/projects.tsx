@@ -221,8 +221,7 @@ export function ProjectsPage({ agent, money }: { agent: AgentStats; money: (v: n
   const emptyTitle =
     view.rows.length === 0 ? "No project folders in this range" : "Only temporary folders in this range";
 
-  // A bar picks a folder for the filter below, the way the reference's two top lists do: the click
-  // fills the same search the Folders card reads, so the table narrows to that folder.
+  // Clicking a bar fills the Folders card's search, so the table narrows to that folder.
   const selectFolder = useCallback(
     (key: string) => setSearch((held) => (held === key ? "" : key)),
     [],

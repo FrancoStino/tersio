@@ -1,6 +1,4 @@
-// Carbon page: what the usage in range would emit. Every figure comes from the same EcoLogits
-// port the same dashboard used to run in its usage dialog. Only output tokens carry
-// a footprint; a cached range reads small, and no figure here is metered.
+// Carbon page: usage to emissions via the shared EcoLogits port; only output tokens count, so a cache reads low.
 import { useMemo } from "react";
 import { BarList, Card, CellBar, ModelCell, Page, PageHeader, PagedTable, Stat, StatGrid } from "@/components/charts";
 import type { Column } from "@/components/charts";
@@ -45,8 +43,7 @@ export function CarbonPage({ agent }: { agent: AgentStats }) {
         label: row.label,
         value: row.gco2,
         color: providerColor(row.provider),
-        // The bar row names the model itself, and the provider beneath it, so the mark stays the
-        // vendor tile alone.
+        // The bar row already names model and provider, so the mark stays the vendor tile alone.
         mark: <VendorMark model={row.model} row />,
       })),
     [shown],
@@ -184,12 +181,7 @@ export function CarbonPage({ agent }: { agent: AgentStats }) {
         {r.comparisons.length === 0 ? (
           <p className="text-xs text-dim">Nothing to compare yet.</p>
         ) : (
-          /* One row per comparison, on the same 1.5rem row rhythm as the bar list beside it: the
-             glyph and label sit left, the figure right, and the rate under the figure. A card
-             inside a card would break that rhythm, so the tile is just hairlines.
-             Seven rows hold the card's height; the rest scroll. The cap sits on a plain div
-             rather than the ScrollArea primitive: its viewport takes `h-full`, which only
-             resolves against a definite height, so a `max-h` on that root never clips. */
+          /* Seven rows fill the card; the rest scroll on a plain div, since ScrollArea's `h-full` viewport needs a fixed height. */
           <div className="max-h-[23.1875rem] overflow-y-auto">
             <ul className="m-0 flex list-none flex-col p-0">
               {r.comparisons.map((c) => (

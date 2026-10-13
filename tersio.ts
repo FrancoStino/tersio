@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reset, settings, showHelp, showVersion, uninstall, unknownCommand, update, usage,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reinstall, reset, settings, showHelp, showVersion, uninstall, unknownCommand, update, usage,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
-import { runInstall } from './cli/install.ts';
+import { runInstall, runReinstall } from './cli/install.ts';
 import { runDoctor } from './cli/doctor.ts';
 import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
@@ -19,6 +19,7 @@ function printHelp(): void {
 
 Commands:
   install      Install the add-ons for one agent (--host omp|pi|opencode, or ask at a terminal)
+  reinstall    Refresh one agent's install: pick it, reinstall, then verify (--host picks without asking)
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   usage        Ledger-backed usage + savings report
@@ -30,7 +31,7 @@ Commands:
   help         Show this help
 
 Options:
-  --fix (doctor: repairs all; --fix=<scope> repairs one of extensions, registrations, rtk, ponytail, cli)
+  --fix (doctor: repairs all; --fix=<scope> repairs one of extensions, registrations, rtk, ponytail, cli, service)
   --scope user (legacy; accepted and ignored — user scope is the only scope)
   --host omp|pi|opencode (install|uninstall|update: target agent; a terminal asks instead)
   --keep-ponytail (uninstall: keep the bundled Ponytail copy — removed by default)
@@ -109,6 +110,10 @@ async function main(): Promise<void> {
   if (uninstall) {
     await runUninstall();
     closeRL();
+    return;
+  }
+  if (reinstall) {
+    await runReinstall();
     return;
   }
   await runInstall();

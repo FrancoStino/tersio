@@ -1,5 +1,4 @@
-// Pins the pi agent vars alongside a temp HOME, so a spawned CLI cannot write
-// the developer's real ~/.pi/agent — once deleted a real extension tree.
+// Pins the pi agent vars with a temp HOME, so a spawned CLI cannot delete the real ~/.pi/agent.
 import { execSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';

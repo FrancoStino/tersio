@@ -134,10 +134,8 @@ test("usdCost flags unpriced models with priced=false", () => {
 });
 
 // One model key answers for every host: a price belongs to the model, not the agent that ran it.
-// Two hosts spelling the same model therefore share one key and one price resolution.
 test("two hosts spelling one model share a single priced key", () => {
-  // A feed of its own, because a tier from the live cache is machine state: the cache exists on
-  // the developer's box and nowhere in CI, so reading it made this assertion pass or fail by host.
+  // A feed of its own: a live-cache tier is machine state, so the assertion would pass or fail by host.
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-hostkey-"));
   const prevPrices = process.env.TERSIO_PRICES_FILE;
   process.env.TERSIO_PRICES_FILE = path.join(dir, "prices.json");
@@ -181,7 +179,6 @@ test("two hosts spelling one model share a single priced key", () => {
   }
 });
 
-// The host's own cost outranks every rate card, and a recorded zero is a real zero.
 test("a host-reported cost outranks the rate card, including when it is zero", () => {
   const accum = newSessionAccum();
   const stamp = 1_800_000_000_000;
@@ -211,7 +208,6 @@ test("a host-reported cost outranks the rate card, including when it is zero", (
   expect(guess.priced).toBe(false);
 });
 
-// A partly measured model must not read its unpriced messages as zero.
 test("a partly measured model falls back to the rate card rather than zero", () => {
   const accum = newSessionAccum();
   const stamp = 1_800_000_000_000;

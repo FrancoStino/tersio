@@ -59,6 +59,25 @@ function assistantCurrent(id: string, created: number, tokens: Record<string, nu
   };
 }
 
+// Current shape with tool calls, which live in the `content` parts rather than beside the tokens.
+function assistantWithTools(id: string, created: number, tools: string[]): { id: string; created: number; data: Record<string, unknown> } {
+  const content = [
+    { type: "text", text: "working" },
+    ...tools.map((name, i) => ({ type: "tool", id: `call_${i}`, name, state: { status: "completed" }, time: { created: created + i } })),
+  ];
+  return {
+    id,
+    created,
+    data: {
+      id,
+      model: { id: "muse-spark-1.3-contributor-free", providerID: "opencode" },
+      tokens: { input: 100, output: 10, cache: { read: 0, write: 0 } },
+      time: { created, completed: created + 5000 },
+      content,
+    },
+  };
+}
+
 function withEnv(dir: string, fn: () => void): void {
   const previous = {
     db: process.env.TERSIO_USAGE_DB,
@@ -164,7 +183,7 @@ test.runIf(hasSqlite())("a zero-token message is skipped and a missing db is a n
   }
 });
 
-// Output past 1MB must still sync and read back (was silently dropped).
+// Output past 1MB was silently dropped.
 test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads back", { timeout: 30000 }, () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-db-big-"));
   try {
@@ -198,6 +217,36 @@ test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads 
       process.env.TERSIO_OPENCODE_DB = db;
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(2500);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Tool names ride in `content` parts the token query skips; the marker re-reads the table so old rows gain them.
+test.runIf(hasSqlite())("tool names are read from content parts and backfill a store that has none", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-tools-"));
+  try {
+    mkdirSync(path.join(dir, "sessions"), { recursive: true });
+    const db = seedCurrent(dir, [
+      assistantCurrent("msg_plain", 1789800000000, { input: 100, output: 10, cacheRead: 0 }),
+      assistantWithTools("msg_tools", 1789800005000, ["shell", "read"]),
+    ]);
+    withEnv(dir, () => {
+      process.env.TERSIO_OPENCODE_DB = db;
+      expect(syncUsageDb()).toBe(true);
+      let tokens = readUsageDb()?.tokens;
+      expect(tokens?.messages).toBe(2);
+      // Names come from the parts, not from the row the tokens live on.
+      expect(Object.keys(tokens?.byTool ?? {}).sort()).toEqual(["read", "shell"]);
+
+      // Pre-tools store: every row at `[]` and the marker cleared; one sync must re-read and not double any row.
+      const usageDb = process.env.TERSIO_USAGE_DB as string;
+      execFileSync("sqlite3", [usageDb, `UPDATE messages SET tools='[]' WHERE h='opencode'; DELETE FROM meta WHERE k='opencode_tools';`]);
+      expect(syncUsageDb()).toBe(true);
+      tokens = readUsageDb()?.tokens;
+      expect(tokens?.messages).toBe(2);
+      expect(Object.keys(tokens?.byTool ?? {}).sort()).toEqual(["read", "shell"]);
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });

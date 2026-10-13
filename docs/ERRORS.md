@@ -81,3 +81,78 @@ The eight entries below are editing and verification discipline. No test, lint r
 **What happened:** `test/cli/usage-tokens.test.ts` asserted a resolved tier for `deepseek/deepseek-v4.1-flash` with no `TERSIO_PRICES_FILE` set, so `loadLivePrices()` fell through to `~/.tersio/prices.json`. That file exists on the developer's machine and nowhere in CI, so the tier resolved `tail` locally and `default` on the runner. The whole suite went green locally; CI failed one test on the next push.
 **Root cause:** Wrote an assertion against a cache the host owns, while every neighbouring test in the same file already built its own feed with `setEnv`. The one test that skipped the convention was the one that read machine state.
 **Prevention rule:** Any assertion about a resolved price tier, a `known` flag, or a rate must point `TERSIO_PRICES_FILE` at a file the test writes. Prove it by running the file with `HOME` set to an empty temporary directory before pushing, which reproduces the runner's missing home exactly.
+
+## 2026-10-13 — omp staleness was compared against a directory omp never loads
+**What happened:** The per-host add-on check used `<pkg>/dist/extensions` as omp's tree, because omp's plugin runs compiled output. The plugin manifest actually names `./extensions/caveman/index.ts`, the source tree, and `dist/extensions` is only a shipped file. Every `omp/caveman/*` staleness row was therefore a false positive, and the repair could not clear it because it syncs `extensions/`, not `dist/`.
+**Root cause:** Inferred the loaded path from the word `dist` instead of reading the installed `package.json's `omp.extensions` field, which names the exact files. The same file already held an `Extension tree` check reading the right directory.
+**Prevention rule:** Resolve a host's loaded path from its manifest field (`omp.extensions`), never from a build-output convention. When a staleness row cannot be cleared by its own repair command, suspect the compared path before the comparison.
+
+## 2026-10-13 — A version spec installs the published package, so a local dependency bump is inert
+**What happened:** `package.json` pinned `@dietrichgebert/ponytail: ^5.1.0` locally while the installed plugin stayed on 4.13.0. Both tersio copies are 2.25.5, but the published one declares `^4.12.0`, so `npm install` in the plugins dir kept resolving 4.x. The repair read the installed tersio's manifest, reinstalled 4.x forever, and the version row never cleared. Worse, `install`'s own step deleted the pin, after which npm pruned ponytail out of `node_modules` entirely and the row went `MISSING`.
+**Root cause:** Two repair paths disagreed about whether the standalone dependency should exist. The spec is a version, not a path, so the published manifest wins every time unless the local range is pinned explicitly.
+**Prevention rule:** When a dependency range is bumped locally and the consumer is installed by version spec, pin that range in the installed package too, and make every repair path read it from one shared helper. Prove it by checking the installed package's own declared range, not the local repo's.
+
+## 2026-10-13 — A pinned version sat next to a nested copy, and the check read the wrong one
+**What happened:** `@dietrichgebert/ponytail` was pinned `^5.1.0` in `~/.omp/plugins/package.json`, and the version row reported 5.1.1. Module resolution from the installed extension landed in `node_modules/@krtclcdy/tersio/node_modules/@dietrichgebert/ponytail`, version 4.13.0. npm nests that copy because the published tersio's own `^4.12.0` range excludes the pin, and Node resolves the nearest `node_modules` first. The row read the top-level copy, so the decoy was invisible, and the per-host body comparison used the same decoy as its reference.
+**Root cause:** Assumed a dependency entry decides which copy loads. It decides the hoisted copy only; the pinned version can never satisfy the plugin's own older range, so npm is obliged to nest one and every import takes the nested one. Verified by deleting the override, running `npm install`, and watching the row change from `5.1.1` to `4.13.0`.
+**Prevention rule:** When a reported version can differ from the version that runs, resolve the path the way the runtime does (nearest `node_modules` from the file that imports it) and assert the two agree. For npm nesting, write an `overrides` entry alongside the dependency entry.
+
+## 2026-10-13 — A parity check read a path the host never loads
+**What happened:** The Ponytail per-host body check compared pi against `~/.pi/agent/extensions/ponytail/hooks/ponytail-instructions.js`. pi installs Ponytail as a local path package, so the file that loads is inside the directory `~/.pi/agent/settings.json` names, and the read path there is never written. `readTextIfExists` returns null for it, the loop `continue`d, and pi was silently dropped from the comparison. The live copy differed from the loaded reference by a full hash and the row said nothing.
+**Root cause:** Built the path from the layout of the other hosts instead of from the host's own registration. The same check already contains the answer: it reads pi's settings.json to detect the host, and that file names the directory.
+**Prevention rule:** For a package a host installs as a local path, resolve the path from the host's registration file, never from a sibling host's layout. Then prove the check can fail: seed a drifted copy and see the row name the host, or the check is dead code.
+
+## 2026-10-13 — A parity check compared the subject against itself
+**What happened:** The per-host add-on check used the installed plugin package (`~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/…`) as the reference bytes for every host. For omp that directory *is* the subject, so omp's tree was compared against itself and always matched. `rtk/session.ts` and `combo/index.ts` differed from this working tree by comment-only edits, and doctor reported `Extension tree: ok 19 files ok`.
+**Root cause:** Picked the reference because it was the obvious "installed" copy, without asking what it would prove. A self-comparison cannot detect anything, which is the same failure mode as comparing a `dist` directory no manifest names.
+**Prevention rule:** For every parity check, name the subject and the reference, and confirm they are two different directories. When the reference can be the subject, the check is decoration. Prove it by making the subject differ and watching the row appear.
+
+## 2026-10-13 — pi's RTK extension files were installed and unreachable
+
+**What happened:** pi loaded no RTK mode surface. `rtk/session.ts` and `rtk/filter.ts` sat on disk with byte-identical content to the repo, and pi never ran them, so `/rtk`, `rtk_run`, the prompt block, and the grep and glob filter were all absent on one of three supported hosts.
+
+**Root cause:** pi discovers a subdirectory only when it holds an `index.ts`, an `index.js`, or a `package.json` with a `pi.extensions` field. The installer copied the two files into `rtk/` and wrote no entry point, so the loader skipped the directory. A byte-comparison check cannot see this class of bug: every file was correct, and none of them loaded.
+
+**Prevention rule:** Byte equality is not reachability. After changing what an install writes, run the host's own loader and confirm the entries come back. Compare files against the repo as a second check, never as the only one.
+
+## 2026-10-13 — A manifest path through `node_modules` never resolved in a package
+
+**What happened:** `package.json` `omp.skills` named `./node_modules/@dietrichgebert/ponytail/skills`. It resolved in the repo and in no installed copy, because npm hoists the dependency to the plugins root.
+
+**Root cause:** The declaration was written against a checkout, where the dependency is a top-level directory. In the published tree the nested path is empty, so the entry was dead weight. The skills still loaded, from the dependency's own `pi.skills` declaration, which hid the fault: the list looked right for the wrong reason.
+
+**Prevention rule:** A manifest may not name a path inside `node_modules`, because the install decides where that directory lives. Declare what the package owns; let a dependency declare its own. A green list is not proof the declaration was read.
+
+## 2026-10-13 — `/rtk off` stopped the prompt and not the rewrite
+
+**What happened:** On OpenCode, turning RTK off removed the prompt block and left the bash rewrite running, so commands kept being rewritten by a mode the user had switched off.
+
+**Root cause:** The `execute.before` hook called the rewrite with no mode check, while the `execute.after` filter twenty lines below it read `rtkActive`. The gate existed, on the wrong branch. On omp and pi the same switch worked, because there the session extension writes `RTK_DISABLED`, which the rtk-authored `rtk.ts` reads.
+
+**Prevention rule:** When two hooks share a mode, read it in both or in neither. A gate on one path reads as coverage while the other path stays open.
+
+## 2026-10-13 — A column nothing wrote and a read that never selected it
+
+**What happened:** Time to first token read `—` for every pi request, and for every OpenCode request too. The store held the column, the page rendered the field, and the numbers were empty at both ends.
+
+**Root cause:** Three separate faults in one chain, each invisible from the other side. pi records `durationMs` and never a first-token field, so there was nothing to read. OpenCode records `time.streamed`, but the v2 query never selected it and the row builder hardcoded `tf: undefined` beside it. And the dashboard's own `readUsageDb` never selected the `tf` column, so even a populated store read back null. Each layer looked correct while the one above it was empty.
+
+**Prevention rule:** A metric needs a writer, a reader, and a check that they name the same thing. When a column is always null, walk the chain before assuming the host records nothing. Adding a column means touching the insert, every select, and the row builder; grep for the column name and count the sites.
+
+## 2026-10-13 — A helper hardcoded the value it was meant to carry
+
+**What happened:** OpenCode's stored rows set `tf: undefined` by hand while the parser beside it computed a real latency, so the field could never hold a value.
+
+**Root cause:** The row builder was written before the host recorded latency and was never revisited when the source did. A literal `undefined` beside a computed field reads as "not applicable" rather than "not wired".
+
+**Prevention rule:** A field that is always a literal is either a decision or an oversight; say which in the code. When a source starts carrying a value, grep for the field name, not the feature name.
+
+## 2026-10-13 — pi failed to start on a retired extension the installer kept writing
+**What happened:** `pi` exited with `Failed to load extension ".../tersio-commands/index.ts": Cannot find module '../ai-addons-updater/index.ts'`. The tree held a stale `tersio-commands/` whose import target, `ai-addons-updater/`, had already been emptied. pi auto-discovers every `index.ts` under `<agent-dir>/extensions`, so one stale file broke the host.
+**Root cause:** Two debris lists existed. `cli/install.ts` `RETIRED_OMP_AGENT_DIRS` named both `tersio-commands` and `ai-addons-updater`, but the shared `OBSOLETE_DIRS` in `cli/manifest.ts` — the one detection and the doctor repair both read — named only `ai-addons-updater`. So the repair deleted the import target and left the importer, which is worse than leaving both: a stale directory that no longer resolves. Separately, the repair removed debris *files* and left empty debris *directories* behind, so the shell kept listing retired names.
+**Prevention rule:** One debris definition, one list, read by every path. When a repair removes a directory's contents, remove the directory too, or the tree keeps advertising a name nothing serves.
+
+## 2026-10-13 — OpenCode could not start: its own service manager had lost its daemon
+**What happened:** `opencode service start` and `service restart` both exited 1 with `Managed service port 49374 on 127.0.0.1 is already in use by another process`, while `opencode service status` answered `stopped`. A daemonized `opencode serve --service` (pid 85672, reparented to init) still held the port. `service stop` and `service restart` could not reach it, so every documented remedy failed.
+**Root cause:** The manager's view of its process and the actual process had diverged, and its status command is the only signal it offers. Nothing in the loop could see the orphan, so the port looked free.
+**Prevention rule:** When a report and a resource disagree, trust the resource. The check that matters is the one that reads the port and the process directly, and the remedy that works is the one that acts on the process, not on the manager that lost it. Validate a pid read from another process before signalling it.

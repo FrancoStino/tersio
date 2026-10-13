@@ -16,10 +16,7 @@ const STATUS_TONE: Record<RowStatus, string> = {
   failed: "var(--danger)",
 };
 
-// Mirrors the row cap in extensions/shared/agent-stats.ts; at the cap, only the newest rows ride along.
-const RECENT_LIMIT = 200;
-
-// The reference window phrases, so the page copy reads like the one it mirrors.
+/** The reference window phrases, so the page copy reads like the one it mirrors. */
 const WINDOW: Record<AgentStats["range"], string> = {
   "1h": "the last hour",
   "24h": "the last 24 hours",
@@ -38,10 +35,16 @@ function rowStatus(row: AgentRequestRow): RowStatus {
 export function RequestsPage({
   agent,
   money,
+  offset,
+  onOffset,
   onOpenRequest,
 }: {
   agent: AgentStats;
   money: (v: number) => string;
+  /** How many rows back from the newest the server started this payload. */
+  offset: number;
+  /** Paging into the range, in row-sized steps. */
+  onOffset: (offset: number) => void;
   onOpenRequest: (row: AgentRequestRow) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -49,9 +52,9 @@ export function RequestsPage({
   const windowLabel = WINDOW[agent.range];
   const stats = agent.requestStats;
   const rows = agent.recent;
-  // Mirrors the row cap in extensions/shared/agent-stats.ts; at the cap only the newest ride
-  // along, and the requests view ships no range total to compare against.
-  const complete = rows.length < RECENT_LIMIT;
+  // `shipped` is the page this payload covers. Anything older is one fetch away, not lost.
+  const step = Math.max(1, stats.shipped);
+  const older = offset + step < stats.requests;
 
   const counts = useMemo(() => {
     const next: Record<StatusFilter, number> = { all: rows.length, completed: 0, aborted: 0, failed: 0 };
@@ -99,7 +102,12 @@ export function RequestsPage({
           value={fmt(stats.failed)}
           hint={`${stats.requests > 0 ? pct(stats.failed / stats.requests) : "–"} · ${fmt(stats.aborted)} aborted`}
         />
-        <Stat label="Tokens" title="Total tokens across these requests" value={fmtShort(stats.tokens)} />
+        <Stat
+          label="Tokens"
+          title="Total tokens across every request in this window"
+          value={fmtShort(stats.tokens)}
+          hint={stats.shipped < stats.requests ? `across all ${fmt(stats.requests)} requests` : undefined}
+        />
         <Stat
           label="API-equivalent cost"
           title="What these requests would cost at public API rates"
@@ -109,18 +117,23 @@ export function RequestsPage({
         <Stat
           label="Median duration"
           value={fmtMs(stats.medianDurationMs)}
-          hint={`p95 ${fmtMs(stats.p95DurationMs)}`}
+          hint={
+            stats.shipped < stats.requests
+              ? `p95 ${fmtMs(stats.p95DurationMs)} · over the ${fmtShort(stats.shipped)} rows below`
+              : `p95 ${fmtMs(stats.p95DurationMs)}`
+          }
         />
-        <Stat label="Median TTFT" title="Time to first token" value={fmtMs(stats.medianTtftMs)} />
+        <Stat
+          label="Median TTFT"
+          title="Time to first token"
+          value={fmtMs(stats.medianTtftMs)}
+          hint={stats.shipped < stats.requests ? "over the rows below" : undefined}
+        />
       </StatGrid>
 
       <Card
         title="Request log" icon="list"
-        description={
-          complete
-            ? `${fmt(filtered.length)} of ${fmt(stats.requests)} requests in ${windowLabel}`
-            : `${fmt(filtered.length)} of the latest ${fmt(rows.length)} requests`
-        }
+        description={`${fmt(filtered.length)} of ${fmt(stats.requests)} requests in ${windowLabel}`}
         actions={
           <>
             <SearchInput label="Search requests" value={search} onChange={setSearch} placeholder="Model, provider or project" />
@@ -140,17 +153,48 @@ export function RequestsPage({
           empty={
             <EmptyState
               icon="circle-slash"
-              title={stats.requests === 0 ? `No requests in ${windowLabel}` : "No requests match"}
-              desc={stats.requests === 0 ? "Nothing was recorded in this window." : "Clear the search or status filter."}
+              title={
+                stats.requests === 0
+                  ? `No requests in ${windowLabel}`
+                  : filtered.length === 0
+                    ? "No requests match"
+                    : "Nothing left this way"
+              }
+              desc={
+                stats.requests === 0
+                  ? "Nothing was recorded in this window."
+                  : filtered.length === 0
+                    ? "Clear the search or status filter."
+                    : `This page starts ${fmtShort(offset)} rows back. Go back toward the newest requests.`
+              }
             />
           }
         />
-        {!complete && (
-          <p className="mono m-0 border-t border-line px-3.5 py-2.5 text-[11px] text-dim">
-            Showing the latest {fmt(rows.length)} requests, back to {oldest === null ? "–" : whenStamp(oldest)}. Older
-            requests in {windowLabel} are not loaded.
-          </p>
-        )}
+        <div className="mono flex items-center justify-between border-t border-line px-3.5 py-2.5 text-[11px] text-dim">
+          <span>
+            {rows.length > 0
+              ? `${fmt(rows.length)} rows · ${fmtShort(offset)}–${fmtShort(offset + rows.length)} of ${fmt(stats.requests)} · back to ${whenStamp(oldest ?? 0)}`
+              : `0 rows · ${fmtShort(offset)} of ${fmt(stats.requests)}`}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className="rounded border border-line px-2 py-0.5 enabled:hover:bg-track disabled:opacity-40"
+              disabled={offset === 0}
+              onClick={() => onOffset(0)}
+            >
+              Newest
+            </button>
+            <button
+              type="button"
+              className="rounded border border-line px-2 py-0.5 enabled:hover:bg-track disabled:opacity-40"
+              disabled={!older}
+              onClick={() => onOffset(offset + step)}
+            >
+              Older
+            </button>
+          </span>
+        </div>
       </Card>
     </Page>
   );
@@ -230,8 +274,7 @@ function buildRequestColumns(money: (v: number) => string): Array<Column<AgentRe
     sort: (row) => rowStatus(row),
     render: (row) => {
       const status = rowStatus(row);
-      // A failed or an aborted row names its stop reason; every other stop reason is how a normal
-      // run ends, so the cell keeps one line.
+      // A failed or aborted row names its stop reason; any other reason is a normal end, so the cell keeps one line.
       const detail = status === "completed" ? "" : row.stopReason || "";
       return (
         <span className="flex min-w-0 items-center gap-2" title={row.errorMessage ?? undefined}>

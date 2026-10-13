@@ -38,7 +38,7 @@ export function PiLogo({ className = "size-full" }: { className?: string }) {
   );
 }
 
-// Official pixel "o" cropped from the opencode.ai/brand wordmark; two-tone fills follow the brand's light/dark assets.
+// Official pixel "o" cropped from the opencode.ai/brand wordmark; two-tone fills follow its light/dark assets.
 export function OpencodeLogo({ className = "size-full" }: { className?: string }) {
   return (
     <svg viewBox="0 6 24 30" aria-hidden="true" className={className}>

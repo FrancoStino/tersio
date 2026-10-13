@@ -110,31 +110,54 @@ test("verbose dry-run reveals file paths hidden by default", () => {
   expect(result.stdout).toMatch(/\[dry-run\] would write .*shared[\\/]session-state\.ts/);
   expect(result.stdout).toMatch(/\[dry-run\] would write .*commands[\\/]index\.ts/);
 });
-test("the retired reinstall command is gone and doctor --fix repairs instead", () => {
-  // A temp home, not the shared fixture: --fix writes a real plugin tree, and a
-  // dozen sibling files use that fixture as HOME while the suite runs in parallel.
-  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-reinstall-"));
-  const missingHome = path.join(root, "test", "definitely-missing-home");
-  const removed = spawnSync(process.execPath, [installer, "reinstall", "--dry-run", "--yes"], {
-    encoding: "utf8",
-    timeout: 60000,
-    cwd: root,
-    env: cliEnv(missingHome),
-  });
-  expect(removed.stdout, "reinstall is no longer a command").not.toMatch(/Tersio Uninstall/);
 
+test("reinstall refreshes a named host and verifies it", () => {
+  // A temp home: the install writes a real plugin tree, and parallel siblings share the fixture as HOME.
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-reinstall-"));
   try {
-    const repaired = spawnSync(process.execPath, [installer, "doctor", "--fix", "extensions", "--yes"], {
+    const result = spawnSync(process.execPath, [installer, "reinstall", "--host", "omp", "--dry-run", "--yes"], {
       encoding: "utf8",
       timeout: 60000,
       cwd: root,
       env: cliEnv(home),
     });
-    expect(repaired.status, repaired.stderr).toBe(0);
-    expect(repaired.stdout).toMatch(/extension tree|restoring plugin extension files/);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Reinstall — Tersio v[\d.]+ into Oh My Pi/);
+    expect(result.stdout).toMatch(/Preview — no changes will be written/);
+    // The plugin manifest's tree, not the agent tree, is what a reinstall refreshes.
+    expect(result.stdout).toMatch(/plugins\/node_modules\/@krtclcdy\/tersio\/extensions/);
+    // dry-run writes nothing, so the verification pass has nothing to report.
+    expect(result.stdout, "a dry run must not re-run the doctor").not.toMatch(/Reinstall verified/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("reinstall says so instead of guessing when no agent has tersio", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-reinstall-empty-"));
+  try {
+    const result = spawnSync(process.execPath, [installer, "reinstall", "--yes"], {
+      encoding: "utf8",
+      timeout: 60000,
+      cwd: root,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Nothing to reinstall/);
+    expect(result.stdout).toMatch(/tersio install/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the menu offers reinstall right below install", () => {
+  const menu = readFileSync(path.join(root, "cli", "install.ts"), "utf8");
+  const installAt = menu.indexOf("{ value: 'install',");
+  const reinstallAt = menu.indexOf("{ value: 'reinstall',");
+  expect(installAt, "install option").toBeGreaterThan(-1);
+  expect(reinstallAt, "reinstall option").toBeGreaterThan(installAt);
+  const updateAt = menu.indexOf("{ value: 'update',");
+  expect(reinstallAt).toBeLessThan(updateAt);
 });
 
 test("bare dry-run never prompts for the pending update and exits 0", () => {
@@ -169,6 +192,33 @@ test("uninstall dry-run previews shared bridge removal", () => {
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toMatch(/\[dry-run\] would remove .*extensions[\\/]shared(?:\r?\n|$)/);
   expect(result.stdout).toMatch(/\[dry-run\] would remove .*extensions[\\/]aaa-combo-boot(?:\r?\n|$)/);
+});
+
+// npm nests an old copy when the published range excludes the pin, so the override makes the pinned version load.
+test("install pins the bundled ponytail range with an override", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-ponytail-override-"));
+  try {
+    const pluginsDir = path.join(home, ".omp", "plugins");
+    mkdirSync(pluginsDir, { recursive: true });
+    const pkgPath = path.join(pluginsDir, "package.json");
+    writeFileSync(
+      pkgPath,
+      JSON.stringify({ name: "omp-plugins", private: true, dependencies: { "@dietrichgebert/ponytail": "^4.12.0" } }, null, 2),
+      "utf8",
+    );
+    const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "ponytail", "--yes", "--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/\[dry-run\] .*@dietrichgebert\/ponytail → \^5/);
+    expect(result.stdout).toMatch(/overrides/);
+    expect(JSON.parse(readFileSync(pkgPath, "utf8")).overrides, "a dry run must not write").toBeUndefined();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("uninstall dry-run with --remove-ponytail previews full ponytail removal", () => {
@@ -450,8 +500,7 @@ test("dashboard --export bakes the agent empty states", () => {
   });
   expect(result.status, result.stderr).toBe(0);
   const body = readFileSync(out, "utf8");
-  // The agent pages' empty states, baked with the payload, plus the picker label an exported
-  // file cannot control.
+  // The agent pages' empty states, baked with the payload, plus the picker label an exported file cannot control.
   expect(body).toMatch(/No usage in this range/);
   expect(body).toMatch(/No provider activity in this range/);
   expect(body).toMatch(/No requests in this range/);

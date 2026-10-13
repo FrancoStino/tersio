@@ -1,33 +1,108 @@
 import { existsSync, promises as fs } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-  BUN_BIN_DIR, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
+  BUN_BIN_DIR, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, removeExtensionFromConfig,
   dryRun, verbose,
   debug,
-  execP, readPluginsPackage,
+  bundledPonytailSpec, execP, parseJsonObject, ponytailOverride, readPluginsPackage,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
 import {
-  RTK_RELEASE_API, RtkRelease, fetchJson, findFile, httpsGet,
-  httpsDownload, parseChecksum, readTextIfExists, rtkPlatformSpec, sha256File,
+  RTK_RELEASE_API, RtkRelease, fetchJson, findFile, findPackageRoot, httpsGet,
+  httpsDownload, parseChecksum, readTextIfExists, resolveHostBinary, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
 import { runLatestUpdate } from './update.ts';
-import { OPENCODE_ENTRY, TREE_FILES, syncTreeFiles, treeFilesFor } from './manifest.ts';
+import { OPENCODE_ENTRY, TREE_FILES, isObsoleteTreeFile, syncTreeFiles, treeFilesFor } from './manifest.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 
-type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli';
+type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli' | 'service';
 type FixRequest = FixTarget | 'all';
 
-// A written tree is the install for both hosts now, so --fix restores it for whichever hosts have it, alongside the OMP package when that is present.
+/** Pids of `opencode serve --service` processes whose service manager no longer tracks them. The orphan holds the managed port, so the next start exits 1. */
+export function serviceOrphanPids(): string[] {
+  const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
+  if (!bin) return [];
+  let status = '';
+  try {
+    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+  } catch {
+    return [];
+  }
+  if (serviceRunning(status)) return [];
+  let out = '';
+  try {
+    out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+  } catch { return []; }
+  // Only digits: the value comes from another process, and `process.kill` throws on anything else.
+  return out.split(/[\s,]+/).filter((line: string) => /^\d+$/.test(line.trim())).map((line: string) => line.trim());
+}
+
+/** Whether OpenCode reports its service running, and whether a serve process is alive. */
+export function serviceState(): { status: string; live: boolean } | null {
+  const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
+  if (!bin) return null;
+  let status = '';
+  try {
+    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+  } catch {
+    return null;
+  }
+  if (status === '') return null;
+  let live = false;
+  try {
+    const out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+    live = out.split(/[\s,]+/).some((line: string) => /^\d+$/.test(line.trim()));
+  } catch { live = false; }
+  return { status, live };
+}
+
+/** A running service reports its URL, so the word is only one of the answers. */
+export function serviceRunning(status: string): boolean {
+  return status === 'running' || status.startsWith('http://') || status.startsWith('https://');
+}
+
+/** Every obsolete file under `dest`, or an empty list. `treeFilesFor` is what the install writes. */
+async function obsoleteFiles(dest: string, id: 'omp' | 'pi' | 'opencode'): Promise<string[]> {
+  const keep = new Set(treeFilesFor(id));
+  const out: string[] = [];
+  const walk = async (dir: string, rel: string): Promise<void> => {
+    let entries;
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      const at = path.join(dir, entry.name);
+      if (entry.isDirectory()) { await walk(at, child); continue; }
+      if (keep.has(child)) continue;
+      if (isObsoleteTreeFile(child, id)) out.push(child);
+    }
+  };
+  await walk(dest, '');
+  return out;
+}
+
+/** Obsolete top-level directories, empty or not: a debris name is a whole directory, so a repair must drop the directory, not only the files inside it. */
+async function obsoleteDirs(dest: string, id: 'omp' | 'pi' | 'opencode'): Promise<string[]> {
+  const out: string[] = [];
+  let entries;
+  try { entries = await fs.readdir(dest, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (isObsoleteTreeFile(entry.name, id)) out.push(entry.name);
+  }
+  return out;
+}
+
+// A written tree is the install for both hosts, so --fix restores it for whichever hosts have it.
 async function fixExtensionTrees(): Promise<void> {
-  // The OpenCode entry is foreign to the pi and omp loaders: it imports @opencode/plugin, which
-  // those hosts do not carry. One shared filter, so a repair cannot drop it into the wrong tree.
+  // The entry imports @opencode/plugin, which pi and omp lack, so one shared filter keeps repairs out of their trees.
   const forHost = (id: string): readonly string[] => treeFilesFor(id as 'omp' | 'pi' | 'opencode');
-  // A tree from before the entry moved to the extensions root held a nested copy, and a repair
-  // written against the old filter may have left the entry at the root. Remove both strays.
+  // Older trees nested the entry; a repair under the old filter may have left it at the root, so remove both strays.
   const scrubOpencodeEntry = async (dest: string): Promise<void> => {
     for (const target of [path.join(dest, OPENCODE_ENTRY), path.join(dest, 'opencode')]) {
       if (!existsSync(target)) continue;
@@ -38,7 +113,7 @@ async function fixExtensionTrees(): Promise<void> {
   };
   for (const host of detectHosts()) {
     const dest = hostExtensionsDir(host.id);
-    // Repair a host whose tree is partly there: a half-written tree is exactly the case this runs for, and it reads as "not installed" to the detector.
+    // Repair a partly-present tree: a half-written one is this run's case, and it reads as "not installed".
     const present = forHost(host.id).filter((file) => existsSync(path.join(dest, file))).length;
     if (present === 0) {
       if (host.id !== 'opencode') await scrubOpencodeEntry(dest);
@@ -47,20 +122,31 @@ async function fixExtensionTrees(): Promise<void> {
     await fs.mkdir(dest, { recursive: true });
     const missing = await syncTreeFiles(dest, forHost(host.id), { dryRun, verbose });
     for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
+    // Writing the current tree repairs stale and missing at once; dropped debris needs removal, else it survives.
+    const debris = (await obsoleteFiles(dest, host.id as 'omp' | 'pi' | 'opencode')).sort();
+    for (const rel of debris) {
+      const at = path.join(dest, ...rel.split('/'));
+      if (dryRun) { sayTagged(`  [dry-run] would remove debris ${at}`); continue; }
+      await fs.rm(at, { force: true });
+      sayTagged(`  [rm] debris ${at}`);
+    }
+    for (const rel of await obsoleteDirs(dest, host.id as 'omp' | 'pi' | 'opencode')) {
+      const at = path.join(dest, ...rel.split('/'));
+      if (dryRun) { sayTagged(`  [dry-run] would remove debris dir ${at}`); continue; }
+      await fs.rm(at, { recursive: true, force: true });
+      sayTagged(`  [rm] debris dir ${at}`);
+    }
     if (host.id !== 'opencode') await scrubOpencodeEntry(dest);
     if (!dryRun) sayTagged(`  [ok] ${host.label} extension tree: ${dest}`);
   }
 }
 
-// The tree alone does nothing on OpenCode without its entrypoint registered in opencode.json.
-// The tersio tree ships the rtk rewrite, so the rtk plugin entry is redundant.
+// On OpenCode the tree is inert without its entry in opencode.json, and the rtk plugin entry is redundant beside it.
 async function fixOpencodeEntry(): Promise<void> {
   const { HOME } = await import('./common.ts');
   const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   const configPath = path.join(HOME, '.config', 'opencode', 'opencode.json');
-  // The loader resolves <pluginDir>/server.ts, and the entry is that file. A tree from before the
-  // entry moved to the extensions root held a root shim that re-exported a nested copy, so the
-  // real entry is written in place and the stale nested tree is dropped.
+  // The loader resolves <pluginDir>/server.ts: an entry at the extensions root leaves a shim to a nested copy.
   const nested = path.join(dir, 'opencode');
   const staleNested = (await readTextIfExists(path.join(nested, 'server.ts'))) !== null;
   await syncTreeFiles(dir, TREE_FILES.filter((file) => !file.includes('/')), { dryRun, verbose });
@@ -92,6 +178,21 @@ async function fixExtensions(pluginsDir: string): Promise<void> {
   const ruleFile = (f: string): boolean => /^caveman\/rule.*\.md$/.test(f);
   const missing = await syncTreeFiles(pluginExtDir, TREE_FILES, { dryRun, verbose }, (file: string) => ruleFile(file) && existsSync(path.join(pluginExtDir, ...file.split('/'))));
   for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
+
+  // omp loads this tree, so its debris is what doctor reports: the package tree, compared against every entry.
+  const debris = (await obsoleteFiles(pluginExtDir, 'opencode')).sort();
+  for (const rel of debris) {
+    const at = path.join(pluginExtDir, ...rel.split('/'));
+    if (dryRun) { sayTagged(`  [dry-run] would remove debris ${at}`); continue; }
+    await fs.rm(at, { force: true });
+    sayTagged(`  [rm] debris ${at}`);
+  }
+  for (const rel of await obsoleteDirs(pluginExtDir, 'opencode')) {
+    const at = path.join(pluginExtDir, ...rel.split('/'));
+    if (dryRun) { sayTagged(`  [dry-run] would remove debris dir ${at}`); continue; }
+    await fs.rm(at, { recursive: true, force: true });
+    sayTagged(`  [rm] debris dir ${at}`);
+  }
 
   // Writing is not atomic, so re-read rather than assume the tree is whole.
   if (dryRun) return;
@@ -188,12 +289,18 @@ async function fixPonytail(pluginsDir: string): Promise<void> {
   await fs.mkdir(pluginsDir, { recursive: true });
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  // Drop the legacy separate entry: ponytail is a tersio dependency now.
-  if ('@dietrichgebert/ponytail' in pkg.dependencies) {
-    delete pkg.dependencies['@dietrichgebert/ponytail'];
-    console.log('  [migrate] dropped separate @dietrichgebert/ponytail dependency (now bundled with tersio)');
-  }
   if (!(PACKAGE_NAME in pkg.dependencies)) pkg.dependencies[PACKAGE_NAME] = `^${PACKAGE_VERSION}`;
+  // npm resolves the *published* tersio, whose range can lag this tree; the override is what reaches the loaded copy.
+  const localSpec = await bundledPonytailSpec();
+  if (localSpec !== null) {
+    if (pkg.dependencies['@dietrichgebert/ponytail'] !== localSpec) pkg.dependencies['@dietrichgebert/ponytail'] = localSpec;
+    if (ponytailOverride(pkg) !== localSpec) {
+      pkg.overrides = { ...(typeof pkg.overrides === 'object' && pkg.overrides !== null ? pkg.overrides as Record<string, string> : {}), '@dietrichgebert/ponytail': localSpec };
+      const note = 'forced with overrides, so the nested copy is dropped';
+      if (dryRun) sayTagged(`  [dry-run] would pin @dietrichgebert/ponytail → ${localSpec} (${note})`);
+      else console.log(`  [pin] @dietrichgebert/ponytail → ${localSpec} (${note})`);
+    }
+  }
   if (dryRun) {
     console.log('  [dry-run] would run: npm install --no-audit --no-fund (in plugins dir)');
     return;
@@ -204,9 +311,39 @@ async function fixPonytail(pluginsDir: string): Promise<void> {
   });
 }
 
+/** The decisive line of a failed command, so one [warn] line carries the reason. */
+function shortError(e: unknown): string {
+  return (((e as Error & { stderr?: string }).stderr) || (e as Error).message || '').trim().slice(0, 200);
+}
+
 async function fixCli(): Promise<void> {
   console.log('  Doctor --fix: updating CLI + add-ons');
   await runLatestUpdate();
+}
+
+/** OpenCode's manager can lose its daemonized serve process, so `stop` and `restart` cannot reach it: kill the orphan by pid, then start the service again. */
+async function fixOpencodeService(): Promise<void> {
+  const orphans = serviceOrphanPids();
+  if (orphans.length === 0) {
+    sayTagged('  [skip] no orphaned OpenCode serve process; the service answers');
+    return;
+  }
+  for (const pid of orphans) {
+    if (dryRun) { sayTagged(`  [dry-run] would stop the orphaned serve process (pid ${pid})`); continue; }
+    try {
+      process.kill(Number(pid), 'SIGTERM');
+      sayTagged(`  [ok] stopped the orphaned serve process (pid ${pid})`);
+    } catch (e) {
+      sayTagged(`  [warn] pid ${pid} already gone: ${shortError(e)}`);
+    }
+  }
+  if (dryRun) return;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
+  if (!bin) { sayTagged('  [warn] opencode not found on PATH; start it with `opencode service start`'); return; }
+  await execNetwork('Starting the OpenCode service', bin, ['service', 'start'], { timeout: 60000 }).catch((e) => {
+    throw new Error(`service start failed: ${shortError(e)}`);
+  });
 }
 
 async function runDoctorRepairs(targets: FixRequest[]): Promise<string[]> {
@@ -228,6 +365,7 @@ async function runDoctorRepairs(targets: FixRequest[]): Promise<string[]> {
   if (want('rtk')) await attempt('rtk', () => fixRtk(BUN_BIN_DIR));
   if (want('ponytail')) await attempt('ponytail', () => fixPonytail(OMP_PLUGINS_DIR));
   if (want('cli')) await attempt('cli', fixCli);
+  if (want('service')) await attempt('opencode service', fixOpencodeService);
   return failed;
 }
 

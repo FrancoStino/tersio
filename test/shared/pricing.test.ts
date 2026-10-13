@@ -32,7 +32,6 @@ test("priceFor reports unknown without a cache, live when cached", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-prices-"));
   const prev = setEnv({ TERSIO_PRICES_FILE: path.join(dir, "missing.json") });
   try {
-    // No cache: every model is unknown, default-priced, honestly flagged.
     expect(priceFor("claude-sonnet-5").known).toBe(false);
     expect(priceFor("claude-sonnet-5").live).toBe(false);
     expect(priceFor("some-future-model-99").known).toBe(false);
@@ -177,8 +176,6 @@ test("the space-bunny aliases resolve to one free model", () => {
   }
 });
 
-// --- tiers, provider alignment, and the operator's override -----------------
-
 /** A feed shaped like LiteLLM's: one model keyed under two providers at different rates. */
 function twoProviderFeed(): { fetchedAt: number; exact: Record<string, [number, number, number, number]> } {
   return {
@@ -218,9 +215,7 @@ test("a bare tail under another provider reads tier tail, not exact", () => {
 
 test("a differently cased id still reads exact, because the check folds case", () => {
   withFeed(() => {
-    // The verbatim lookup tries the id and its lowercase form, so a case difference is not a
-    // guess. This is also why a separate provider-segment tier would be unreachable: a key under
-    // the id's own provider with the id's own tail is the id itself.
+    // The lookup folds case, so a case difference is not a guess; a provider-segment tier would be unreachable.
     const hit = priceFor("opencode-zen/Muse-Spark-1.3-Contributor");
     expect(hit.tier).toBe("exact");
     expect(hit.price.input).toBe(2);
@@ -268,8 +263,7 @@ test("the override file wins over the feed, exactly and by wildcard", () => {
 });
 
 test("editing the override takes effect without a feed refresh", () => {
-  // The model memo keys on the feed table alone, so an edit used to be invisible until the next
-  // refresh. Both directions are pinned here.
+  // The model memo keys on the feed table alone, so an override edit was invisible until the next refresh.
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-override-"));
   const prev = setEnv({
     TERSIO_PRICES_FILE: path.join(dir, "prices.json"),

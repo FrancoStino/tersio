@@ -149,6 +149,9 @@ export function displayModel(m: string): string {
   if (vendor.name === "Other") return segs.length > 1 ? `${words(segs[segs.length - 2])} - ${pretty}` : pretty;
   const claude = pretty.match(/^claude[-_](.+)$/i);
   if (vendor.name === "Anthropic" && claude) return `Anthropic - Claude - ${claude[1]}`;
+  // DeepSeek spells itself with a capital S, so the label says it and drops the repeated head.
+  const seek = pretty.match(/^deepseek[-_](.+)$/i);
+  if (vendor.name === "DeepSeek" && seek) return `DeepSeek - ${seek[1]}`;
   if (pretty.toLowerCase().startsWith(vendor.name.toLowerCase())) return pretty;
   return `${vendor.name} - ${pretty}`;
 }
@@ -164,7 +167,7 @@ const PROVIDERS: Array<[RegExp, string, string, string]> = [
   [/inclusionai|ling-/i, "InclusionAI", "inclusionai", "#78716c"],
   [/minimax/i, "MiniMax", "minimax", "#e11d48"],
   [/grok|xai/i, "xAI", "x", "#000"],
-  [/stealth|space-bunny/i, "Stealth", "stealth", "#1f2937"],
+  [/stealth|space-bunny|big-pickle/i, "Stealth", "stealth", "#1f2937"],
   [/openai|codex|gpt-|o1/i, "OpenAI", "openai", "#fff"],
   [/muse|llama/i, "Meta", "meta", "#0082fb"],
   [/deepseek/i, "DeepSeek", "deepseek", "#4d6bfe"],
@@ -175,7 +178,7 @@ const PROVIDERS: Array<[RegExp, string, string, string]> = [
   [/^\s*k3\s*$/i, "Moonshot", "kimi", "#a855f7"],
   [/step[-_]?\d/i, "StepFun", "stepfun", "#0ea5e9"],
   [/typesafe\/jev/i, "Typesafe", "typesafe", "#22c55e"],
-  [/meituan|longcat/i, "Meituan", "", "#facc15"],
+  [/meituan|longcat/i, "Meituan", "meituan", "#ffd100"],
   [/poolside|laguna/i, "Poolside", "poolside", "#4137ff"],
   [/tencent|hy3/i, "Tencent", "", "#0052d9"],
   [/mistral/i, "Mistral", "mistralai", "#ff7000"],
@@ -209,11 +212,7 @@ export function hostMeta(host?: string): HostMeta {
 
 export const PALETTE = ["#34d399", "#818cf8", "#22d3ee", "#fbbf24", "#f472b6", "#a78bfa", "#fb923c", "#2dd4bf"];
 
-/**
- * Provider marks name the routing service, never the model author. A gateway with its own brand
- * carries that brand: it names the service that served the request. A gateway with no mark of its
- * own keeps a monogram, because borrowing a vendor's logo would name the wrong company.
- */
+/** Marks name the routing service, never the model author; one without a brand keeps a monogram, not a wrong logo. */
 const PROVIDER_MARKS: Record<string, string> = {
   "amd-radeon-cloud-cn": "amd",
   "kimi-code": "kimi",
@@ -227,7 +226,6 @@ const PROVIDER_MARKS: Record<string, string> = {
   groq: "groq",
   poolside: "poolside",
   cerebras: "cerebras",
-  // A gateway's own brand is still its own: it names the service that served the request.
   openrouter: "openrouter",
   opencode: "opencode",
   "opencode-zen": "opencode",
@@ -237,6 +235,17 @@ const PROVIDER_MARKS: Record<string, string> = {
   magpie: "magpie",
   "gmi-cloud": "gmicloud",
   "charm-hyper": "charmhyper",
+  // DeepSeek's own first-party endpoints, which serve its own models.
+  deepseek: "deepseek",
+  "deepseek-web": "deepseek",
+  // WorkBuddy is Tencent's agent product; the mark names that service, not the model it routes.
+  "workbuddy-ai": "workbuddy",
+  workbuddy: "workbuddy",
+  // Trae's own client, which routes other vendors' models through its own gateway.
+  "trae-global": "trae",
+  trae: "trae",
+  // Kiro is AWS's own editor: its own mark, not the AWS cloud mark it ships under.
+  kiro: "kiro",
 };
 
 export interface ProviderMeta {
@@ -248,15 +257,11 @@ export function providerMeta(provider: string): ProviderMeta {
   return { slug: PROVIDER_MARKS[provider] ?? "" };
 }
 
-/**
- * Which agent recorded a session, read from where the transcript lives. Every row in the agent
- * databases was written by agent, so a session under another harness's own directory would only
- * appear if that harness shared this database. The path is the only host marker the row carries.
- * The id matches the brand-art switch in `AgentLogo`, so a host never has to be guessed twice.
- */
+/** The agent that recorded a session, from the transcript path, the row's only host marker; matches `AgentLogo`. */
 export function hostOfSession(sessionFile: string): { label: string; host: "omp" | "pi" | "opencode" | "unknown" } {
   const file = String(sessionFile ?? "");
-  if (/\.agent\/agent\/sessions\//.test(file)) return { label: "OMP", host: "omp" };
+  // omp writes `~/.omp/agent/sessions/`; the older `.agent/agent/sessions/` spelling still counts.
+  if (/\/\.(?:omp|agent)\/agent\/sessions\//.test(file)) return { label: "OMP", host: "omp" };
   if (/\.pi\/agent\/sessions\//.test(file)) return { label: "Pi", host: "pi" };
   if (/(config\/opencode|local\/share\/opencode)\/agent\/sessions\//.test(file)) return { label: "OpenCode", host: "opencode" };
   return { label: "OMP", host: "unknown" };
@@ -402,36 +407,28 @@ export function relAgePrecise(ts: number): string {
   return `${Math.floor(s / 86400)}d ${String(Math.floor((s % 86400) / 3600)).padStart(2, "0")}h ago`;
 }
 
-// ---------------------------------------------------------------- agent-stats helpers
+// agent-stats helpers
 
 /** A rate as a percentage, one decimal: 0.9383 reads as 93.8%. */
 export function pct(v: number, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`;
 }
 
-/**
- * A bucket read as a word, so a description can name it. The same three sizes drive every page.
- */
+/** A bucket read as a word, so a description can name it. */
 export function bucketWord(bucketMs: number): string {
   if (bucketMs < 3_600_000) return "5 minutes";
   if (bucketMs < 86_400_000) return "hour";
   return "day";
 }
 
-/**
- * A severity tone for an error rate, with the omp stats thresholds: one percent is where a rate
- * stops being noise, and five percent is where it stops being acceptable.
- */
+/** Severity tone for an error rate: 1% is where it stops being noise, 5% where it stops being acceptable. */
 export function errorRateTone(rate: number): "ok" | "warn" | "bad" {
   if (rate >= 0.05) return "bad";
   if (rate >= 0.01) return "warn";
   return "ok";
 }
 
-/**
- * A bucket label. Day buckets read in UTC, matching the reference dashboards, so two machines
- * never disagree about which day a request landed in.
- */
+/** A bucket label read in UTC, so two machines never disagree about which day a request landed in. */
 export function tsLabel(ts: number, bucketMs: number): string {
   const d = new Date(ts);
   if (bucketMs <= 3_600_000) {
@@ -462,7 +459,6 @@ export function median(values: Array<number | null | undefined>): number {
   return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
 }
 
-/** Per-second throughput from an output-token count and a duration. */
 export function tokensPerSecond(outputTokens: number, ms: number | null): number {
   return ms && ms > 0 ? outputTokens / (ms / 1000) : 0;
 }

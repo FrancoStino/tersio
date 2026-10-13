@@ -167,8 +167,7 @@ function ModelDetail({
     { key: "ttft", label: "TTFT", color: OTHER_COLOR, axis: "right" },
   ];
   const shown = perf.filter((spec) => !hidden.has(spec.key));
-  // A bucket with neither timing value would draw an empty frame, so the chart only counts the
-  // buckets that carry a sample.
+  // A bucket with neither timing value would draw an empty frame, so only buckets with a sample are plotted.
   const plotted = points.filter((point) => point.avgTokensPerSecond !== null || point.avgTtftMs !== null);
   const data = plotted.map((point) => ({ ts: point.ts, tps: point.avgTokensPerSecond, ttft: point.avgTtftMs === null ? null : point.avgTtftMs / 1000 }));
   const fact = (label: string, value: React.ReactNode, hint?: string, icon?: string): React.ReactNode => (

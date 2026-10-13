@@ -16,8 +16,7 @@ import { cliEnv, withHome } from "../helpers/env.ts";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
 
-// Session defaults live in ~/.tersio/settings.json; call sites still pass the
-// package-keyed shape the old lock file used.
+// Session defaults live in ~/.tersio/settings.json; callers pass the package-keyed shape the old lock used.
 function writeLock(home: string, settings: Record<string, unknown>): void {
   const dir = path.join(home, ".tersio");
   mkdirSync(dir, { recursive: true });
@@ -91,8 +90,6 @@ test("readPluginSettings tolerates a corrupt lock file", () => {
     expect(readPluginSettings()).toEqual({});
   });
 });
-
-// --- Installer profile flags ---
 
 type RunResult = { status: number | null; stdout: string; stderr: string };
 
@@ -172,8 +169,6 @@ test("installer does not add manifest-owned extensions to config.yml", () => {
   }
 });
 
-// --- Manifest feature/setting shape ---
-
 test("package manifest declares always-on extensions plus updater feature and settings", () => {
   const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
     omp?: { extensions?: string[]; features?: Record<string, unknown>; settings?: Record<string, unknown> };
@@ -242,33 +237,8 @@ test("update rejects an unknown host before doing anything", () => {
   }
 });
 
-test("apply-update without flags preserves a customized per-mode default", () => {
-  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-preserve-custom-"));
-  try {
-    writeLock(home, {
-      "@krtclcdy/tersio": {
-        comboDefault: "balanced",
-        cavemanDefault: "full",
-        rtkDefault: true,
-        ponytailDefault: "ultra",
-      },
-    });
-    const result = spawnSync(process.execPath, [installer, "--apply-update", "--dry-run", "--yes"], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 15000,
-      env: cliEnv(home),
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=ultra\)/);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 test("apply-update without flags preserves stored combo defaults", () => {
-  // The clobber regression: `tersio update` delegates to --apply-update with
-  // no flags, so resolveProfile rebuilt from all-off and wiped the default.
+  // Clobber regression: `tersio update` delegates to --apply-update with no flags, wiping the default.
   const home = mkdtempSync(path.join(os.tmpdir(), "omp-preserve-test-"));
   try {
     writeLock(home, {

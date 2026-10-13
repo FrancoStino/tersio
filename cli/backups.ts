@@ -1,7 +1,4 @@
-// Data snapshots: what tersio keeps, where the copies live, and how one is put back.
-//
-// A snapshot is a directory with a manifest, not a single file, so one copy holds the whole set.
-// Older installs wrote a lone `usage-<stamp>.db`; those still list and restore, over the ledger alone.
+// Data snapshots: a manifest directory, not one file; older lone `usage-<stamp>.db` installs still restore.
 
 import { promises as fs } from 'node:fs';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -15,18 +12,15 @@ import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { resetMarkerPath } from '../extensions/shared/usage-ledger.ts';
 import { tersioHome } from '../extensions/shared/utils.ts';
 
-/** Snapshots kept on disk; the oldest is pruned first. Six keeps the list past one screen, so
- *  the pane scrolls instead of showing the whole history at once. */
+/** Snapshots kept on disk, oldest pruned first; six fills past one screen so the pane scrolls. */
 export const BACKUP_KEEP = 6;
 
-/** One file a snapshot can hold, with where it came from. */
 export interface BackupFile {
   label: string;
   source: string;
   bytes: number;
 }
 
-/** One snapshot on disk, with the files it holds. */
 export interface DataBackup {
   name: string;
   path: string;
@@ -37,12 +31,10 @@ export interface DataBackup {
   legacy: boolean;
 }
 
-/** Where a snapshot's files live. */
 export function backupDir(): string {
   return path.join(tersioHome(), 'backups');
 }
 
-/** A snapshot directory's manifest, read back out with its files. */
 function manifestPath(dir: string): string {
   return path.join(dir, 'manifest.json');
 }
@@ -114,7 +106,6 @@ export function listDataBackups(): DataBackup[] {
   return [...dirs, ...legacy].toSorted((a, b) => b.mtime - a.mtime);
 }
 
-/** The files a snapshot directory holds, read from its manifest. */
 function readManifest(dir: string): BackupFile[] {
   try {
     const raw = JSON.parse(readFileSync(manifestPath(dir), 'utf8')) as unknown;
@@ -149,7 +140,7 @@ function checkpointLedger(): void {
   }
 }
 
-/** Take a snapshot now: one copy of every file that exists, under a stamp directory, then keep only the newest {@link BACKUP_KEEP}. */
+/** Take a snapshot: one copy of every existing file under a stamp dir, keeping the newest {@link BACKUP_KEEP}. */
 export async function createDataBackup(): Promise<DataBackup> {
   // The stamp keeps milliseconds: two snapshots in the same second must not land in one directory.
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '');
@@ -183,7 +174,7 @@ function resolveBackup(name: string): DataBackup | null {
   return found ?? null;
 }
 
-/** Put a snapshot back: every file it holds is copied over its live source. A file it lacks is left alone, so a restore never deletes what it does not carry. */
+/** Restore: files the snapshot holds overwrite their live source; files it lacks stay put, so nothing is lost. */
 export async function restoreDataBackup(name: string): Promise<boolean> {
   const found = resolveBackup(name);
   if (!found) return false;

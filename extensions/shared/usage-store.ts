@@ -1,4 +1,4 @@
-// extensions/shared/usage-store.ts — tersio-owned usage.db. A cache of the live parse, never a fork; missing sqlite3 → sync false / read null.
+// usage-store.ts — tersio-owned usage.db. A cache of the live parse, not a fork; no sqlite3 → sync false / read null.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,6 +19,7 @@ import {
   opencodeDbPath,
   opencodeSessionsDir,
   newSessionAccum,
+  opencodeToolNames,
   readOpencodeDbRows,
   sessionsDirs,
   walkJsonl,
@@ -74,9 +75,12 @@ function query(db: string, sql: string): string[][] {
 }
 
 // Bump on a parse change: unchanged transcripts are never re-read.
-const PARSER_VERSION = '12';
+const PARSER_VERSION = '13';
 
-// A re-parse that keeps less than half the rows means transcripts vanished mid-migration; the backup is restored instead of publishing the loss.
+/** OpenCode rows gained tool names; re-read by id, since a PARSER_VERSION bump drops rotated history. */
+const OPENCODE_TOOLS_VERSION = '1';
+
+// A re-parse keeping under half the rows means transcripts vanished mid-migration; the backup is restored instead.
 const REPARSE_GUARD_RATIO = 0.5;
 
 let guardReport: string | null = null;
@@ -90,19 +94,15 @@ const SCHEMA_SQL =
   `CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);` +
   `CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);` +
   `CREATE TABLE IF NOT EXISTS messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
-  ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
+  ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
   ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);` +
-  // Every read filters or orders by one of these three. Without them each sync and each read
-  // walks the whole table: the watermark scan, the day buckets, and the recent list all scan.
+  // Every read filters or orders by one of these three; without them each sync and read scans the table.
   `CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_id);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_t ON messages(t);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_h_t ON messages(h, t);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);`;
 
-/**
- * WAL plus a checkpoint at the end of a sync: the write path stops paying an fsync per commit,
- * and the main file still holds every row, so a backup that copies only usage.db loses nothing.
- */
+/** WAL + a checkpoint: the write path avoids an fsync per commit, and usage.db alone holds every row. */
 function pragmas(db: string): void {
   run(db,
     'PRAGMA journal_mode=WAL;' +
@@ -122,7 +122,7 @@ function storedParserVersion(db: string): string | null {
   }
 }
 
-// A store written by a newer tersio: this code has no forward migration, so a re-parse would swap rotated history for whatever transcripts are left.
+// A store written by a newer tersio: no forward migration, so a re-parse would swap rotated history for what is left.
 function isDowngrade(stored: string | null): boolean {
   if (stored === null) return false;
   const storedNum = Number(stored);
@@ -150,6 +150,16 @@ function newestOpencodeMs(db: string): number | null {
   }
 }
 
+/** Whether the OpenCode tools backfill ran; unfilled rows stay empty, so this widens the scan once. */
+function opencodeToolsBackfilled(db: string): boolean {
+  try {
+    const rows = query(db, `SELECT v FROM meta WHERE k='opencode_tools';`);
+    return rows.length > 0 && rows[0][0] === OPENCODE_TOOLS_VERSION;
+  } catch {
+    return false;
+  }
+}
+
 // Same pre-migration state as the newest backup: another copy churns the 3-slot rotation for nothing.
 function newestBackupMatches(stored: string | null): boolean {
   if (stored === null) return false;
@@ -163,7 +173,7 @@ function newestBackupMatches(stored: string | null): boolean {
   }
 }
 
-// v9 shape (path-keyed rows) migrates in place with zero re-parse, so history survives even when transcripts are gone.
+// v9 shape (path-keyed rows) migrates in place with zero re-parse, so history survives even without transcripts.
 function canMigrateInPlace(db: string): boolean {
   try {
     const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
@@ -181,7 +191,7 @@ function migrateInPlace(db: string, preCount: number): boolean {
       `CREATE TABLE files_new (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);` +
       `INSERT INTO files_new (path, mtime, size) SELECT path, mtime, size FROM files;` +
       `CREATE TABLE messages_new (file_id INTEGER NOT NULL REFERENCES files_new(id), t REAL, model TEXT NOT NULL,` +
-      ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
+      ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
       ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);` +
       `INSERT INTO messages_new (file_id, ${cols}) SELECT (SELECT id FROM files_new WHERE files_new.path = messages.file), ${cols} FROM messages;` +
       `DROP TABLE messages;DROP TABLE files;` +
@@ -199,9 +209,7 @@ function migrateInPlace(db: string, preCount: number): boolean {
   }
 }
 
-// v12 shape gains the agent kind (`main`, `subagent`) with a bare ALTER for the two names the
-// store already holds. No rows move and no re-parse is forced, so the existing rows read
-// `NULL` for it: a report then shows them under the main agent only, and new rows carry it.
+// v12 adds the agent kind with a bare ALTER; existing rows read NULL and report under the main agent.
 function canAddAgent(db: string): boolean {
   try {
     const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
@@ -211,8 +219,6 @@ function canAddAgent(db: string): boolean {
   }
 }
 
-// v12 shape gains the agent kind (`main`, `subagent`) with a bare ALTER: no rows move, so no
-// re-parse is forced. Existing rows read NULL, which a report folds under the main agent.
 function addAgentColumn(db: string): boolean {
   try {
     run(db, `ALTER TABLE messages ADD COLUMN a TEXT;`);
@@ -220,6 +226,45 @@ function addAgentColumn(db: string): boolean {
     return false;
   }
   return true;
+}
+
+// v13 shape gains the first-token latency with a bare ALTER, so no row moves and no wipe runs.
+function canAddTtft(db: string): boolean {
+  try {
+    const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
+    return names.includes('file_id') && !names.includes('tf');
+  } catch {
+    return false;
+  }
+}
+
+// The column is additive, and a rotated transcript cannot be re-parsed, so the ALTER precedes the backfill.
+function addTtftColumn(db: string): boolean {
+  try {
+    run(db, `ALTER TABLE messages ADD COLUMN tf REAL;`);
+  } catch {
+    return false;
+  }
+  return !canAddTtft(db);
+}
+
+/** First-token-latency marker; unchanged transcripts are never revisited, so old stores stay null. */
+const TTFT_VERSION = '1';
+
+function ttftBackfilled(db: string): boolean {
+  try {
+    const rows = query(db, `SELECT v FROM meta WHERE k='ttft_backfill';`);
+    return rows.length > 0 && rows[0][0] === TTFT_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+/** Clears ledger mtimes so every transcript re-reads; synthetic `db#row-id` OpenCode keys stay untouched. */
+function markTranscriptsDirty(db: string): void {
+  try {
+    run(db, `UPDATE files SET mtime = 0 WHERE path NOT LIKE '%#%';`);
+  } catch { /* a store with no files table yet, or a read-only file: nothing to backfill */ }
 }
 
 // v10 shape gains the message id with a bare ALTER: no rows move, so no re-parse and no guard trip.
@@ -268,10 +313,14 @@ function ensureSchema(db: string, forceWipe: boolean): void {
       run(db, `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
       return;
     }
-    // The agent column is additive on the current shape: adding it keeps every row, and the
-    // unchanged transcripts that already hold their rows simply read NULL until a re-parse.
+    // The agent column is additive: every row survives and unchanged transcripts read NULL until a re-parse.
     if (stored !== null && canAddAgent(db) && addAgentColumn(db)) {
-      run(db, `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
+      run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
+      return;
+    }
+    // The ttft column is additive too; its values come from the backfill in `syncUsageDb`.
+    if (stored !== null && canAddTtft(db) && addTtftColumn(db)) {
+      run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
       return;
     }
     run(db, `DROP TABLE IF EXISTS messages;DROP TABLE IF EXISTS files;` + SCHEMA_SQL +
@@ -381,13 +430,15 @@ function readFiles(db: string): Record<string, { mtime: number; size: number }> 
   return known;
 }
 
-// One parsed assistant message, as stored. `t` is null when the source row has no usable timestamp: counted, but skipped in the recent list.
+// One parsed assistant message. `t` is null with no usable timestamp: still counted, but skipped in the recent list.
 interface StoredRow {
   t: number | null;
   model: string;
   i: number;
   o: number;
   d: number | undefined;
+  /** First-token latency in ms. Only omp records it; the rest read null rather than a guess. */
+  tf: number | undefined;
   cr: number;
   cw: number;
   usd: number | undefined;
@@ -401,22 +452,27 @@ interface StoredRow {
   id?: string;
 }
 
-// OpenCode rows carry no status, code, note, tool list, or subagent marker: only tokens and the
-// msg id. They record as the main agent, so a store never holds a NULL kind.
-function opencodeStoredRow(oc: NonNullable<ReturnType<typeof classifyOpencodeMessage>>, host: string | undefined, id: string | undefined): StoredRow {
+// OpenCode rows carry only tokens, msg id, and tools; they record as the main agent, so no NULL kind.
+function opencodeStoredRow(
+  oc: NonNullable<ReturnType<typeof classifyOpencodeMessage>>,
+  host: string | undefined,
+  id: string | undefined,
+  tools: string[],
+): StoredRow {
   return {
     t: oc.ms ?? null,
     model: canonicalModelId(oc.model),
     i: intOf(oc.usage.input),
     o: intOf(oc.usage.output),
     d: durOf(oc.durMs),
+    tf: durOf(oc.ttftMs),
     cr: intOf(oc.usage.cacheRead),
     cw: intOf(oc.usage.cacheWrite),
     usd: costOf(oc.usage),
     st: 'completed',
     code: undefined,
     note: undefined,
-    tools: [],
+    tools,
     host,
     agent: 'main',
     id,
@@ -427,11 +483,14 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
   const rows: StoredRow[] = [];
   // Guarded: a JSONL transcript must fall through, not abort the sync.
   let oc: ReturnType<typeof classifyOpencodeMessage> = null;
-  try { oc = classifyOpencodeMessage(JSON.parse(text) as OpencodeMessage); } catch { /* JSONL */ }
-  if (oc) {
-    rows.push(opencodeStoredRow(oc, host, file ? path.basename(file).replace(/\.[^.]+$/, '') : undefined));
-    return rows;
-  }
+  try {
+    const message = JSON.parse(text) as OpencodeMessage;
+    oc = classifyOpencodeMessage(message);
+    if (oc) {
+      rows.push(opencodeStoredRow(oc, host, file ? path.basename(file).replace(/\.[^.]+$/, '') : undefined, opencodeToolNames(message)));
+      return rows;
+    }
+  } catch { /* JSONL */ }
   let codexProvider: string | null = null;
   let codexModel: string | null = null;
   for (const line of text.split('\n')) {
@@ -460,6 +519,7 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
           i: intOf(usage.input),
           o: intOf(usage.output),
           d: undefined,
+          tf: undefined,
           cr: intOf(usage.cacheRead),
           cw: intOf(usage.cacheWrite),
           usd: costOf(usage),
@@ -484,6 +544,7 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
         i: intOf(usage.input),
         o: intOf(usage.output),
         d: dur,
+        tf: durOf(parsed.ttftMs),
         cr: intOf(usage.cacheRead),
         cw: intOf(usage.cacheWrite),
         usd: costOf(usage),
@@ -501,13 +562,13 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
 }
 
 function insertSql(file: string, r: StoredRow): string {
-  return `INSERT INTO messages (file_id, t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, a, id) VALUES (` +
+  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id) VALUES (` +
     `(SELECT id FROM files WHERE path=${esc(file)}),${r.t === null ? 'NULL' : String(r.t)},${esc(r.model)},${r.i},${r.o},` +
-    `${nullNum(r.d)},${r.cr},${r.cw},${nullNum(r.usd)},${esc(r.st)},` +
+    `${nullNum(r.d)},${nullNum(r.tf)},${r.cr},${r.cw},${nullNum(r.usd)},${esc(r.st)},` +
     `${nullNum(r.code)},${nullStr(r.note)},${esc(JSON.stringify(r.tools))},${nullStr(r.host)},${nullStr(r.agent ?? undefined)},${nullStr(r.id)});`;
 }
 
-// Unchanged transcripts are skipped via mtime+size; rows for deleted ones are kept so rotation never erases history. False when sqlite3 is unavailable.
+// Unchanged transcripts are skipped via mtime+size; rows for deleted ones are kept so rotation never erases history.
 export function syncUsageDb(): boolean {
   let db: string;
   guardReport = null;
@@ -524,6 +585,8 @@ export function syncUsageDb(): boolean {
     if (downgrade) guardReport = `store was written by a newer tersio (parser ${stored} > ${PARSER_VERSION}); kept its rows and skipped the re-parse`;
     if (migrated && !forced) preWipe = countMessages(db);
     ensureSchema(db, forced);
+    // One rewrite so the additive column's NULL rows gain latency; runs while the marker is absent.
+    if (!downgrade && !ttftBackfilled(db)) markTranscriptsDirty(db);
     maybeScheduledBackup(db);
   } catch {
     return false;
@@ -545,8 +608,10 @@ export function syncUsageDb(): boolean {
   const ocDbPath = opencodeDbPath();
   if (process.env.TERSIO_SESSIONS_DIR === undefined || process.env.TERSIO_OPENCODE_DB !== undefined) {
     const newest = newestOpencodeMs(db);
+    // A store predating the tool names re-reads the whole table once; the marker closes the window.
+    const since = newest === null || !opencodeToolsBackfilled(db) ? 0 : newest - OPENCODE_DB_OVERLAP_MS;
     if (newest !== null || fs.existsSync(ocDbPath)) {
-      ocDbRows.push(...readOpencodeDbRows(ocDbPath, newest === null ? 0 : newest - OPENCODE_DB_OVERLAP_MS));
+      ocDbRows.push(...readOpencodeDbRows(ocDbPath, since));
     }
   }
   const known = readFiles(db);
@@ -564,6 +629,7 @@ export function syncUsageDb(): boolean {
     const prev = known[file];
     if (!prev || prev.mtime !== entry.mtime || prev.size !== entry.size) changed.push(file);
   }
+  // `ocDbRows` is non-empty whenever the backfill window is open, so this never skips it.
   if (!changed.length && !ocDbRows.length) return true;
   const chunks: string[] = [];
   let chunkBytes = 0;
@@ -609,13 +675,21 @@ export function syncUsageDb(): boolean {
         `INSERT INTO files (path, mtime, size) VALUES (${esc(key)},${row.created},0)` +
         ` ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime;` +
         `DELETE FROM messages WHERE file_id=(SELECT id FROM files WHERE path=${esc(key)});` +
-        insertSql(key, opencodeStoredRow(parsed, 'opencode', row.id)),
+        insertSql(key, opencodeStoredRow(parsed, 'opencode', row.id, opencodeToolNames(row.row, row.tools))),
       )) return false;
     }
   } catch {
     return false;
   }
   if (!push(`INSERT OR REPLACE INTO meta (k, v) VALUES ('last_sync',${esc(String(Date.now()))});`)) return false;
+  // Only once the rows are written, so a sync that fails midway widens the scan again.
+  if (ocDbRows.length > 0) {
+    if (!push(`INSERT OR REPLACE INTO meta (k, v) VALUES ('opencode_tools','${OPENCODE_TOOLS_VERSION}');`)) return false;
+  }
+  // Set only after the rewrite commits: a crash mid-backfill leaves mtimes cleared and the marker absent.
+  if (changed.length > 0) {
+    if (!push(`INSERT OR REPLACE INTO meta (k, v) VALUES ('ttft_backfill','${TTFT_VERSION}');`)) return false;
+  }
   if (!flush()) return false;
   if (preWipe > 0) {
     const kept = countMessages(db);
@@ -645,17 +719,17 @@ export function readUsageDb(): StoredUsage | null {
   }
   let rows: string[][];
   try {
-    // The `tools` column is the widest by far and the common case is the literal `[]`, so it is
-    // read as one column and skipped in JS rather than parsed per row. A store written before
-    // the agent column does not hold it, so the row is read without that column.
+    // The wide `tools` column is read as one string and skipped in JS; a pre-agent store is read without it.
     const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
     const agentCol = names.includes('a') ? 'a' : "''";
-    rows = query(db, `SELECT t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, ${agentCol}, id FROM messages;`);
+    // A store predating first-token latency has no `tf` column; read NULL so the row still loads.
+    const tfCol = names.includes('tf') ? 'tf' : 'NULL';
+    rows = query(db, `SELECT t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, ${agentCol}, id, ${tfCol} FROM messages;`);
   } catch {
     return null;
   }
   const accum = newSessionAccum();
-  for (const [t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, a, id] of rows) {
+  for (const [t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, a, id, tf] of rows) {
     const ts = t === '' ? undefined : Number(t);
     let toolNames: string[] = [];
     if (tools && tools !== '[]' && tools !== '') {
@@ -689,6 +763,7 @@ export function readUsageDb(): StoredUsage | null {
       h === '' ? undefined : h,
       id === '' || id === undefined ? undefined : id,
       a === '' ? undefined : a,
+      tf === undefined || tf === '' ? undefined : Number(tf),
     );
   }
   accum.recent.sort((a, b) => b.t - a.t);

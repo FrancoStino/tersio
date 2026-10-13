@@ -1,4 +1,4 @@
-// cli/hosts.ts — the agent hosts Tersio installs into, and what is on disk. One detector, shared by the doctor and both menus, so they cannot disagree.
+// cli/hosts.ts — agent hosts Tersio installs into, and what is on disk. One detector shared by doctor and menus.
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { HOME, OMP_PLUGINS_DIR, PACKAGE_NAME, PACKAGE_VERSION } from './common.ts';
@@ -48,6 +48,24 @@ function piSettingsFile(agentDir = piAgentDir()): string {
   return path.join(agentDir, 'settings.json');
 }
 
+// pi installs Ponytail as a local path package, so settings.json names the loaded directory; the npm spec is older.
+export function piPonytailPackageDir(agentDir = piAgentDir()): string {
+  let packages: unknown[] = [];
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(piSettingsFile(agentDir), 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray((parsed as { packages?: unknown }).packages)) {
+      packages = (parsed as { packages: unknown[] }).packages;
+    }
+  } catch { /* no settings file, or unreadable */ }
+  for (const entry of packages) {
+    const source = typeof entry === 'string' ? entry : (entry as { source?: unknown } | null)?.source;
+    if (typeof source !== 'string') continue;
+    const trimmed = source.trim().replace(/[/\\]+$/, '');
+    if (path.isAbsolute(trimmed) && path.basename(trimmed) === 'ponytail') return trimmed;
+  }
+  return path.join(agentDir, 'npm', 'node_modules', '@dietrichgebert', 'ponytail');
+}
+
 function packageVersion(dir: string): string | null {
   try {
     const parsed = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) as { version?: unknown };
@@ -57,7 +75,7 @@ function packageVersion(dir: string): string | null {
   }
 }
 
-// The tersio package pi declared in its own settings.json, or null. pi identifies a source by name, so an npm spec, git URL, or path all count.
+// The tersio package pi declared in settings.json, or null; pi names sources, so npm spec, git URL or path count.
 export function piTersioSource(agentDir = piAgentDir()): string | null {
   let settings: { packages?: unknown };
   try {
@@ -77,7 +95,6 @@ export function piTersioSource(agentDir = piAgentDir()): string | null {
   return null;
 }
 
-// The hosts we install into, and the commands that add and remove each.
 const HOSTS: Array<Omit<HostEntry, 'installed' | 'via' | 'declared' | 'version' | 'dir'>> = [
   { id: 'omp', label: 'Oh My Pi', bin: 'omp', installCmd: `omp plugin install ${PACKAGE_NAME}`, removeCmd: `omp plugin remove ${PACKAGE_NAME}` },
   { id: 'pi', label: 'Pi', bin: 'pi', installCmd: `pi install npm:${PACKAGE_NAME}`, removeCmd: `pi remove npm:${PACKAGE_NAME}` },
@@ -121,7 +138,7 @@ export function hostHint(host: HostEntry): string {
   return host.installCmd;
 }
 
-// `--host omp|pi` from raw argv; undefined when absent. Throws on an unknown value so the caller can exit(1) with the message.
+// `--host omp|pi` from raw argv, undefined when absent; throws on an unknown value so the caller exits(1).
 export function parseHostArg(argv: string[]): HostId | undefined {
   const i = argv.indexOf('--host');
   const raw = (i === -1 ? undefined : argv[i + 1]) ?? argv.find((a) => a.startsWith('--host='))?.slice('--host='.length);

@@ -51,8 +51,7 @@ function fakePi(entries: SessionEntry[] = []): TestPi {
   return {
     commands,
     handlers,
-    // Present `zod` marks this as the OMP host; without it the adapters treat
-    // the fake as pi and skip the shared events.
+    // Present `zod` marks this as the OMP host; without it the fake reads as pi and skips the shared events.
     zod: { z: { object: (shape) => shape, array: () => chain, string: () => chain } },
     setLabel() { },
     registerCommand(name, config) { commands.set(name, config.handler); },

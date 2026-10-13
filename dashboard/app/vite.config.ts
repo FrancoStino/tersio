@@ -12,15 +12,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // src/lib/carbon.ts reuses the CLI's EcoLogits port, so the dev server must
-  // be allowed to read above dashboard/app.
+  // src/lib/carbon.ts reuses the CLI's EcoLogits port, so the dev server must read above dashboard/app.
   server: {
     fs: {
       allow: [path.resolve(__dirname, "../..")],
     },
   },
-  // Tersio serves the bundle from an ephemeral 127.0.0.1 port and also
-  // exports a file:// snapshot: one self-contained html file, no /assets.
+  // Tersio serves on an ephemeral 127.0.0.1 port and exports a file:// snapshot: one self-contained html, no /assets.
   build: {
     outDir: path.resolve(__dirname, "../dist"),
     emptyOutDir: true,

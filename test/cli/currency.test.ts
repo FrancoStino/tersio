@@ -174,8 +174,7 @@ test("dashboard --export bakes the requested currency into data.json", () => {
   }
 });
 
-// The Dashboard cannot import CLI code, so each keeps an FX snapshot copy; a
-// drifted rate shows a price in one place and not the other.
+// The Dashboard cannot import CLI code, so each keeps an FX snapshot copy; a drift would price differently.
 test("the CLI and Dashboard FX snapshots agree", () => {
   expect(FX_SNAPSHOT).toEqual(FX_SNAPSHOT_RATES as unknown as Record<string, number>);
 });

@@ -1,12 +1,10 @@
-// extensions/shared/agent-stats.ts: read-only aggregate over the agent statistics databases.
-// Today that is omp's stats.db and agent.db, so the naming stays host-neutral. Every metric
-// matches @oh-my-pi/omp-stats: same SQL facts, same rules. Missing sqlite3 or a
-// missing table degrades to zeros, never to a thrown error.
+// Read-only aggregate over the usage store; missing sqlite3, table, or metric reads as zeros.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { SQLITE_READ_BUFFER } from './usage-ledger.ts';
+import { usageDbPath } from './usage-store.ts';
 
 export type RangeKey = '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
 
@@ -42,7 +40,7 @@ const VIEW_PARTS: Record<AgentView, readonly string[]> = {
   costs: ['overall', 'byModel', 'series', 'modelSeries'],
   // The Carbon page needs the same two facts as Costs: per-model output tokens and the mix.
   carbon: ['overall', 'byModel'],
-  requests: ['recent'],
+  requests: ['overall', 'recent'],
   errors: ['errors', 'overall', 'byModel', 'recent'],
   traces: ['traces'],
   tools: ['overall', 'tools'],
@@ -79,13 +77,90 @@ const TOOL_MODEL_LIMIT = 300;
 const SERIES_PROVIDERS = 8;
 const SERIES_MODELS = 12;
 
+/** The store every metric but subscription quota reads, kept in step by `tersio usage`. */
 export function statsDbPath(): string {
-  return process.env.TERSIO_AGENT_STATS_DB ?? path.join(os.homedir(), '.omp', 'stats.db');
+  return process.env.TERSIO_AGENT_STATS_DB ?? usageDbPath();
 }
 
+/** Quota snapshots. Only omp records these, so this stays omp's own database. */
 export function agentDbPath(): string {
   return process.env.TERSIO_AGENT_SESSIONS_DB ?? path.join(os.homedir(), '.omp', 'agent', 'agent.db');
 }
+
+/** The row shape every query groups by: a message joined to its file, since path and facts live apart. */
+const SOURCE = 'messages m JOIN files f ON f.id = m.file_id';
+
+/** The transcript path with any host-side row suffix removed, so one file groups as one session. */
+const FILE_KEY = `substr(f.path, 1, instr(f.path || '#', '#') - 1)`;
+
+/** Model-id spellings whose dashboard mark lives under another name; the first segment names the gateway. */
+const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  'opencode-zen': 'opencode',
+  'opencode-go': 'opencode',
+  'gmi-cloud': 'gmicloud',
+  'charm-hyper': 'charmhyper',
+  'kimi-code': 'kimi',
+  'openai-codex': 'openai',
+  'github-copilot': 'githubcopilot',
+  'ollama-cloud': 'ollama',
+  'amd-radeon-cloud-cn': 'amd',
+  'google-antigravity': 'google',
+  devin: 'cognition',
+};
+
+/** SQL: the gateway a model id names, from its first segment. Empty when the id carries none, not a guess. */
+function providerExpr(model: string): string {
+  const seg = `substr(${model}, 1, instr(${model} || '/', '/') - 1)`;
+  const named = `ltrim(${seg}, '~')`;
+  const cases = Object.entries(PROVIDER_ALIASES)
+    .map(([from, to]) => `WHEN '${from}' THEN '${to}'`)
+    .join(' ');
+  return `CASE WHEN instr(${model}, '/') = 0 THEN '' ELSE CASE ${named} ${cases} ELSE ${named} END END`;
+}
+
+/** SQL: the project a transcript belongs to, named by its session folder. A flat session tree uses its data dir. */
+function projectExpr(file: string): string {
+  const marker = `instr(${file}, '/sessions/')`;
+  const seg = `substr(${file}, ${marker} + 10, instr(substr(${file}, ${marker} + 10) || '/', '/') - 1)`;
+  const base = `replace(${file}, rtrim(${file}, replace(${file}, '/', '')), '')`;
+  const dir = `substr(${file}, 1, length(${file}) - length(${base}) - 1)`;
+  const dirBase = `replace(${dir}, rtrim(${dir}, replace(${dir}, '/', '')), '')`;
+  return `CASE WHEN ${marker} > 0 THEN ${seg} ELSE ${dirBase} END`;
+}
+
+/** Every column a query reads, mapped to the store's schema in one place. */
+const COL = {
+  session: FILE_KEY,
+  entry: `COALESCE(m.id, '')`,
+  folder: projectExpr(FILE_KEY),
+  model: 'm.model',
+  provider: providerExpr('m.model'),
+  /** No route name is stored, and the Requests page reads one. */
+  api: "''",
+  timestamp: 'm.t',
+  // Bucketing form of the timestamp. REAL division does not floor, so the cast is needed.
+  bucket: 'CAST(COALESCE(m.t, 0) AS INTEGER)',
+  duration: 'm.d',
+  /** First-token latency. A host that records none leaves it NULL, which reads null, never zero. */
+  ttft: 'm.tf',
+  stopReason: `CASE m.st WHEN 'error' THEN 'error' WHEN 'aborted' THEN 'aborted' ELSE 'stop' END`,
+  errorMessage: 'm.note',
+  input: 'm.i',
+  output: 'm.o',
+  cacheRead: 'm.cr',
+  cacheWrite: 'm.cw',
+  total: '(m.i + m.o + m.cr + m.cw)',
+  /** The cost the host reported. A model the host priced nothing for reads $0.00 by design. */
+  costTotal: 'COALESCE(m.usd, 0)',
+  agentType: `COALESCE(m.a, 'main')`,
+  host: `COALESCE(m.h, '')`,
+  /** The store holds no per-component split, so the remainder rule below finds nothing to move. */
+  costInput: '0',
+  costCacheRead: '0',
+  costCacheWrite: '0',
+  /** No route is a subscription route here, so nothing is ever flagged unpriced. */
+  unpriced: '0',
+} as const;
 
 export interface AgentTokenMix {
   input: number;
@@ -140,7 +215,6 @@ export interface AgentRow extends AgentTokenMix {
   key: string;
   /** The provider this row belongs to, empty when the group is not per provider. */
   provider: string;
-  /** The row's estimate split by billing component. */
   costMix: AgentCostMix;
   requests: number;
   failed: number;
@@ -268,7 +342,7 @@ export interface AgentWindowPoint {
   exhausted: boolean;
 }
 
-/** The Requests page's summary row, computed over the loaded window. */
+/** The Requests page summary row: whole-range counts and totals; `shipped` counts rows that rode along. */
 export interface AgentRequestStats {
   requests: number;
   failed: number;
@@ -276,6 +350,8 @@ export interface AgentRequestStats {
   tokens: number;
   costUsd: number;
   unpriced: number;
+  /** Rows that rode along with this payload, at most `RECENT_LIMIT`. */
+  shipped: number;
   medianDurationMs: number;
   p95DurationMs: number;
   medianTtftMs: number;
@@ -453,20 +529,14 @@ export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
     tools: [], toolsByModel: [], toolSeries: [],
     usageSeries: [], windowInsights: [], providerHourly: [],
     requestStats: {
-      requests: 0, failed: 0, aborted: 0, tokens: 0, costUsd: 0, unpriced: 0,
+      requests: 0, failed: 0, aborted: 0, tokens: 0, costUsd: 0, unpriced: 0, shipped: 0,
       medianDurationMs: 0, p95DurationMs: 0, medianTtftMs: 0, oldest: null, newest: null,
     },
     errors: [],
   };
 }
 
-// ---------------------------------------------------------------- sqlite access
-
-/**
- * The omp databases run in WAL mode. Ordered fallbacks, each verified against the live pair:
- * `-readonly` needs the `-shm` side file, `immutable=1` silently ignores a WAL, and a copy of
- * db + wal + shm replays the log to the same row count the running server reports.
- */
+/** WAL fallbacks: `-readonly` needs `-shm`, `immutable=1` ignores the WAL, then a db+wal+shm copy. */
 export function sqliteScript(db: string, script: string): string {
   if (!fs.existsSync(db)) throw new Error(`missing database: ${db}`);
   const opts = {
@@ -514,10 +584,7 @@ function blocks(out: string): Map<string, string[][]> {
   return map;
 }
 
-/**
- * One sqlite3 call for a group of queries. A failing statement aborts the script, so the
- * partial output is kept and only the missing blocks re-run one at a time.
- */
+/** One sqlite3 call for many queries; a failure aborts the script, so only the missing blocks re-run. */
 function readBlocks(db: string, queries: Array<[name: string, sql: string]>): Map<string, string[][]> {
   const script = queries.map(([name, sql]) => `SELECT '${BLOCK}${name}';\n${sql};\n`).join('');
   try {
@@ -561,63 +628,45 @@ function txt(column: string): string {
   return `replace(replace(replace(COALESCE(${column}, ''), char(10), ' '), char(13), ' '), char(9), ' ')`;
 }
 
-// ------------------------------------------------------------------- sql builders
-
-/** The unpriced rule, copied from the reference: a subscription route with no price is not "free". */
-function unpricedSql(p = ''): string {
-  return `CASE WHEN ${p}total_tokens > 0 AND ${p}cost_total = 0
-    AND (${p}provider = 'xai-oauth' OR ${p}cost_unpriced = 1) THEN 1 ELSE 0 END`;
+/** The unpriced rule, kept for callers that group by it: no route here is a subscription route. */
+function unpricedSql(): string {
+  return '0';
 }
 
 /** The additive facts every messages group reads. */
-function messageFacts(p = ''): string {
+function messageFacts(): string {
   return [
     'COUNT(*)',
-    `SUM(CASE WHEN ${p}stop_reason = 'error' THEN 1 ELSE 0 END)`,
-    `SUM(${p}input_tokens)`,
-    `SUM(${p}output_tokens)`,
-    `SUM(${p}cache_read_tokens)`,
-    `SUM(${p}cache_write_tokens)`,
-    `SUM(${p}total_tokens)`,
-    `TOTAL(${p}cost_total)`,
-    `TOTAL(${p}cost_input)`,
-    `TOTAL(${p}cost_cache_read)`,
-    `TOTAL(${p}cost_cache_write)`,
-    `SUM(${unpricedSql(p)})`,
-    `TOTAL(${p}duration)`,
-    `COUNT(${p}duration)`,
-    `TOTAL(${p}ttft)`,
-    `COUNT(${p}ttft)`,
-    `TOTAL(CASE WHEN ${p}duration > 0 THEN ${p}output_tokens * 1000.0 / ${p}duration END)`,
-    `COUNT(CASE WHEN ${p}duration > 0 THEN 1 END)`,
-    `MIN(${p}timestamp)`,
-    `MAX(${p}timestamp)`,
-    `MAX(${p}duration)`,
+    `SUM(CASE WHEN ${COL.stopReason} = 'error' THEN 1 ELSE 0 END)`,
+    `SUM(${COL.input})`,
+    `SUM(${COL.output})`,
+    `SUM(${COL.cacheRead})`,
+    `SUM(${COL.cacheWrite})`,
+    `SUM(${COL.total})`,
+    `TOTAL(${COL.costTotal})`,
+    `TOTAL(${COL.costInput})`,
+    `TOTAL(${COL.costCacheRead})`,
+    `TOTAL(${COL.costCacheWrite})`,
+    `SUM(${COL.unpriced})`,
+    `TOTAL(${COL.duration})`,
+    `COUNT(${COL.duration})`,
+    `TOTAL(${COL.ttft})`,
+    `COUNT(${COL.ttft})`,
+    `TOTAL(CASE WHEN ${COL.duration} > 0 THEN ${COL.output} * 1000.0 / ${COL.duration} END)`,
+    `COUNT(CASE WHEN ${COL.duration} > 0 THEN 1 END)`,
+    `MIN(${COL.timestamp})`,
+    `MAX(${COL.timestamp})`,
+    `MAX(${COL.duration})`,
   ].join(', ');
 }
 
-/** The zero and null literals an older omp schema needs in place of a named column. */
-const SHIMS: ReadonlyArray<readonly [string, string]> = [
-  ['stop_reason', "''"],
-  ['cost_no_cache_input', '0'],
-  ['cost_input', '0'],
-  ['cost_cache_read', '0'],
-  ['cost_cache_write', '0'],
-  ['cost_unpriced', '0'],
-  ['provider', "''"],
-  ['folder', "''"],
-  ['agent_type', "''"],
-];
-
-/** Applies the shims: a column the table does not hold reads as its literal. */
-function withShims(sql: string, cols: Set<string>): string {
-  let out = sql;
-  for (const [column, literal] of SHIMS) {
-    if (cols.has(column)) continue;
-    out = out.split(column).join(literal);
-  }
-  return out;
-}
+/** Column order of a recent or error row, matching `requestColumns` below. */
+const REQUEST_COLUMNS = [
+  COL.timestamp, COL.provider, COL.model, COL.folder, COL.api,
+  COL.input, COL.output, COL.cacheRead, COL.cacheWrite, COL.total,
+  COL.costTotal, COL.unpriced, COL.duration, COL.ttft, COL.stopReason, COL.errorMessage,
+  COL.agentType, COL.session, COL.entry,
+] as const;
 
 interface Facts {
   requests: number; failed: number;
@@ -702,8 +751,6 @@ function round4(v: number | null): number | null {
   return v === null ? null : Math.round(v * 1e4) / 1e4;
 }
 
-// ------------------------------------------------------------------- the aggregate
-
 function bucketSize(range: RangeKey, firstTs: number | null, lastTs: number | null): number {
   const base = BUCKET_MS[range];
   if (firstTs === null || lastTs === null) return base;
@@ -712,42 +759,32 @@ function bucketSize(range: RangeKey, firstTs: number | null, lastTs: number | nu
   return Math.max(base, Math.ceil(span / MAX_BUCKETS / base) * base);
 }
 
-// ------------------------------------------------------------------- the aggregate
-
-function readStatsDb(db: string, cutoff: number, bucketMs: number, cols: Set<string>, parts: Set<string>): Partial<AgentStats> {
-  const where = rangeWhere(cutoff);
-  const errCol = cols.has('error_message') ? txt('error_message') : "''";
-  const apiCol = cols.has('api') ? txt('api') : "''";
-  const errorWhere = `WHERE stop_reason = 'error'${cutoff > 0 ? ` AND timestamp >= ${Math.floor(cutoff)}` : ''}`;
-
-  const requestColumns = `timestamp, ${txt('provider')}, ${txt('model')}, ${txt('folder')}, ${apiCol},
-    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens,
-    cost_total, ${unpricedSql()}, duration, ttft, ${txt('stop_reason')}, ${errCol},
-    ${txt('agent_type')}, ${txt('session_file')}, ${txt('entry_id')}`;
+function readStatsDb(db: string, cutoff: number, bucketMs: number, parts: Set<string>, offset = 0): Partial<AgentStats> {
+  const where = rangeWhere(cutoff, COL.timestamp);
+  const errorWhere = `WHERE ${COL.stopReason} = 'error'${cutoff > 0 ? ` AND ${COL.timestamp} >= ${Math.floor(cutoff)}` : ''}`;
+  const from = SOURCE;
 
   const out = readBlocks(db, [
-    ['overall', `SELECT ${messageFacts()} FROM messages ${where}`],
-    ['byModel', `SELECT ${txt('model')}, ${txt('provider')}, ${messageFacts()} FROM messages ${where} GROUP BY model, provider ORDER BY 3 DESC`],
-    ['byProvider', `SELECT ${txt('provider')}, COUNT(DISTINCT model), ${messageFacts()} FROM messages ${where} GROUP BY provider ORDER BY 3 DESC`],
-    ['byAgentType', `SELECT ${txt('agent_type')}, ${messageFacts()} FROM messages ${where} GROUP BY 1 ORDER BY 2 DESC`],
-    ['byProject', `SELECT ${txt('folder')}, ${messageFacts()} FROM messages ${where} GROUP BY 1 ORDER BY 2 DESC`],
-    ['series', `SELECT (timestamp / ${bucketMs}) * ${bucketMs}, COUNT(*),
-        SUM(CASE WHEN stop_reason = 'error' THEN 1 ELSE 0 END),
-        SUM(total_tokens), TOTAL(cost_total) FROM messages ${where} GROUP BY 1 ORDER BY 1`],
-    ['hourOfDay', `SELECT CAST(strftime('%H', timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER),
-        COUNT(*), SUM(CASE WHEN stop_reason = 'error' THEN 1 ELSE 0 END), SUM(total_tokens), TOTAL(cost_total)
-        FROM messages ${where} GROUP BY 1 ORDER BY 1`],
-    ['recent', `SELECT ${requestColumns} FROM messages ${where} ORDER BY timestamp DESC LIMIT ${RECENT_LIMIT}`],
-    ['errors', `SELECT ${requestColumns} FROM messages ${errorWhere} ORDER BY timestamp DESC LIMIT ${ERROR_LIMIT}`],
-    ['traces', `SELECT ${txt('session_file')}, MAX(${txt('folder')}),
-        COUNT(*), SUM(total_tokens), TOTAL(cost_total), SUM(${unpricedSql()}),
-        MIN(timestamp), MAX(timestamp + COALESCE(duration, 0))
-        FROM messages ${where} GROUP BY session_file ORDER BY 8 DESC LIMIT ${TRACE_LIMIT}`],
-  ].filter(([name]) => parts.has(name)).map(([name, sql]) => [name, withShims(sql, cols)] as [string, string]));
+    ['overall', `SELECT ${messageFacts()} FROM ${from} ${where}`],
+    ['byModel', `SELECT ${COL.model}, ${COL.provider}, ${messageFacts()} FROM ${from} ${where} GROUP BY 1, 2 ORDER BY 3 DESC`],
+    ['byProvider', `SELECT ${COL.provider}, COUNT(DISTINCT ${COL.model}), ${messageFacts()} FROM ${from} ${where} GROUP BY 1 ORDER BY 3 DESC`],
+    ['byAgentType', `SELECT ${COL.agentType}, ${messageFacts()} FROM ${from} ${where} GROUP BY 1 ORDER BY 2 DESC`],
+    ['byProject', `SELECT ${COL.folder}, ${messageFacts()} FROM ${from} ${where} GROUP BY 1 ORDER BY 2 DESC`],
+    ['series', `SELECT (${COL.bucket} / ${bucketMs}) * ${bucketMs}, COUNT(*),
+        SUM(CASE WHEN ${COL.stopReason} = 'error' THEN 1 ELSE 0 END),
+        SUM(${COL.total}), TOTAL(${COL.costTotal}) FROM ${from} ${where} GROUP BY 1 ORDER BY 1`],
+    ['hourOfDay', `SELECT CAST(strftime('%H', ${COL.bucket} / 1000, 'unixepoch', 'localtime') AS INTEGER),
+        COUNT(*), SUM(CASE WHEN ${COL.stopReason} = 'error' THEN 1 ELSE 0 END), SUM(${COL.total}), TOTAL(${COL.costTotal})
+        FROM ${from} ${where} GROUP BY 1 ORDER BY 1`],
+    ['recent', `SELECT ${REQUEST_COLUMNS.join(', ')} FROM ${from} ${where} ORDER BY ${COL.timestamp} DESC LIMIT ${RECENT_LIMIT} OFFSET ${Math.max(0, Math.floor(offset))}`],
+    ['errors', `SELECT ${REQUEST_COLUMNS.join(', ')} FROM ${from} ${errorWhere} ORDER BY ${COL.timestamp} DESC LIMIT ${ERROR_LIMIT}`],
+    ['traces', `SELECT ${COL.session}, MAX(${COL.folder}),
+        COUNT(*), SUM(${COL.total}), TOTAL(${COL.costTotal}), SUM(${COL.unpriced}),
+        MIN(${COL.timestamp}), MAX(${COL.timestamp} + COALESCE(${COL.duration}, 0))
+        FROM ${from} ${where} GROUP BY 1 ORDER BY 8 DESC LIMIT ${TRACE_LIMIT}`],
+  ].filter(([name]) => parts.has(name)).map(([name, sql]) => [name, sql] as [string, string]));
 
-  // The trace rows are read per file, then folded per root. The model list and the tool counts are
-  // read across every transcript and keyed by root, so a child that fell outside the window still
-  // folds into the session it belongs to.
+  // Models and tools are keyed by root, so a child outside the window still folds into its session.
   const traceModels = readTraceModels(db);
   const traceTools = readTraceToolCounts(db);
   const traces = foldTraces((out.get('traces') ?? []).map((r) => {
@@ -816,13 +853,7 @@ function readStatsDb(db: string, cutoff: number, bucketMs: number, cols: Set<str
   };
 }
 
-/**
- * Fold every child transcript into its root session, the way the reference lists them.
- *
- * A subagent writes its own file under its root's folder, so a row grouped by file alone would
- * show one row per subagent. Each root holds its children's requests, tokens, cost, models, and
- * time, counts the children folded in, and keeps the row even when its own file is gone.
- */
+/** Fold every child transcript into its root session, or a row per file would show one row per subagent. */
 function foldTraces(rows: AgentTraceRow[]): AgentTraceRow[] {
   const byRoot = new Map<string, AgentTraceRow>();
   for (const row of rows) {
@@ -904,9 +935,9 @@ function groupErrors(rows: AgentRequestRow[]): AgentErrorGroup[] {
 }
 
 function readProviderSeries(db: string, cutoff: number, bucketMs: number): Array<{ provider: string; points: AgentBucket[] }> {
-  const out = readBlocks(db, [['providerSeries', `SELECT ${txt('provider')}, (timestamp / ${bucketMs}) * ${bucketMs},
-      COUNT(*), SUM(total_tokens), TOTAL(cost_total)
-      FROM messages ${rangeWhere(cutoff)} GROUP BY 1, 2 ORDER BY 1, 2`]]);
+  const out = readBlocks(db, [['providerSeries', `SELECT ${COL.provider}, (${COL.bucket} / ${bucketMs}) * ${bucketMs},
+      COUNT(*), SUM(${COL.total}), TOTAL(${COL.costTotal})
+      FROM ${SOURCE} ${rangeWhere(cutoff, COL.timestamp)} GROUP BY 1, 2 ORDER BY 1, 2`]]);
   const perProvider = new Map<string, { cost: number; points: AgentBucket[] }>();
   for (const r of out.get('providerSeries') ?? []) {
     const provider = r[0] ?? '';
@@ -922,48 +953,44 @@ function readProviderSeries(db: string, cutoff: number, bucketMs: number): Array
     .map(([provider, held]) => ({ provider, points: held.points }));
 }
 
+/** Tool calls from each message's names array: a name is one whole call, so per-call sizes read as zero. */
 function readToolSeries(db: string, cutoff: number, bucketMs: number): Partial<AgentStats> {
-  const cols = tableColumns(db, 'tool_calls');
-  if (!cols.has('tool_name')) return {};
-  const join = 'LEFT JOIN messages m ON m.session_file = t.session_file AND m.entry_id = t.entry_id';
-  const where = `WHERE t.timestamp >= ${Math.floor(cutoff)}`;
-  const facts = (bucket: string, extra: string): string => `
-    ${bucket},
-    ${txt('t.tool_name')}, ${txt('t.model')}, ${txt('t.provider')},
+  const where = `WHERE ${COL.timestamp} >= ${Math.floor(cutoff)}`;
+  const names = `CASE WHEN m.tools LIKE '[%' THEN m.tools ELSE '[]' END`;
+  const from = `${SOURCE}, json_each(${names}) te`;
+  const facts = `
+    ${COL.timestamp},
+    te.value, ${COL.model}, ${COL.provider},
     COUNT(*),
-    SUM(CASE WHEN t.is_error = 1 THEN 1 ELSE 0 END),
-    SUM(t.args_chars),
-    SUM(COALESCE(t.result_chars, 0)),
-    TOTAL(COALESCE(m.total_tokens, 0) * 1.0 / t.calls_in_turn),
-    TOTAL(COALESCE(m.output_tokens, 0) * 1.0 / t.calls_in_turn),
-    TOTAL(COALESCE(m.cost_total, 0) / t.calls_in_turn),
-    TOTAL(CASE WHEN COALESCE(m.total_tokens, 0) > 0 AND COALESCE(m.cost_total, 0) = 0
-      AND (m.provider = 'xai-oauth' OR m.cost_unpriced = 1) THEN 1 ELSE 0 END * 1.0 / t.calls_in_turn),
-    MAX(t.timestamp)${extra}`;
+    TOTAL(${COL.total}),
+    TOTAL(${COL.output}),
+    TOTAL(${COL.costTotal}),
+    MAX(${COL.timestamp})`;
   const out = readBlocks(db, [
-    ['byTool', `SELECT ${facts("'-'", '')} FROM tool_calls t ${join} ${where} GROUP BY t.tool_name ORDER BY 5 DESC`],
-    ['byToolModel', `SELECT ${facts("'-'", ', t.model, t.provider')} FROM tool_calls t ${join} ${where}
-      GROUP BY t.tool_name, t.model, t.provider ORDER BY 5 DESC LIMIT ${TOOL_MODEL_LIMIT}`],
-    ['toolSeries', `SELECT (t.timestamp / ${bucketMs}) * ${bucketMs}, ${txt('t.tool_name')}, COUNT(*),
-      SUM(CASE WHEN t.is_error = 1 THEN 1 ELSE 0 END) FROM tool_calls t ${where} GROUP BY 1, 2 ORDER BY 1`],
+    ['byTool', `SELECT ${facts} FROM ${from} ${where} GROUP BY te.value ORDER BY 5 DESC`],
+    ['byToolModel', `SELECT ${facts} FROM ${from} ${where} GROUP BY te.value, ${COL.model}, ${COL.provider}
+      ORDER BY 5 DESC LIMIT ${TOOL_MODEL_LIMIT}`],
+    ['toolSeries', `SELECT (${COL.bucket} / ${bucketMs}) * ${bucketMs}, te.value, COUNT(*),
+      SUM(CASE WHEN ${COL.stopReason} = 'error' THEN 1 ELSE 0 END)
+      FROM ${from} ${where} GROUP BY 1, 2 ORDER BY 1`],
   ]);
-  const parseTool = (r: string[], at: number): AgentToolRow => ({
+  const parseTool = (r: string[]): AgentToolRow => ({
     tool: r[1] ?? '',
     calls: num(r[4]),
-    errors: num(r[5]),
-    argsChars: num(r[6]),
-    resultChars: num(r[7]),
-    totalTokensShare: num(r[8]),
-    outputTokensShare: num(r[9]),
-    costShare: num(r[10]),
-    unpricedShare: num(r[11]),
-    lastUsed: numOrNull(r[12]),
-    model: r[at] ?? '',
-    provider: r[at + 1] ?? '',
+    errors: 0,
+    argsChars: 0,
+    resultChars: 0,
+    totalTokensShare: num(r[5]),
+    outputTokensShare: num(r[6]),
+    costShare: num(r[7]),
+    unpricedShare: 0,
+    lastUsed: numOrNull(r[8]),
+    model: r[2] ?? '',
+    provider: r[3] ?? '',
   });
   return {
-    tools: (out.get('byTool') ?? []).map((r) => parseTool(r, 13)),
-    toolsByModel: (out.get('byToolModel') ?? []).map((r) => parseTool(r, 13)),
+    tools: (out.get('byTool') ?? []).map(parseTool),
+    toolsByModel: (out.get('byToolModel') ?? []).map(parseTool),
     toolSeries: (out.get('toolSeries') ?? []).map((r) => ({
       ts: num(r[0]), tool: r[1] ?? '', calls: num(r[2]), errors: num(r[3]),
     })),
@@ -974,7 +1001,9 @@ function readToolSeries(db: string, cutoff: number, bucketMs: number): Partial<A
 function readTraceToolCounts(db: string): Map<string, number> {
   const counts = new Map<string, number>();
   try {
-    const out = sqliteScript(db, 'SELECT session_file, COUNT(*) FROM tool_calls GROUP BY 1;\n');
+    const names = `CASE WHEN m.tools LIKE '[%' THEN m.tools ELSE '[]' END`;
+    const out = sqliteScript(db,
+      `SELECT ${COL.session}, COUNT(*) FROM ${SOURCE}, json_each(${names}) te GROUP BY 1;\n`);
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
       const [file, count] = line.split('\t');
@@ -990,7 +1019,7 @@ function readTraceToolCounts(db: string): Map<string, number> {
 function readTraceModels(db: string): Map<string, string[]> {
   const models = new Map<string, Set<string>>();
   try {
-    const out = sqliteScript(db, 'SELECT session_file, model FROM messages GROUP BY session_file, model;\n');
+    const out = sqliteScript(db, `SELECT ${COL.session}, ${COL.model} FROM ${SOURCE} GROUP BY 1, 2;\n`);
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
       const [file, model] = line.split('\t');
@@ -1003,12 +1032,7 @@ function readTraceModels(db: string): Map<string, string[]> {
   return new Map([...models.entries()].map(([file, set]) => [file, [...set].toSorted()]));
 }
 
-/**
- * Each root session's own title and working directory, read from the head of its transcript.
- *
- * The `session` line carries the working directory and the `title` line sits above it, so one head
- * read answers both. A rotated or unreadable file leaves the row's folder and file name to speak.
- */
+/** A session's title and cwd: the `session` line carries the directory and the `title` line sits above it. */
 function applySessionMetadata(traces: AgentTraceRow[]): void {
   for (const trace of traces) {
     if (!trace.sessionFile.endsWith('.jsonl')) continue;
@@ -1038,11 +1062,11 @@ function applySessionMetadata(traces: AgentTraceRow[]): void {
 
 /** Daily tokens and cost for the busiest models: the Models table sparkline. */
 function readModelSeries(db: string, cutoff: number, bucketMs: number): Array<{ model: string; points: AgentBucket[] }> {
-  const scope = rangeWhere(cutoff);
-  const top = `model IN (SELECT model FROM messages ${scope} GROUP BY model ORDER BY COUNT(*) DESC LIMIT ${SERIES_MODELS})`;
+  const scope = rangeWhere(cutoff, COL.timestamp);
+  const top = `${COL.model} IN (SELECT ${COL.model} FROM ${SOURCE} ${scope} GROUP BY ${COL.model} ORDER BY COUNT(*) DESC LIMIT ${SERIES_MODELS})`;
   const clause = scope ? `${scope} AND ${top}` : `WHERE ${top}`;
-  const out = readBlocks(db, [['modelSeries', `SELECT ${txt('model')}, (timestamp / ${bucketMs}) * ${bucketMs},
-      COUNT(*), SUM(total_tokens), TOTAL(cost_total) FROM messages ${clause} GROUP BY 1, 2 ORDER BY 1, 2`]]);
+  const out = readBlocks(db, [['modelSeries', `SELECT ${COL.model}, (${COL.bucket} / ${bucketMs}) * ${bucketMs},
+      COUNT(*), SUM(${COL.total}), TOTAL(${COL.costTotal}) FROM ${SOURCE} ${clause} GROUP BY 1, 2 ORDER BY 1, 2`]]);
   const perModel = new Map<string, AgentBucket[]>();
   for (const r of out.get('modelSeries') ?? []) {
     const model = r[0] ?? '';
@@ -1053,22 +1077,18 @@ function readModelSeries(db: string, cutoff: number, bucketMs: number): Array<{ 
   return [...perModel.entries()].map(([model, points]) => ({ model, points }));
 }
 
-/**
- * Throughput and first-token latency per bucket for the busiest models, the chart behind a
- * model's expanded row. Both averages are null in a bucket where no request carried the timing,
- * because a non-null zero would draw a flat line through a real gap.
- */
+/** Per-bucket throughput and ttft for the busiest models; a null average means no request carried timing. */
 function readModelPerformance(db: string, cutoff: number, bucketMs: number): Array<{ model: string; provider: string; points: AgentModelPerformancePoint[] }> {
-  const scope = rangeWhere(cutoff);
-  const top = `model IN (SELECT model FROM messages ${scope} GROUP BY model ORDER BY COUNT(*) DESC LIMIT ${SERIES_MODELS})`;
+  const scope = rangeWhere(cutoff, COL.timestamp);
+  const top = `${COL.model} IN (SELECT ${COL.model} FROM ${SOURCE} ${scope} GROUP BY ${COL.model} ORDER BY COUNT(*) DESC LIMIT ${SERIES_MODELS})`;
   const clause = scope ? `${scope} AND ${top}` : `WHERE ${top}`;
-  const out = readBlocks(db, [['modelPerformance', `SELECT ${txt('model')}, ${txt('provider')}, (timestamp / ${bucketMs}) * ${bucketMs},
+  const out = readBlocks(db, [['modelPerformance', `SELECT ${COL.model}, ${COL.provider}, (${COL.bucket} / ${bucketMs}) * ${bucketMs},
       COUNT(*),
-      TOTAL(CASE WHEN duration > 0 THEN output_tokens * 1000.0 / duration END),
-      COUNT(CASE WHEN duration > 0 THEN 1 END),
-      TOTAL(ttft),
-      COUNT(ttft)
-      FROM messages ${clause} GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`]]);
+      TOTAL(CASE WHEN ${COL.duration} > 0 THEN ${COL.output} * 1000.0 / ${COL.duration} END),
+      COUNT(CASE WHEN ${COL.duration} > 0 THEN 1 END),
+      TOTAL(${COL.ttft}),
+      COUNT(${COL.ttft})
+      FROM ${SOURCE} ${clause} GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`]]);
   const groups = new Map<string, { model: string; provider: string; points: AgentModelPerformancePoint[] }>();
   for (const r of out.get('modelPerformance') ?? []) {
     const key = `${r[0] ?? ''}\u0000${r[1] ?? ''}`;
@@ -1085,8 +1105,6 @@ function readModelPerformance(db: string, cutoff: number, bucketMs: number): Arr
   }
   return [...groups.values()];
 }
-
-// ------------------------------------------------------------ subscription windows
 
 /** Reference constants for the quota half, copied from the omp implementation. */
 const WINDOW_RESET_DROP = 0.05;
@@ -1128,10 +1146,7 @@ function downsampleWindow(points: AgentWindowPoint[]): AgentWindowPoint[] {
   return out;
 }
 
-/**
- * Peak of the sum across accounts at any sampled instant, forward filling each account's last
- * known fraction. A peak of 1.7 means demand simultaneously held 1.7 windows of quota.
- */
+/** Peak summed quota across accounts, forward-filling last known fractions (1.7 = 1.7 windows held). */
 function peakConcurrent(samples: WindowSample[]): number {
   const events = samples.filter((sample) => sample.usedFraction !== null).toSorted((a, b) => a.ts - b.ts);
   const current = new Map<string, number>();
@@ -1177,10 +1192,7 @@ function readWindowSamples(cutoff: number): WindowSample[] {
   });
 }
 
-/**
- * Utilization series and per-window insights. A window is one `(provider, limitId)` pair: distinct
- * limits can share a duration label, and merging them interleaves unrelated fractions per account.
- */
+/** Window utilization; a window is one `(provider, limitId)` pair, since limits can share a duration. */
 function computeWindows(
   samples: WindowSample[],
   tokensByProvider: Map<string, number>,
@@ -1268,17 +1280,17 @@ function computeWindows(
 
 /** Tokens per provider over the range: the currency a window insight extrapolates in. */
 function readProviderTokens(db: string, cutoff: number): Map<string, number> {
-  const out = readBlocks(db, [['providerTokens', `SELECT ${txt('provider')}, SUM(total_tokens)
-      FROM messages ${rangeWhere(cutoff)} GROUP BY 1`]]);
+  const out = readBlocks(db, [['providerTokens', `SELECT ${COL.provider}, SUM(${COL.total})
+      FROM ${SOURCE} ${rangeWhere(cutoff, COL.timestamp)} GROUP BY 1`]]);
   return new Map((out.get('providerTokens') ?? []).map((r) => [r[0] ?? '', num(r[1])]));
 }
 
 /** Peak burn hours: one row per provider per local hour, the shape the reference charts. */
 function readProviderHourly(db: string, cutoff: number): AgentProviderHour[] {
-  const out = readBlocks(db, [['providerHourly', `SELECT ${txt('provider')},
-      CAST(strftime('%H', timestamp / 1000, 'unixepoch', 'localtime') AS INTEGER),
-      SUM(total_tokens), SUM(output_tokens), COUNT(*)
-      FROM messages ${rangeWhere(cutoff)} GROUP BY 1, 2`]]);
+  const out = readBlocks(db, [['providerHourly', `SELECT ${COL.provider},
+      CAST(strftime('%H', ${COL.bucket} / 1000, 'unixepoch', 'localtime') AS INTEGER),
+      SUM(${COL.total}), SUM(${COL.output}), COUNT(*)
+      FROM ${SOURCE} ${rangeWhere(cutoff, COL.timestamp)} GROUP BY 1, 2`]]);
   return (out.get('providerHourly') ?? []).map((r) => ({
     provider: r[0] ?? '',
     hour: num(r[1]),
@@ -1296,24 +1308,25 @@ function median(values: Array<number | null | undefined>): number {
   return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
 }
 
-/** The Requests page summary, computed over the rows the payload carries. */
-function computeRequestStats(rows: AgentRequestRow[]): AgentRequestStats {
+/** Requests summary; percentiles stay over the capped slice, so a p95 of 200 of 2,400 describes those 200. */
+function computeRequestStats(rows: AgentRequestRow[], range?: AgentOverall): AgentRequestStats {
   const durations = rows.map((row) => row.durationMs);
   const sorted = durations.filter((v): v is number => typeof v === 'number' && Number.isFinite(v)).toSorted((a, b) => a - b);
   const pick = (q: number): number => (sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]);
   const times = rows.map((row) => row.ts);
   return {
-    requests: rows.length,
-    failed: rows.filter((row) => row.stopReason === 'error').length,
+    requests: range ? range.requests : rows.length,
+    failed: range ? range.failed : rows.filter((row) => row.stopReason === 'error').length,
     aborted: rows.filter((row) => row.stopReason === 'aborted').length,
-    tokens: rows.reduce((sum, row) => sum + row.totalTokens, 0),
-    costUsd: rows.reduce((sum, row) => sum + row.costUsd, 0),
-    unpriced: rows.filter((row) => row.unpriced).length,
+    tokens: range ? range.total : rows.reduce((sum, row) => sum + row.totalTokens, 0),
+    costUsd: range ? range.costUsd : rows.reduce((sum, row) => sum + row.costUsd, 0),
+    unpriced: range ? range.unpricedRequests : rows.filter((row) => row.unpriced).length,
+    shipped: rows.length,
     medianDurationMs: median(durations),
     p95DurationMs: pick(0.95),
     medianTtftMs: median(rows.map((row) => row.ttftMs)),
-    oldest: times.length ? Math.min(...times) : null,
-    newest: times.length ? Math.max(...times) : null,
+    oldest: range ? range.firstTs : times.length ? Math.min(...times) : null,
+    newest: range ? range.lastTs : times.length ? Math.max(...times) : null,
   };
 }
 
@@ -1341,15 +1354,7 @@ function stopState(stopReason: string): AgentTraceSpan['stopped'] {
 /** Tool names that hand the work to another agent, for the Agents figure. */
 const AGENT_TOOLS = new Set(['task', 'subagent']);
 
-/**
- * One session transcript as spans, tracks, markers, and totals.
- *
- * An assistant message stamps its completion and its `duration` says when the call began, so a
- * model span runs `ts - duration` to `ts`. A tool call is emitted by the message requesting it and
- * closed by the `toolResult` with the same call id, so the two bound a tool span. A user message
- * opens a turn the next user message closes, and everything that is not a message rides along as a
- * marker, since it happened at a point in time rather than across one.
- */
+/** One transcript as spans, tracks and markers: a model span runs `ts - duration` to `ts`. */
 export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT): AgentSessionTrace {
   const project = sessionFile.split('/sessions/')[1]?.split('/')[0] ?? '';
   const empty: AgentSessionTrace = {
@@ -1575,12 +1580,7 @@ export function emptyRequestEntry(): { entry: unknown; output: unknown; messageR
   return { entry: null, output: null, messageRole: '', agent: { model: null, thinkingLevel: null, mode: null, fallback: null } };
 }
 
-/**
- * One request's journal payload, read on demand by the request drawer. `entry` is the raw
- * journal line, `output` is the message that line carries, and `agent` is the agent state in
- * force when the request ran. All are empty when the entry journals nothing: a `model_usage`
- * row carries no message, and a deleted session cannot be re-read.
- */
+/** One request's journal payload; empty when the entry journals nothing or its session is gone. */
 export function readAgentRequestEntry(
   sessionFile: string,
   entryId: string,
@@ -1621,8 +1621,8 @@ export function readAgentRequestEntry(
 }
 
 
-/** Reads both omp databases. `available` is false when stats.db holds no `messages` table. */
-export function readAgentStats(range: RangeKey = '24h', view: AgentView = 'all', now = Date.now()): AgentStats {
+/** Reads the usage store; the caller runs `syncUsageDb`, so a poll never pays for a sync it did not start. */
+export function readAgentStats(range: RangeKey = '24h', view: AgentView = 'all', now = Date.now(), offset = 0): AgentStats {
   const span = RANGE_MS[range];
   const cutoff = span > 0 ? now - span : 0;
   const parts = new Set(VIEW_PARTS[view]);
@@ -1637,18 +1637,18 @@ export function readAgentStats(range: RangeKey = '24h', view: AgentView = 'all',
   }
 
   // The bucket width depends on the span, so the bounds come first.
-  const bounds = readBlocks(db, [['bounds', `SELECT MIN(timestamp), MAX(timestamp) FROM messages ${rangeWhere(cutoff)}`]]);
+  const bounds = readBlocks(db, [['bounds', `SELECT MIN(${COL.timestamp}), MAX(${COL.timestamp}) FROM ${SOURCE} ${rangeWhere(cutoff, COL.timestamp)}`]]);
   const [firstTs, lastTs] = bounds.get('bounds')?.[0] ?? [];
   stats.bucketMs = bucketSize(range, numOrNull(firstTs), numOrNull(lastTs));
 
-  Object.assign(stats, readStatsDb(db, cutoff, stats.bucketMs, cols, parts));
+  Object.assign(stats, readStatsDb(db, cutoff, stats.bucketMs, parts, offset));
   if (parts.has('seriesByProvider')) stats.seriesByProvider = readProviderSeries(db, cutoff, stats.bucketMs);
   if (parts.has('modelSeries')) stats.modelSeries = readModelSeries(db, cutoff, stats.bucketMs);
   if (parts.has('modelPerformance')) stats.modelPerformance = readModelPerformance(db, cutoff, stats.bucketMs);
   if (parts.has('tools')) Object.assign(stats, readToolSeries(db, cutoff, stats.bucketMs));
   if (stats.byModel.length > 0) stats.topModels = stats.byModel.slice(0, 12);
   if (parts.has('providerHourly')) stats.providerHourly = readProviderHourly(db, cutoff);
-  if (parts.has('recent')) stats.requestStats = computeRequestStats(stats.recent);
+  if (parts.has('recent')) stats.requestStats = computeRequestStats(stats.recent, stats.overall);
   if (parts.has('windows')) {
     Object.assign(stats, computeWindows(readWindowSamples(cutoff), readProviderTokens(db, cutoff)));
   }

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUN_BIN_DIR, COMBO_PRESET_MODES, HOME, IS_WINDOWS, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
-  allowUnverified, applyUpdate, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
+  allowUnverified, applyUpdate, bundledPonytailSpec, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
   ponytailDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
   dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
@@ -31,7 +31,7 @@ import {
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { filesUnder, rootFiles, sourcePath } from './manifest.ts';
+import { PI_RTK_MANIFEST, filesUnder, rootFiles, sourcePath, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
@@ -42,19 +42,39 @@ async function stepPonytail(pluginsDir: string, options: InstallOptions): Promis
   await fs.mkdir(pluginsDir, { recursive: true });
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  // Drop the legacy Ponytail plugin row; it is a tersio dependency now.
+  // npm resolves the *published* tersio, so a plain dependency entry lets npm nest the range's version.
   let migrated = false;
-  if ('@dietrichgebert/ponytail' in pkg.dependencies) {
+  const localSpec = await bundledPonytailSpec();
+  const declared = pkg.dependencies['@dietrichgebert/ponytail'];
+  // Node resolves the nested copy first, so a dependency entry alone cannot hold the local version.
+  const rawOverrides: Record<string, string> =
+    typeof pkg.overrides === 'object' && pkg.overrides !== null ? { ...pkg.overrides as Record<string, string> } : {};
+  const overrideNeeded = localSpec !== null && rawOverrides['@dietrichgebert/ponytail'] !== localSpec;
+  if (localSpec !== null && declared !== localSpec) {
+    pkg.dependencies['@dietrichgebert/ponytail'] = localSpec;
+    migrated = true;
+  } else if (localSpec === null && declared) {
     delete pkg.dependencies['@dietrichgebert/ponytail'];
+    migrated = true;
+  }
+  if (localSpec === null) {
+    // No bundled spec means no tersio-owned row, so an override would resurrect the dependency.
+    delete rawOverrides['@dietrichgebert/ponytail'];
+  } else if (overrideNeeded) {
+    rawOverrides['@dietrichgebert/ponytail'] = localSpec;
+  }
+  if (Object.keys(rawOverrides).length === 0) delete pkg.overrides;
+  else if (JSON.stringify(rawOverrides) !== JSON.stringify(typeof pkg.overrides === 'object' && pkg.overrides !== null ? pkg.overrides : {})) {
+    pkg.overrides = rawOverrides;
     migrated = true;
   }
 
   if (options.dryRun) {
     if (verbose && !options.quiet) sayTagged(`  [dry-run] would write ${pkgPath}`);
-    if (migrated && verbose && !options.quiet) sayTagged(`  [dry-run] would drop the separate @dietrichgebert/ponytail dependency (bundled with tersio)`);
+    if (migrated && verbose && !options.quiet) sayTagged(`  [dry-run] would set @dietrichgebert/ponytail → ${localSpec ?? 'this tree\x27s range'} (bundled with tersio)`);
   } else if (migrated) {
     await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-    if (!options.quiet) console.log('  [migrate] dropped separate @dietrichgebert/ponytail dependency (now bundled with tersio)');
+    if (!options.quiet) console.log(`  [migrate] set @dietrichgebert/ponytail → ${pkg.dependencies['@dietrichgebert/ponytail'] ?? 'this tree\x27s range'} (bundled with tersio)`);
   }
 
   const ponytailExtPath = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'pi-extension', 'index.js');
@@ -64,7 +84,7 @@ async function stepPonytail(pluginsDir: string, options: InstallOptions): Promis
   if (ponytailExtExists) {
     debug('Bundled Ponytail pi-extension already installed; skipping network refresh');
   } else if (options.dryRun) {
-    // Dry runs preview the wiring below without touching the network.
+    // Pretend the extension is present so the wiring below still runs, without touching the network.
     if (verbose && !options.quiet) console.log('  [dry-run] would run: npm install --no-audit --no-fund (in plugins dir)');
     ponytailExtExists = true;
   } else {
@@ -174,7 +194,7 @@ async function downloadRtkChecksums(release: RtkRelease): Promise<string | null>
   }
 }
 
-// Fails closed: a missing checksum is worse than a failed install, since an unverifiable RTK binary runs with the user's privileges. `--allow-unverified` opts out.
+// Fails closed: an unverifiable RTK binary runs with the user's privileges. `--allow-unverified` opts out.
 async function verifyRtkArchive(archivePath: string, assetName: string, checksumsText: string | null): Promise<boolean> {
   const unverified = (reason: string): boolean => {
     if (allowUnverified) {
@@ -239,11 +259,7 @@ async function extractRtkArchive(archivePath: string, extractDir: string): Promi
   return false;
 }
 
-// The agent tree keeps only rtk's own wiring file. Every Tersio extension loads from the
-// OMP plugin manifest, which omp merges with the extension dir it discovers by default, so a
-// copy left in the agent tree loads a second time. `caveman-session` was never written here
-// after the plugin registration shipped, so an old install holds a set that cannot resolve
-// its own rule bodies.
+// A rule body found in a retired copy still resolves and loads twice, so drop the agent tree's extras.
 const RETIRED_OMP_AGENT_DIRS = [
   'caveman-session',
   'rtk-session',
@@ -296,7 +312,7 @@ async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 
   }
 
   if (!options.quiet) console.log(`  RTK — download binary and wire into ${hostName}`);
-  // A failed download must not skip wiring: a pre-existing binary serves the host hook just as well. Dry runs stay offline.
+  // A failed download must not skip wiring: a pre-existing binary serves the host hook. Dry runs stay offline.
   if (options.dryRun) {
     if (verbose && !options.quiet) sayTagged(`  [dry-run] would download rtk binary and install to ${binDest}`);
     await bind(found ?? binDest);
@@ -305,7 +321,7 @@ async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 
   try {
     const triple = resolveRtkTriple();
     if (!triple) return;
-    // One task with streamed sub-steps: release lookup, download, checksum, extract, install. Non-TTY keeps the plain lines each step already prints.
+    // One task with streamed sub-steps; non-TTY keeps the plain lines each step already prints.
     await withInteractiveTask('Installing RTK', async (update) => {
       const release = await fetchJson<RtkRelease>(RTK_RELEASE_API);
       const asset = findRtkAsset(release, triple);
@@ -363,7 +379,7 @@ async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 
   await bind(binDest);
 }
 
-// Copy sources into the target extension dir. First entry is required; the rest are optional companions.
+// First entry is required; the rest are optional companions.
 async function copySources(extDir: string, files: Array<[string, string]>, skipLabel: string, options: WriteOptions): Promise<boolean> {
   const src = await readTextIfExists(files[0][0]);
   if (!src) {
@@ -397,8 +413,7 @@ async function stepRtkFilter(extDir: string, options: WriteOptions): Promise<voi
   await copySources(extDir, filesUnder('rtk'), 'rtk/filter.ts', options);
 }
 
-// rule.md ships with the package; the other bodies track upstream skills.
-// rule.md is a deliberate fork of upstream skills/caveman/SKILL.md; a blind sync would drop the mode switch line and the STE100 rules.
+// rule.md is a deliberate fork of skills/caveman/SKILL.md: a blind sync would drop the mode switch line.
 const CAVEMAN_RULES: ReadonlyArray<[name: string, remote: string | null]> = [
   ['rule.md', null],
   ['rule-ultra.md', CAVEMAN_REMOTE_ULTRA],
@@ -449,16 +464,23 @@ async function stepUpdater(extDir: string, options: WriteOptions): Promise<void>
   await copySources(extDir, filesUnder('updater'), 'updater/index.ts', options);
 }
 
+// pi records no first-token latency, so this stamps one into the row the dashboard reads.
+async function stepTiming(extDir: string, options: WriteOptions): Promise<void> {
+  await copySources(extDir, filesUnder('timing'), 'timing/index.ts', options);
+}
+
 async function stepCombo(extDir: string, options: InstallOptions): Promise<void> {
   if (!options.quiet) console.log('  Combo — install preset switch');
   await copySources(extDir, filesUnder('combo'), 'combo/index.ts', options);
 }
 
-// The tree ships no node_modules, so the full ruleset rides along as files.
+// The tree ships no node_modules, so the ruleset rides along as files. Both hosts need the same six.
+const PONYTAIL_SKILL_NAMES = ['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review'] as const;
+
 const PONYTAIL_BUNDLE_FILES = [
   'hooks/ponytail-instructions.js',
   'hooks/ponytail-config.js',
-  'skills/ponytail/SKILL.md',
+  ...PONYTAIL_SKILL_NAMES.map((skill) => `skills/${skill}/SKILL.md`),
 ] as const;
 
 async function stepPonytailBundle(treeDir: string, options: InstallOptions): Promise<void> {
@@ -485,9 +507,12 @@ async function stepPonytailBundle(treeDir: string, options: InstallOptions): Pro
 async function stepOpencode(options: InstallOptions): Promise<void> {
   const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   if (!options.quiet) console.log(`  OpenCode — write the plugin tree (${dir})`);
+  // Retire the `-session`/`-toggle` leftovers first: a rule body found in one still resolves.
+  await stepRetireAgentCopies(dir, options);
   await stepSharedSessionState(dir, options);
   await copySources(dir, filesUnder('rtk'), 'rtk/session.ts', options);
   await stepRtkFilter(dir, options);
+  await stepTiming(dir, options);
   await copySources(dir, filesUnder('caveman'), 'caveman/index.ts', options);
   await stepCombo(dir, options);
   await copySources(dir, filesUnder('commands'), 'commands/index.ts', options);
@@ -574,6 +599,7 @@ async function runCommandMenu(): Promise<void> {
   updatePromptDone = true;
   const choice = await askInteractiveChoice(`Tersio — what next?\n${formatCliStatus(storedProfileSync())}`, [
     { value: 'install', label: 'Install add-ons', hint: 'user scope + combo defaults' },
+    { value: 'reinstall', label: 'Reinstall', hint: 're-install Tersio for the ai agents, then verify' },
     { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'settings', label: 'Settings', hint: 'default combo mode, currency, diagnosis schedule' },
@@ -590,8 +616,11 @@ async function runCommandMenu(): Promise<void> {
     case 'install':
       await runInstall();
       break;
+    case 'reinstall':
+      await runReinstall();
+      break;
     case 'update': {
-      // One bound flow: the version check already ran above, so report it and offer the refresh in the same breath — no second "update" quiz.
+      // Version check already ran above, so report it and offer the refresh here — no second "update" quiz.
       if (typeof newer === 'string') console.log(`  tersio ${newer} available (installed ${PACKAGE_VERSION})`);
       else console.log(`  tersio ${PACKAGE_VERSION} is the latest`);
       const go = await askInteractiveConfirm('Update now (CLI + RTK, Caveman rule, Ponytail)?');
@@ -647,10 +676,55 @@ async function runCommandMenu(): Promise<void> {
   }
 }
 
-// Which host this run targets. --host pins it; a TTY user picks; scripts, pipes, --yes, and --dry-run keep the pre-multi-host default of Oh My Pi.
+// Which host this run targets. --host pins it; scripts and --yes keep the default of Oh My Pi.
 let targetHost: HostId = 'omp';
+// A reinstall re-runs the npm fast path and the Ponytail probe instead of reusing what is on disk.
+let forceReinstall = false;
 
-// Hosts the menu advertises but cannot install yet. Listed disabled so the roadmap is visible without offering a target that does nothing.
+/** Reinstall one agent: pick it from what is installed now, then run the full install with a refresh. */
+async function runReinstall(): Promise<void> {
+  let pinned: HostId | undefined;
+  try {
+    pinned = parseHostArg(args);
+  } catch (e) {
+    console.error(`[fail] ${(e as Error).message}`);
+    process.exit(1);
+  }
+  const installed = detectHosts().filter((host) => host.installed);
+  let host: HostId;
+  if (pinned) host = pinned;
+  else if (installed.length === 0) {
+    console.log('  Nothing to reinstall — no agent has Tersio installed.\n  Run `tersio install`, or pick it from the menu.');
+    closeRL();
+    return;
+  } else if (installed.length === 1 || !tty() || yes || dryRun) {
+    host = installed[0].id;
+  } else {
+    const options = installed.map((entry) => ({
+      value: entry.id,
+      label: hostLabel(entry),
+      hint: hostHint(entry),
+    }));
+    const picked = await askInteractiveChoice('Reinstall Tersio into which agent?', options, installed[0].id);
+    if (picked.status !== 'selected') {
+      closeRL();
+      process.exit(130);
+    }
+    host = picked.value as HostId;
+  }
+
+  forceReinstall = true;
+  printWelcome();
+  console.log(`Reinstall — Tersio v${PACKAGE_VERSION} into ${hostLabel(hostEntry(host))}`);
+  console.log(`  ${resolvedHostPath(host)}`);
+  await runInstall(host);
+  if (!dryRun) {
+    const summary = await runDoctor();
+    if (summary.missing + summary.warn === 0) console.log(`\n  Reinstall verified — ${hostLabel(hostEntry(host))} is healthy.`);
+  }
+}
+
+// Hosts the menu advertises but cannot install yet; listed disabled so the roadmap stays visible.
 const SOON_HOSTS = [
   { value: 'claude', label: 'Claude Code', hint: 'Coming soon' },
   { value: 'codex', label: 'Codex', hint: 'Coming soon' },
@@ -677,7 +751,19 @@ function hostEntry(id: HostId): HostEntry {
   return detectHosts().find((host) => host.id === id) as HostEntry;
 }
 
-// pi auto-discovers `<agent-dir>/extensions/**/index.ts`, so this route writes the same tree as OMP's and registers nothing.
+/** pi discovers a subdirectory only through an index file or a package.json with `pi.extensions`, so rtk/ needs one or both files stay dead. */
+async function stepPiRtkManifest(extDir: string, options: WriteOptions): Promise<void> {
+  await syncTreeFiles(extDir, [PI_RTK_MANIFEST], options);
+}
+
+/** The directory a host's install writes, for the plan line a reinstall prints. */
+function resolvedHostPath(host: HostId): string {
+  if (host === 'pi') return path.join(piAgentDir(), 'extensions');
+  if (host === 'opencode') return path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
+  return path.join(OMP_PLUGINS_DIR, 'node_modules', ...PACKAGE_NAME.split('/'), 'extensions');
+}
+
+// pi auto-discovers `<agent-dir>/extensions/**/index.ts`, so this route writes the same tree and registers nothing.
 async function stepPiLayer(options: InstallOptions): Promise<void> {
   const agentDir = piAgentDir();
   const extDir = path.join(agentDir, 'extensions');
@@ -689,6 +775,8 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
   // OMP loads rtk/session.ts from its plugin manifest, so only the pi tree copies it.
   await copySources(extDir, filesUnder('rtk'), 'rtk/session.ts', options);
   await stepRtkFilter(extDir, options);
+  await stepPiRtkManifest(extDir, options);
+  await stepTiming(extDir, options);
   await stepCaveman(extDir, options);
   await stepCombo(extDir, options);
   await stepTersioCommands(extDir, options);
@@ -701,8 +789,7 @@ const PI_PONYTAIL_FILES = [
   'pi-extension/index.js',
   'hooks/ponytail-instructions.js',
   'hooks/ponytail-config.js',
-  ...['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review']
-    .map((skill) => `skills/${skill}/SKILL.md`),
+  ...PONYTAIL_SKILL_NAMES.map((skill) => `skills/${skill}/SKILL.md`),
 ] as const;
 
 const PI_PONYTAIL_PACKAGE = `${JSON.stringify({ name: 'ponytail', version: '0.0.0', private: true, pi: { extensions: ['./pi-extension/index.js'], skills: ['./skills'] } }, null, 2)}\n`;
@@ -728,8 +815,7 @@ async function stepPonytailForPi(agentDir: string, options: InstallOptions): Pro
     await writeIfChanged(path.join(dest, ...rel.split('/')), text, options);
   }
   if (options.dryRun) return;
-  // Only when pi still declares the npm spec: with nothing to remove, `pi remove` still
-  // shells out to npm, which warns on stderr and exits non-zero.
+  // Only when pi still declares the npm spec: with nothing to remove, `pi remove` still warns and exits non-zero.
   const declared = await piDeclaredPackages(agentDir);
   if (declared.some(isNpmPonytailPackage)) {
     try {
@@ -776,8 +862,7 @@ function comboHint(host: string, comboDefault: string): string {
   return comboDefault === 'off' ? `\nDone — restart ${host}.` : `\nDone — restart ${host}, then /combo ${comboDefault}.`;
 }
 
-async function runInstall(): Promise<void> {
-  // Without this guard a picked command re-enters here with command === null and loops straight back into the picker.
+async function runInstall(forcedHost?: HostId): Promise<void> {
   if (command === null && tty() && !yes && !updatePromptDone) {
     await runCommandMenu();
     return;
@@ -791,7 +876,8 @@ async function runInstall(): Promise<void> {
     console.error(`[fail] ${(e as Error).message}`);
     process.exit(1);
   }
-  if (pinned) targetHost = pinned;
+  if (forcedHost) targetHost = forcedHost;
+  else if (pinned) targetHost = pinned;
   else if (tty() && !yes && !dryRun && !applyUpdate && command !== 'uninstall') {
     targetHost = await chooseHost('Install Tersio into which agent?');
   }
@@ -810,7 +896,7 @@ async function runInstall(): Promise<void> {
   if (tty() && !applyUpdate && command !== 'uninstall') {
     const newer = await checkForUpdate();
     if (typeof newer === 'string') {
-      // Update pending: offer it here instead of burying it above the install prompts. Yes runs the full update and stops.
+      // Update pending: offer it here; yes runs the full update and stops.
       if (command === null && !dryRun && !yes && !updatePromptDone) {
         const answer = await askInteractiveConfirm(`tersio ${newer} is available (installed ${PACKAGE_VERSION}). Install it now?`);
         if (answer.status === 'confirmed' && answer.value) {
@@ -836,7 +922,7 @@ async function runInstall(): Promise<void> {
   const userExtDir = path.join(userDir, 'extensions');
 
   // apply-update refreshes every add-on like a reinstall.
-  const installOptions: InstallOptions = { dryRun, verbose, yes, reinstall: applyUpdate, quiet };
+  const installOptions: InstallOptions = { dryRun, verbose, yes, reinstall: applyUpdate || forceReinstall, quiet };
 
   // Point of no return: disk writes start here; pipes stay unattended.
   if (!yes && !dryRun && !applyUpdate && tty()) {
@@ -900,10 +986,7 @@ async function runInstall(): Promise<void> {
   await capture('ponytail', () => stepPonytail(OMP_PLUGINS_DIR, installOptions));
   await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions));
 
-  // A real install registers the plugin before it writes, so the OMP plugin manifest owns
-  // every mode extension. A dry run previews that same destination. A registration that
-  // failed is the one fallback: the agent tree then carries the tree so an offline install
-  // still loads its add-ons, and the retired copies stay untouched.
+  // The plugin manifest owns every mode extension; only a failed registration falls back to the agent tree.
   const pluginExtDir = path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions');
   const ownsTree = selfPlugin || dryRun;
   const extDir = ownsTree ? pluginExtDir : userExtDir;
@@ -927,4 +1010,4 @@ async function runInstall(): Promise<void> {
 
   closeRL();
 }
-export { runInstall, verifyRtkArchive };
+export { runInstall, runReinstall, verifyRtkArchive };

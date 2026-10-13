@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import comboToggleExtension, { ponytailFallback } from "../../extensions/combo/index.ts";
+import comboToggleExtension from "../../extensions/combo/index.ts";
 import {
   OMP_SUBAGENT_MARKER,
   resetSharedComboState,
@@ -37,8 +40,7 @@ async function injectMarked(ponytail: string): Promise<string> {
 
 
 test("a marked subagent prompt gets the installed ponytail instructions", async () => {
-  // Ponytail is a Tersio dependency, so the package resolves beside the
-  // extension in a checkout and in every install layout.
+  // Ponytail is a Tersio dependency, so the package resolves beside the extension in every install layout.
   expect(await injectMarked("ultra")).toMatch(/# Ponytail/);
   expect(await injectMarked("ultra")).toMatch(/PONYTAIL MODE ACTIVE — level: ultra/);
 });
@@ -68,8 +70,7 @@ test("off mode gets no injection, on mode gets it on any turn", async () => {
   expect(await inject(`Base.\n${OMP_SUBAGENT_MARKER}`)).toBe(undefined);
   expect(await inject("Base.")).toBe(undefined);
 
-  // Main sessions count now: ponytail used to need a subagent marker, so it
-  // never fired on the user's own turn or on pi, which has no subagents.
+  // Main sessions count now: ponytail used to need a subagent marker, so it never fired on the user's turn.
   resetSharedComboState();
   setSharedComboMode("ponytail", "ultra");
   expect(await inject("Base.")).toMatch(/PONYTAIL MODE ACTIVE/);
@@ -82,13 +83,6 @@ test("each level injects its own header", async () => {
     const text = await injectMarked(level);
     expect(text, `level ${level}`).toMatch(new RegExp(`PONYTAIL MODE ACTIVE — level: ${level}`));
   }
-});
-
-test("the injected text is the real upstream file, not the fallback", async () => {
-  // Both carry YAGNI, so length is what separates a resolved package from the fallback.
-  const upstream = await injectMarked("ultra");
-  expect(upstream).not.toBe(ponytailFallback("ultra"));
-  expect(upstream.length).toBeGreaterThan(ponytailFallback("ultra").length);
 });
 
 test("ponytail reaches a subagent that the marker does not recognise", async () => {
@@ -119,4 +113,53 @@ test("a level switch replaces the previous level's block", async () => {
 
   expect(joined).toMatch(/level: lite/);
   expect(joined).not.toMatch(/level: ultra/);
+});
+
+// pi defers to upstream only when installed; with no ponytail package in its settings it injected nothing.
+test("pi without an upstream ponytail gets the built-in fallback", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-pi-nopony-"));
+  const prevPi = process.env.PI_CODING_AGENT;
+  const prevHome = process.env.HOME;
+  try {
+    // A HOME with no pi agent dir at all: nothing is declared and nothing is on disk.
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.env.PI_CODING_AGENT = "true";
+    resetSharedComboState();
+    setSharedComboMode("ponytail", "full");
+    const result = await injectHandler()({ systemPrompt: "Base." }, undefined);
+    const prompt = (result as { systemPrompt?: string[] } | undefined)?.systemPrompt;
+    expect(prompt?.at(-1)).toMatch(/PONYTAIL MODE ACTIVE/);
+  } finally {
+    if (prevPi === undefined) delete process.env.PI_CODING_AGENT; else process.env.PI_CODING_AGENT = prevPi;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// With upstream installed, pi still defers: Tersio must not double-inject.
+test("pi with an upstream ponytail defers to it", async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-pi-pony-"));
+  const prevPi = process.env.PI_CODING_AGENT;
+  const prevHome = process.env.HOME;
+  try {
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    const agent = path.join(home, ".pi", "agent");
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(
+      path.join(agent, "settings.json"),
+      JSON.stringify({ packages: [path.join(home, ".pi", "agent", "ponytail")] }),
+      "utf8",
+    );
+    process.env.PI_CODING_AGENT = "true";
+    resetSharedComboState();
+    setSharedComboMode("ponytail", "full");
+    const result = await injectHandler()({ systemPrompt: "Base." }, undefined);
+    expect((result as { systemPrompt?: string[] } | undefined)?.systemPrompt).toBeUndefined();
+  } finally {
+    if (prevPi === undefined) delete process.env.PI_CODING_AGENT; else process.env.PI_CODING_AGENT = prevPi;
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+  }
 });

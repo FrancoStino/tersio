@@ -5,7 +5,7 @@ import { isFileExport, useFx, useAgentData } from "@/lib/data";
 import type { AgentRequestRow, AgentView } from "@/lib/data";
 import { useHashRoute } from "@/lib/route";
 import { EmptyState } from "@/components/common";
-import { ChartSkeleton, Page, PageHeader } from "@/components/charts";
+import { Page, PageHeader, PageSkeleton } from "@/components/charts";
 import { Shell, useShortcuts } from "./components/agents/shell";
 import type { ModeState } from "./components/agents/shell";
 import { navItem } from "./components/agents/nav";
@@ -93,18 +93,7 @@ function useReveal(): void {
   }, []);
 }
 
-/** The page while its snapshot is on the way. */
-function PageLoading({ title }: { title: string }) {
-  return (
-    <Page>
-      <PageHeader title={title} description="Reading the agent databases…" />
-      <ChartSkeleton height={240} />
-      <ChartSkeleton height={160} />
-    </Page>
-  );
-}
-
-/** The session-start modes the navbar's banner names, read from GET /settings. A file export has no server, so it holds null and the banner stays hidden. */
+/** The session-start modes the navbar banner names, from GET /settings; null for a file export. */
 function useModeState(): readonly [ModeState | null, () => void] {
   const [modes, setModes] = useState<ModeState | null>(null);
   const alive = useRef(true);
@@ -141,7 +130,9 @@ function Dashboard() {
   const { section, range, session, setSection, setRange, setSession } = useHashRoute();
   // The smallest view still answers "is there an agent database".
   const view: AgentView = section;
-  const { agent, loading, stale } = useAgentData(range, view);
+  // Only the request log pages through the range; every other view wants the newest rows.
+  const [requestOffset, setRequestOffset] = useState(0);
+  const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [request, setRequest] = useState<AgentRequestRow | null>(null);
@@ -149,6 +140,10 @@ function Dashboard() {
   const [modes, reloadModes] = useModeState();
 
   useShortcuts({ onRange: setRange, onSection: setSection });
+  // A new range renumbers the log, so a page held across the switch would point at different rows.
+  useEffect(() => {
+    setRequestOffset(0);
+  }, [range]);
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [section, session]);
@@ -162,10 +157,9 @@ function Dashboard() {
     if (section === "traces" && session) {
       return <SessionTrace key={session} sessionFile={session} money={money} onClose={() => setSession(null)} />;
     }
-    if (loading && !agent) return <PageLoading title={title} />;
+    if (loading && !agent) return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
-      // A fetch that never answered JSON means the page is newer than the server process, not
-      // that the databases went away. Name it, so the fix is the obvious one.
+      // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
       if (stale) {
         return (
           <Page>
@@ -201,7 +195,15 @@ function Dashboard() {
       case "carbon":
         return <CarbonPage agent={agent} />;
       case "requests":
-        return <RequestsPage agent={agent} money={money} onOpenRequest={openRequest} />;
+        return (
+          <RequestsPage
+            agent={agent}
+            money={money}
+            offset={requestOffset}
+            onOffset={setRequestOffset}
+            onOpenRequest={openRequest}
+          />
+        );
       case "errors":
         return <ErrorsPage agent={agent} money={money} onOpenRequest={openRequest} />;
       case "traces":
@@ -255,8 +257,7 @@ function Dashboard() {
 }
 
 export function App() {
-  // The provider is what makes useToast do anything: the context's default is a no-op, so a
-  // dialog mounted without it silently drops every toast.
+  // The provider makes useToast work; without it the no-op context default silently drops every toast.
   return (
     <ToasterProvider>
       <Dashboard />

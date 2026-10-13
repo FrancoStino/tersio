@@ -6,12 +6,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cliEnv } from "../helpers/env.ts";
 import { fileContains } from "../../extensions/shared/utils.ts";
+import { TREE_FILES, sourcePath, treeFileText, treeFilesFor } from "../../cli/manifest.ts";
+import { bundledPonytailSpec } from "../../cli/common.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
 
-// Empty home keeps every probe MISSING. The seeded update-check cache is
-// ignored by doctor (no registry probe); install/update flows still use it.
+// Empty home keeps probes MISSING; the seeded cache is ignored by doctor but used by install/update.
 function missingHome(): string {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-doctor-"));
   const cacheDir = path.join(home, ".omp", "plugins");
@@ -142,6 +143,34 @@ test("doctor --fix dry-run previews repairs without writing", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Summary: \d+ checks/);
     expect(result.stdout).toMatch(/\[dry-run\] would repair \d+ missing/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A dry run must reach the repairs: previewing the plan is the flag's point, and every write is guarded.
+test("doctor --fix dry-run previews debris removal", () => {
+  const home = missingHome();
+  try {
+    const dir = hostExtensionsDirForTest("pi", home);
+    for (const rel of treeFilesFor("pi")) {
+      mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      writeFileSync(path.join(dir, rel), "// current\n", "utf8");
+    }
+    seedPluginPackage(home);
+    // A rename this build replaced: nothing loads it, and the repair removes it.
+    mkdirSync(path.join(dir, "caveman-session"), { recursive: true });
+    writeFileSync(path.join(dir, "caveman-session", "rule.md"), "OLD BODY\n", "utf8");
+    const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "extensions", "--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/would remove debris .*caveman-session[\\/]rule\.md/);
+    expect(existsSync(path.join(dir, "caveman-session", "rule.md")), "a dry run must not write").toBe(true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -405,8 +434,7 @@ test("doctor finds a marker that straddles a chunk boundary", async () => {
     const binDir = path.join(home, "big-bin");
     mkdirSync(binDir, { recursive: true });
     const bin = path.join(binDir, "omp");
-    // fileContains reads 1 MiB at a time, so pad the marker across the boundary:
-    // a scan that does not carry the tail over misses it.
+    // fileContains reads 1 MiB at a time, so pad the marker across the boundary to catch a scan that drops the tail.
     const marker = "Worker agent: delegated tasks.";
     const prefix = "#!/bin/sh\n";
     const start = (1 << 20) - Math.floor(marker.length / 2);
@@ -415,6 +443,403 @@ test("doctor finds a marker that straddles a chunk boundary", async () => {
 
     expect(await fileContains(bin, marker)).toBe(true);
     expect(await fileContains(bin, "a marker that is not present")).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// Verbatim from omp's own prompt: a re-worded release stops Caveman reaching subagents.
+function fakeOmp(dir: string, body: string): string {
+  const bin = path.join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const omp = path.join(bin, "omp");
+  const lines = body.split("\n").map((line) => `# ${line}`).join("\n");
+  writeFileSync(omp, `#!/bin/sh\n# Fake omp for the subagent-marker check.\n${lines}\nexit 0\n`, "utf8");
+  chmodSync(omp, 0o755);
+  return bin;
+}
+
+// A fake opencode on PATH: `service status` answers the case, and `pgrep` answers whether a serve process is alive.
+function fakeOpencode(dir: string, status: string, pids: string[] = []): string {
+  const bin = path.join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const oc = path.join(bin, "opencode");
+  writeFileSync(oc, `#!/bin/sh\nif [ "$1" = "service" ] && [ "$2" = "status" ]; then\n  printf '%s\\n' '${status}'\nfi\nexit 0\n`, "utf8");
+  chmodSync(oc, 0o755);
+  const pgrep = path.join(bin, "pgrep");
+  const body = pids.length > 0 ? pids.join("\\n") : "";
+  writeFileSync(pgrep, `#!/bin/sh\nprintf '%s\\n' '${body}'\nexit 0\n`, "utf8");
+  chmodSync(pgrep, 0o755);
+  return bin;
+}
+
+function runDoctor(home: string, bin: string): { status: number; stdout: string } {
+  return spawnSync(process.execPath, [installer, "doctor"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30000,
+    env: cliEnv(home, { PATH: bin }),
+  });
+}
+
+test("doctor warns when omp no longer carries the subagent marker", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-doctor-drift-"));
+  try {
+    const bin = fakeOmp(dir, "Worker prompt with no marker sentence at all");
+    const result = runDoctor(home, bin);
+    expect(result.status, result.stderr).toBe(0);
+    // The check is a warning, not a failure: a drifted marker costs subagent coverage, not the run.
+    expect(result.stdout).toMatch(/⚠️\s+Caveman subagent marker/);
+    expect(result.stdout).toMatch(/OMP_SUBAGENT_MARKER/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("doctor stays silent when omp still carries the subagent marker", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-doctor-nodrift-"));
+  try {
+    const bin = fakeOmp(dir, "Some preamble.\nWorker agent: delegated tasks.\nMore preamble.");
+    const result = runDoctor(home, bin);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/Caveman subagent marker/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Each host keeps its own copy of the rule bodies until its own install runs, so the plugin copy alone hides drift.
+/** A host's own extension tree, mirroring `hostExtensionsDir` under a fake HOME. */
+function hostExtensionsDirForTest(id: "omp" | "pi" | "opencode", home: string): string {
+  if (id === "omp") return path.join(home, ".omp", "agent", "extensions");
+  if (id === "opencode") return path.join(home, ".config", "opencode", "plugins", "tersio");
+  return path.join(home, ".pi", "agent", "extensions");
+}
+
+function seededHostTree(home: string, id: "omp" | "pi" | "opencode"): string {
+  const dir = hostExtensionsDirForTest(id, home);
+  // A host only counts as installed when every tree file is present, so seed the whole set for that host.
+  for (const rel of treeFilesFor(id)) {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), "// stub\n", "utf8");
+  }
+  mkdirSync(path.join(dir, "caveman"), { recursive: true });
+  writeFileSync(path.join(dir, "caveman", "rule.md"), "STALE BODY\n", "utf8");
+  // The reference the tree is compared against, so the seeded stale body actually reads as stale.
+  seedPluginPackage(home);
+  return dir;
+}
+
+/** The plugin package seeded with what this CLI would install, so host-drift tests do not also trip over omp. */
+function seedPluginPackage(home: string): string {
+  const pkg = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
+  for (const rel of TREE_FILES) {
+    const at = path.join(pkg, "extensions", rel);
+    mkdirSync(path.dirname(at), { recursive: true });
+    writeFileSync(at, readFileSync(sourcePath(rel), "utf8"), "utf8");
+  }
+  return pkg;
+}
+
+test("doctor warns when a host tree holds an older Caveman body", () => {
+  const home = missingHome();
+  try {
+    seededHostTree(home, "pi");
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Per-host add-on files/);
+    expect(result.stdout).toMatch(/pi\/caveman\/rule\.md/);
+    expect(result.stdout).toMatch(/tersio install --host/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("doctor stays silent when every host tree matches the plugin copy", () => {
+  const home = missingHome();
+  try {
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/Per-host add-on files/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+// omp's tree and the installed package are the same directory, so the reference is this CLI's source instead.
+test("doctor does not report a stale omp package tree", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    const result0 = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result0.status, result0.stderr).toBe(0);
+    expect(result0.stdout).not.toMatch(/Per-host add-on files/);
+    // A dist copy that differs must stay silent: the manifest loads ./extensions/caveman/index.ts.
+    const dist = path.join(pkg, "dist", "extensions", "caveman");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(path.join(dist, "rule.md"), "STALE DIST COPY\n", "utf8");
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/Per-host add-on files/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// Reading the installed package as its own reference can never catch an older npm copy, so the check names the file.
+test("doctor reports an omp package older than the running CLI", () => {
+  const home = missingHome();
+  try {
+    seedPluginPackage(home);
+    const stale = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio", "extensions", "rtk", "session.ts");
+    mkdirSync(path.dirname(stale), { recursive: true });
+    writeFileSync(stale, "// published copy, older than the running CLI\n", "utf8");
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Per-host add-on files/);
+    expect(result.stdout).toMatch(/omp\/rtk\/session\.ts/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A tree that loses the OpenCode entry reports it missing, not orphan: omp's manifest names that file.
+test("doctor reports the package tree missing the OpenCode entry", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    rmSync(path.join(pkg, "extensions", "server.ts"));
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/never installed/);
+    expect(result.stdout).toMatch(/omp\/server\.ts/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A stale extension whose import target was removed keeps loading on pi, which auto-discovers every index.ts.
+function seedStalePiTree(home: string): string {
+  seedPluginPackage(home);
+  const tree = hostExtensionsDirForTest("pi", home);
+  for (const rel of treeFilesFor("pi")) {
+    if (rel === "server.ts") continue;
+    mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+    writeFileSync(path.join(tree, rel), treeFileText(rel) ?? "", "utf8");
+  }
+  const stale = path.join(tree, "tersio-commands");
+  mkdirSync(stale, { recursive: true });
+  writeFileSync(path.join(stale, "index.ts"), "export default {}\n", "utf8");
+  return stale;
+}
+
+test("doctor reports a stale tersio-commands extension as debris", () => {
+  const home = missingHome();
+  try {
+    const stale = seedStalePiTree(home);
+    expect(existsSync(path.join(stale, "index.ts"))).toBe(true);
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Per-host add-on files/);
+    expect(result.stdout).toMatch(/pi\/tersio-commands\/index\.ts/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("doctor --fix removes a stale tersio-commands extension", () => {
+  const home = missingHome();
+  try {
+    const stale = seedStalePiTree(home);
+    const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "extensions", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: cliEnv(home),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(path.join(stale, "index.ts")), "the stale extension must not load again").toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A service that answers with its URL is running; the word is only one of the answers OpenCode gives.
+test("serviceRunning reads a URL answer as running", async () => {
+  const { serviceRunning } = await import("../../cli/doctor-fix.ts");
+  expect(serviceRunning("http://127.0.0.1:49374")).toBe(true);
+  expect(serviceRunning("https://127.0.0.1:443")).toBe(true);
+  expect(serviceRunning("running")).toBe(true);
+  expect(serviceRunning("stopped")).toBe(false);
+  expect(serviceRunning("")).toBe(false);
+});
+
+// The manager reads stopped while the daemon still holds the port, so start and restart both exit 1.
+test("doctor warns when a serve process outlives the service manager", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-stale-"));
+  try {
+    const bin = fakeOpencode(dir, "stopped", ["4242"]);
+    const result = runDoctor(home, bin);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/OpenCode service/);
+    expect(result.stdout).toMatch(/a serve process is alive but the service reads stopped/);
+    expect(result.stdout).toMatch(/tersio doctor --fix service/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A service that answers with its URL reads healthy, and the row carries that URL.
+test("doctor stays silent when the opencode service answers with its URL", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-ok-"));
+  try {
+    const bin = fakeOpencode(dir, "http://127.0.0.1:49374", ["4242"]);
+    const result = runDoctor(home, bin);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/OpenCode service: ok http:\/\/127\.0\.0\.1:49374/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A manager that answers running with nothing behind it is its own failure, not the orphan one.
+test("doctor warns when the service reports running with no serve process", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-dead-"));
+  try {
+    const bin = fakeOpencode(dir, "http://127.0.0.1:49374", []);
+    const result = runDoctor(home, bin);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/reports running but no serve process is alive/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A machine with no opencode adds no row and fails nothing.
+test("doctor adds no opencode service row without the binary", () => {
+  const home = missingHome();
+  try {
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/OpenCode service/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// A dry run names the pid the probe found and leaves nothing killed.
+test("doctor --fix service previews the orphaned pid without killing anything", () => {
+  const home = missingHome();
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-fix-"));
+  try {
+    const bin = fakeOpencode(dir, "stopped", ["4242"]);
+    const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "service", "--dry-run", "--yes"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 30000,
+      env: cliEnv(home, { PATH: bin }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/would stop the orphaned serve process \(pid 4242\)/);
+    expect(result.stdout, "a dry run must not start the service").not.toMatch(/Starting the OpenCode service/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The walk catches a stale add-on file too: an older combo/index.ts behaves old, and only that file is named.
+test("doctor warns about a stale add-on file in a host tree", () => {
+  const home = missingHome();
+  try {
+    // The plugin package and pi's tree both hold what this CLI installs, so the edit below is the only difference.
+    seedPluginPackage(home);
+    const tree = hostExtensionsDirForTest("pi", home);
+    for (const rel of treeFilesFor("pi")) {
+      if (rel === "server.ts") continue;
+      mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+      writeFileSync(path.join(tree, rel), treeFileText(rel) ?? "", "utf8");
+    }
+    writeFileSync(path.join(tree, "combo", "index.ts"), "STALE COMBO\n", "utf8");
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Per-host add-on files/);
+    expect(result.stdout).toMatch(/pi\/combo\/index\.ts/);
+    expect(result.stdout).not.toMatch(/pi\/caveman\/index\.ts/);
+    expect(result.stdout).not.toMatch(/omp\//);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// npm resolves the *published* tersio: its range can differ from this tree, so a local bump never reached install.
+test("bundled ponytail spec matches this tree declaration", async () => {
+  const spec = await bundledPonytailSpec();
+  const local = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { dependencies: Record<string, string> };
+  expect(spec).toBe(local.dependencies["@dietrichgebert/ponytail"]);
+  expect(spec).toBeTruthy();
+});
+
+// Node resolves npm's nested copy first, so the reference must be the copy the extensions load.
+test("doctor measures ponytail bodies against the copy the extensions load", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    const nested = path.join(pkg, "node_modules", "@dietrichgebert", "ponytail", "hooks", "ponytail-instructions.js");
+    const topLevel = path.join(home, ".omp", "plugins", "node_modules", "@dietrichgebert", "ponytail", "hooks", "ponytail-instructions.js");
+    mkdirSync(path.dirname(nested), { recursive: true });
+    mkdirSync(path.dirname(topLevel), { recursive: true });
+    writeFileSync(nested, "NESTED BODY\n", "utf8");
+    writeFileSync(topLevel, "TOP LEVEL BODY\n", "utf8");
+    // OpenCode keeps the body the nested copy carries, so it agrees with what omp loads.
+    seededHostTree(home, "opencode");
+    const agree = path.join(hostExtensionsDirForTest("opencode", home), "ponytail-bundle", "hooks", "ponytail-instructions.js");
+    mkdirSync(path.dirname(agree), { recursive: true });
+    writeFileSync(agree, "NESTED BODY\n", "utf8");
+    // pi keeps the top-level body and loads from the package its settings.json names, so it is the one that drifted.
+    seededHostTree(home, "pi");
+    const agentDir = path.join(home, ".pi", "agent");
+    const local = path.join(agentDir, "ponytail");
+    mkdirSync(path.join(local, "hooks"), { recursive: true });
+    writeFileSync(path.join(local, "hooks", "ponytail-instructions.js"), "TOP LEVEL BODY\n", "utf8");
+    writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: [local] }, null, 2), "utf8");
+
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Ponytail per-host bodies/);
+    expect(result.stdout).toMatch(/stale in pi/);
+    expect(result.stdout).not.toMatch(/stale in opencode/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// pi loads ponytail from the path its settings.json names; `extensions/ponytail` is not a pi path.
+test("doctor checks pi ponytail at the path its settings declare", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    const agentDir = path.join(home, ".pi", "agent");
+    const local = path.join(agentDir, "ponytail");
+    // A host only counts as installed when every tree file is present, so seed pi's tree first.
+    seededHostTree(home, "pi");
+    mkdirSync(path.join(local, "hooks"), { recursive: true });
+    writeFileSync(path.join(local, "hooks", "ponytail-instructions.js"), "PI BODY\n", "utf8");
+    writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-subagents", local] }, null, 2), "utf8");
+    // The copy the omp extensions load is the reference: a nested copy, resolved nearest-first.
+    const ref = path.join(pkg, "node_modules", "@dietrichgebert", "ponytail", "hooks", "ponytail-instructions.js");
+    mkdirSync(path.dirname(ref), { recursive: true });
+    writeFileSync(ref, "REFERENCE BODY\n", "utf8");
+
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Ponytail per-host bodies/);
+    expect(result.stdout).toMatch(/stale in pi/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

@@ -1,11 +1,9 @@
-// Pure per-report CO2 totals; depth lives in the shared EcoLogits port. One source feeds this
-// builder: the agent statistics database behind the Carbon page.
+// Pure per-report CO2 totals; depth lives in the shared EcoLogits port, fed by the agent statistics database.
 import { ECOLOGITS_VERSION, SERVING_CONCURRENCY, carbonParamsFor, footprintFor } from "../../../../extensions/shared/carbon.ts";
 import { displayModel } from "./format";
 import type { AgentStats } from "./data";
 
-// Published per-unit averages, each printed beside its result so a reader can
-// redo the arithmetic. None of them describes the reader's own life.
+// Published per-unit averages, each printed beside its result so a reader can redo the arithmetic.
 const KG_PER_KM_DRIVEN = 0.24; // EPA: 4.6 t/yr over 12,000 mi
 const G_PER_FLIGHT_KM = 0.09; // ICAO: ~90 g per passenger-km, short haul
 const WH_PER_PHONE_CHARGE = 15; // ~12 Wh cell plus charging losses
@@ -108,8 +106,7 @@ function fmtCount(n: number): string {
 }
 
 function comparisonsFor(totalG: number, energyWh: number): Comparison[] {
-  // Nothing to compare against, so the caller shows its empty state; this also
-  // keeps a missing report and an empty one on the same shape.
+  // Nothing to compare, so the caller shows its empty state; a missing report and an empty one share a shape.
   if (!(totalG > 0) && !(energyWh > 0)) return [];
   // "at X per Y" keeps each tile to one short sentence, and short enough not to clip.
   return [

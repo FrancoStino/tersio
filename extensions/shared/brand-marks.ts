@@ -1,10 +1,4 @@
-// Brand mark catalog: names, not bytes. One list serves both consumers — the dashboard draws from
-// it at runtime, and the CLI export inlines the same URLs so a single-file dashboard keeps its
-// logos with the network off. Simple Icons files are CC0-1.0; the marks stay their owners'
-// property and the dashboard uses them nominatively, to name the service that served a request.
-// A vendor with no Simple Icons entry keeps its owner-hosted mark, one with no hosted mark is
-// drawn inline (`dashboard/app/src/lib/marks/inline.ts`), and bumping `SIMPLE_ICONS` once moves
-// every Simple Icons entry with it.
+// Brand mark catalog: names not bytes; Simple Icons files are CC0-1.0, marks remain their owners'.
 const SIMPLE_ICONS = "https://cdn.jsdelivr.net/npm/simple-icons@16/icons";
 
 /** Slug to mark URL. Only slugs named here resolve to a mark; the rest get a monogram. */
@@ -34,6 +28,8 @@ export const REMOTE_MARKS: Readonly<Record<string, string>> = {
   // Owner-hosted, nominative use.
   groq: "https://groq.com/favicon.svg",
   poolside: "https://poolside.ai/favicon/favicon.svg",
+  // AWS owns Kiro; Wikimedia hosts its vector, as AWS serves only a 16x16 ICO that cannot grow into a tile.
+  amazonaws: "https://upload.wikimedia.org/wikipedia/commons/5/5c/AWS_Simple_Icons_AWS_Cloud.svg",
   cerebras:
     "https://cdn.sanity.io/images/e4qjo92p/production/e7a55ae5ab7e2c4fdfd4e66a51f628d1f2f44207-967x967.png?w=256&h=256&fit=max",
   inclusionai: "https://cdn-avatars.huggingface.co/v1/production/uploads/662e1f9da266499277937d33/fyKuazRifqiaIO34xrhhm.jpeg",
@@ -48,14 +44,18 @@ export const REMOTE_MARKS: Readonly<Record<string, string>> = {
   magpie: "https://usemagpie.ai/favicon.png",
   gmicloud: "https://gmicloud.ai/favicon.ico",
   charmhyper: "https://github.com/charmbracelet.png?size=80",
+  // WorkBuddy's own favicon, a hashed asset on the Tencent CDN its page serves.
+  workbuddy:
+    "https://download.codebuddy.ai/web/workbuddy/913b2390aae396c66b937bd9143ae5259306d7d7/assets/logo.svg",
+  // Trae's own favicon: a dark tile carrying its green mark, so the tile matches the artwork.
+  trae: "https://lf16-web-neutral.traecdn.ai/obj/trae-ai-static/trae_website/favicon.png",
+  // Kiro's own icon, a purple tile with the mark drawn inside it.
+  kiro: "https://kiro.dev/icon.svg",
+  // Meituan's own icon: its yellow tile with the logotype.
+  meituan: "https://s3plus.meituan.net/v1/mss_e2821d7f0cfe4ac1bf9202ecf9590e67/cdn-prod/file:1040877d/favicon-mt.ico",
 };
 
-/**
- * Tile fill, not text. A mark whose tile carries its brand color reads as the brand, and a mark
- * whose logo already fills its own box never shows the fill. Values come from the brand (the
- * service's own page or its own asset), never from a guess; a slug absent here keeps the plain
- * panel and the theme ink.
- */
+/** Tile fill per slug from the brand's own page, never a guess; an absent slug keeps the plain panel. */
 export const MARK_BG: Readonly<Record<string, string>> = {
   // Simple Icons marks: the vendor's brand color, taken from its own brand page.
   anthropic: "#d97757",
@@ -80,8 +80,7 @@ export const MARK_BG: Readonly<Record<string, string>> = {
   instagram: "#e4405f",
   reddit: "#ff4500",
   linkedin: "#0a66c2",
-  // Owner-hosted marks: the tile matches the asset's own square, and a slug whose artwork already
-  // carries its own color takes a white tile so the art reads.
+  // Owner-hosted marks match the asset's own square; art that already carries color takes a white tile.
   groq: "#f43e01",
   poolside: "#4137ff",
   cerebras: "#ffffff",
@@ -90,18 +89,22 @@ export const MARK_BG: Readonly<Record<string, string>> = {
   stepfun: "#ffffff",
   kilo: "#f7f576",
   opencode: "#131010",
+  // The AWS cloud mark draws its own orange and its own white, so the tile stays plain white.
+  amazonaws: "#ffffff",
   // The mark's own artwork is white, so the tile is white and the glyph is black.
   openai: "#ffffff",
   commandcode: "#ffffff",
   gmicloud: "#ffffff",
   magpie: "#0b0b0c",
+  // WorkBuddy's mark is a full-bleed teal tile carrying its own white art.
+  workbuddy: "#01c886",
+  // The mark is a full-bleed tile, so the tile fill repeats the artwork's own background.
+  trae: "#000000",
+  kiro: "#9046ff",
+  meituan: "#ffd100",
 };
 
-/**
- * Glyph scale per slug, applied to the glyph box the tile clips. Simple Icons art fills its 24 box
- * by very different amounts, so the measured ink box decides the scale: a logo that runs to its
- * box edge shrinks and one with an invisible margin grows. One is the default.
- */
+/** Glyph scale per slug over the tile clip; the measured ink box decides, and one is the default. */
 export const MARK_SCALE: Readonly<Record<string, number>> = {
   kimi: 0.72,
   zdotai: 0.72,
@@ -119,21 +122,12 @@ export function luminance(hex: string): number {
   return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
 }
 
-/**
- * The glyph color that stays legible on a tile fill. The cut sits at 0.35, which keeps white ink
- * on a brand color: Meta blue, DeepSeek blue, Xiaomi orange, Mistral orange, and Kimi blue all
- * carry a white logo, which is how their own brand sheets print them. Only a light neutral takes
- * black: Kilo yellow, StepFun teal, and Lightbend orange.
- */
+/** The ink legible on a tile fill: luminance above 0.35 takes black, else white. */
 export function contrastInk(hex: string): string {
   return luminance(hex) > 0.35 ? "#000000" : "#ffffff";
 }
 
-/**
- * Marks that carry their own color or their own background. Everything else is opaque black, so
- * it draws as an alpha mask filled with the chosen ink instead of an image. A slug whose asset is
- * a filled tile must draw as an image, or the mask paints one flat block and the logo vanishes.
- */
+/** Marks carrying their own color or background; a filled-tile asset must draw as an image, not a mask. */
 export const COLORED_MARKS: ReadonlySet<string> = new Set([
   "cerebras",
   "inclusionai",
@@ -144,12 +138,18 @@ export const COLORED_MARKS: ReadonlySet<string> = new Set([
   "magpie",
   "charmhyper",
   "stepfun",
-  // The ICO and the two inline PNGs are dark tiles with light art drawn inside them. The Groq
-  // favicon is one flat orange, so it draws as a mask instead: a masked glyph on a Groq-orange
-  // tile is a logo, and the same art as an image on the same orange tile is a blank tile.
+  // The ICO and inline PNGs are dark tiles with light art; flat-orange Groq draws as a mask instead.
   "gmicloud",
   "stealth",
   "cognition",
+  // A full-bleed teal tile with its own white art, so a mask would flatten both into one ink.
+  "workbuddy",
+  // Each is a full-bleed brand tile with its own ink, so a mask would flatten both into one color.
+  "trae",
+  "kiro",
+  "meituan",
+  // Carries its own orange and its own white, so a mask would flatten both into one ink.
+  "amazonaws",
 ]);
 
 /** The URL a mark comes from, or null when the name has no hosted mark. */

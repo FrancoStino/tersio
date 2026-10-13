@@ -27,7 +27,7 @@ interface Profile {
   ponytailDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
-  // Host subagent-prompt markers. Empty means the built-in default.
+  // Empty means the built-in default.
   subagentMarkers: string[];
 }
 
@@ -56,7 +56,7 @@ interface StoredSettings {
   subagentMarkers?: unknown;
 }
 
-// Seed once from OMP plugin settings so a pre-~/.tersio install keeps its values. Sync: awaiting let piped stdin arrive before `ask()` attached, so a scripted answer was swallowed and a destructive confirm defaulted to abort.
+// Seed from OMP settings so pre-~/.tersio installs keep values. Sync: awaiting let piped stdin beat `ask()`.
 function storedProfileSync(): Profile {
   const base = defaultProfile();
   const stored = parseStored(readTextIfExistsSync(tersioSettingsFile()) ?? readTextIfExistsSync(legacyOmpLockPath()));
@@ -107,7 +107,7 @@ function parseStored(raw: string | null): StoredSettings | null {
   }
 }
 
-// Persist the profile where every host reads it. `omp plugin config get` no longer reports it; `tersio settings` does.
+// Persist profile where every host reads it. `omp plugin config get` no longer reports it; `tersio settings` does.
 async function writePluginSettings(profile: Profile, options: WriteOptions): Promise<void> {
   const file = tersioSettingsFile();
   const values = {
