@@ -54,22 +54,24 @@ export function ThemeToggle() {
   );
 }
 
-/** The four session-start mode fields the banner reads. */
+/** The five session-start mode fields the banner reads. */
 export interface ModeState {
   comboDefault: string;
   cavemanDefault: string;
   rtkDefault: boolean;
   ponytailDefault: string;
+  pstackDefault: string;
 }
 
-/** One glyph and one short name per mode, in the order the three locks appear in the combo. */
+/** One glyph and one short name per mode, in the order the locks appear in the combo. pstack trails, because it rides no preset. */
 const MODE_GLYPHS = [
   { key: "caveman", glyph: "🪨", label: "caveman", level: (m: ModeState) => (m.cavemanDefault ?? "off").toUpperCase() },
   { key: "rtk", glyph: "⚡", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
   { key: "ponytail", glyph: "🦥", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
+  { key: "pstack", glyph: "🥔", label: "pstack", level: (m: ModeState) => (m.pstackDefault ?? "off").toUpperCase() },
 ] as const;
 
-/** The combo preset this machine starts sessions with and the three modes under it; a click opens Settings. */
+/** The combo preset this machine starts sessions with and the modes under it; a click opens Settings. */
 export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen: () => void }) {
   const level = modes?.comboDefault ?? "off";
   const on = level !== "off";
@@ -79,7 +81,7 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
       type="button"
       onClick={onOpen}
       title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open Settings to change it.`}
-      className="mono flex h-8 min-w-0 max-w-[460px] cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-accent-soft"
+      className="mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-accent-soft"
     >
       <span className="shrink-0 text-[13px]">🧩</span>
       <span className={cn("min-w-0 truncate", on ? "font-semibold text-ink" : "text-dim")}>{label}:</span>

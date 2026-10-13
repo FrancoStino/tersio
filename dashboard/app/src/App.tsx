@@ -112,6 +112,7 @@ function useModeState(): readonly [ModeState | null, () => void] {
           cavemanDefault: typeof d.cavemanDefault === "string" ? d.cavemanDefault : "off",
           rtkDefault: d.rtkDefault === true,
           ponytailDefault: typeof d.ponytailDefault === "string" ? d.ponytailDefault : "off",
+          pstackDefault: typeof d.pstackDefault === "string" ? d.pstackDefault : "off",
         });
       })
       .catch(() => { /* no server: the banner stays hidden */ });

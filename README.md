@@ -109,10 +109,10 @@ It is display-only — it never enters the model context, so it costs the sessio
 | Command | Purpose |
 |---|---|
 | `/combo off\|medium\|balanced\|max\|status` | One preset for the three modes (start here): medium = lite/lite/on, balanced = full/full/on, max = ultra/ultra/on; per-mode tweaks drop to `custom`. Every preset clears pstack. |
-| `/pstack on\|off\|status` | The pstack rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT, Lauren Tan). Opt-in: no preset turns it on, so its prompt cost only applies when you ask. `/pstack off` or `normal mode` clears it. Its body ships with Tersio, so `tersio update` does not track it. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. The legacy `wenyan` spelling still resolves, onto `megacave-full`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes. Review runs separately through `/ponytail-review`. |
+| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: no preset turns it on, and `normal mode` clears it. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio check` | Add-on version check |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |

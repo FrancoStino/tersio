@@ -257,7 +257,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
       env: cliEnv(home),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full\)/);
+    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off\)/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

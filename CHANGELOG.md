@@ -10,7 +10,7 @@
 ### Changed
  - Every dashboard page now loads into a skeleton of itself. The stat strip, the chart cards, and the table block hold the page's own shape until the data arrives, in place of two generic boxes. The session trace gets the same treatment.
  - Placeholders draw their tone from the panel ink, so they read in both themes. The chart and table placeholders before this used a tint that nearly vanished in light mode.
- - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF`. A preset matches all four modes, so turning pstack on reads as `CUSTOM` rather than claiming the preset, and `🧩 combo OFF` collapses only when pstack is off too.
+ - The status line names a fourth mode: `🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=OFF`. A preset matches all four modes, so turning pstack on reads as `CUSTOM` rather than claiming the preset, and `🧩 combo OFF` collapses only when pstack is off too. The dashboard banner and the Settings pane carry the same segment and row.
 
 ### Fixed
  - The host footer carried the caveman mode twice: the combo banner, and a separate `Caveman mode: full` line beside it. The mode now reads once, in the combo line, and `/caveman status` answers with the mode in a message.

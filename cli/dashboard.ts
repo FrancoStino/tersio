@@ -15,7 +15,7 @@ import {
 import { BACKUP_SCHEDULES, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS } from './common.ts';
+import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary } from '../extensions/shared/utils.ts';
@@ -140,6 +140,7 @@ async function statusJson(): Promise<string> {
     caveman: profile.cavemanDefault,
     rtk: profile.rtkDefault ? 'on' : 'off',
     ponytail: profile.ponytailDefault,
+    pstack: profile.pstackDefault,
   });
 }
 
@@ -420,6 +421,11 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
   }
+  if (body.pstackDefault !== undefined) {
+    const v = String(body.pstackDefault);
+    if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
+    profile.pstackDefault = v;
+  }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
     if (!BACKUP_SCHEDULES.has(v)) return { ok: false, error: 'unknown backup schedule' };
@@ -437,6 +443,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       cavemanDefault: profile.cavemanDefault,
       rtkDefault: profile.rtkDefault,
       ponytailDefault: profile.ponytailDefault,
+      pstackDefault: profile.pstackDefault,
       backupSchedule: profile.backupSchedule,
     },
   };
@@ -570,6 +577,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           cavemanDefault: profile.cavemanDefault,
           rtkDefault: profile.rtkDefault,
           ponytailDefault: profile.ponytailDefault,
+          pstackDefault: profile.pstackDefault,
           backupSchedule: profile.backupSchedule,
           currency: options.currency,
         }));

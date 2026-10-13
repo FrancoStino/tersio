@@ -657,7 +657,7 @@ const TITLES: Record<Pane, string> = {
 };
 
 const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
-  { pane: "general", label: "Combo preset", terms: "general default mode combo preset balanced max medium off new session resume start caveman rtk ponytail" },
+  { pane: "general", label: "Combo preset", terms: "general default mode combo preset balanced max medium off new session resume start caveman rtk ponytail pstack poteto rigor" },
   { pane: "general", label: "Theme", terms: "general appearance theme light dark system color scheme mode" },
   { pane: "general", label: "Accent color", terms: "general appearance accent color tint buttons links highlights palette emerald violet slate cyan rose amber orange charts background" },
   { pane: "general", label: "Currency", terms: "currency display cost usd euro" },
@@ -697,13 +697,14 @@ interface DefaultsPayload {
   cavemanDefault: string;
   rtkDefault: boolean;
   ponytailDefault: string;
+  pstackDefault: string;
 }
 
 const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint: string; options: Array<{ id: string; label: string }> }> = [
   {
     field: "comboDefault",
     label: "Combo preset",
-    hint: "Sets caveman, RTK and Ponytail together.",
+    hint: "Sets caveman, RTK and Ponytail together, and turns pstack off.",
     options: [
       { id: "off", label: "Off" },
       { id: "medium", label: "Medium" },
@@ -737,13 +738,19 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
       { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
     ],
   },
+  {
+    field: "pstackDefault",
+    label: "pstack",
+    hint: "Rigor mode. Opt-in, so it spends prompt tokens only when you pick it.",
+    options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
+  },
 ];
 
 // Session-start defaults mirror `tersio settings`; each row saves on its own.
 function DefaultModes() {
   const toast = useToast();
   const [current, setCurrent] = useState<DefaultsPayload>({
-    comboDefault: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off",
+    comboDefault: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off",
   });
   const [loaded, setLoaded] = useState(false);
 
@@ -779,9 +786,10 @@ function DefaultModes() {
         const raw = current[row.field];
         const isRtk = row.field === "rtkDefault";
         const value = isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // A live preset writes all three, so they are inert; Off makes them the only input.
+        // A live preset writes the three modes, so they are inert; Off makes them the only input.
+        // pstack stays live either way: no preset writes it, so it is always the user's own call.
         const presetOn = current.comboDefault !== "off";
-        const locked = !loaded || (presetOn && row.field !== "comboDefault");
+        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault");
         if (isRtk) {
           return (
             <div key={row.field} className="flex items-center justify-between gap-3">

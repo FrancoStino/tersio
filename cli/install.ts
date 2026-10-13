@@ -7,7 +7,7 @@ import {
   BUN_BIN_DIR, COMBO_PRESET_MODES, HOME, IS_WINDOWS, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
   allowUnverified, applyUpdate, bundledPonytailSpec, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
-  ponytailDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
+  ponytailDefaultFlag, pstackDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
   dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
   execP, parseJsonObject, readPluginsPackage,
@@ -574,12 +574,14 @@ async function resolveProfile(opts: { quiet?: boolean } = {}): Promise<Profile> 
     profile.cavemanDefault = preset.caveman;
     profile.rtkDefault = preset.rtk;
     profile.ponytailDefault = preset.ponytail;
+    profile.pstackDefault = preset.pstack;
   }
   if (cavemanDefaultFlag !== undefined) profile.cavemanDefault = cavemanDefaultFlag;
   if (rtkDefaultFlag !== undefined) profile.rtkDefault = rtkDefaultFlag === 'on';
   if (ponytailDefaultFlag !== undefined) profile.ponytailDefault = ponytailDefaultFlag;
+  if (pstackDefaultFlag !== undefined) profile.pstackDefault = pstackDefaultFlag;
 
-  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault})`);
+  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault})`);
   return profile;
 }
 
