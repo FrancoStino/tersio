@@ -15,7 +15,7 @@ import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
-import { TREE_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
+import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, TREE_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
 import { serviceRunning, serviceState } from './doctor-fix.ts';
 
 /** Bytes at the scale a transcript gap reads in: `5.6M`, not `5571992`. */
@@ -44,8 +44,6 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const tersioPluginDir = ompPackageDir();
 
   // Node resolves npm's nested copy before the top-level one, so the top-level copy is a decoy no host loads.
-  const ponytailHook = 'hooks/ponytail-instructions.js';
-  const ponytailHookPath = (dir: string): string => path.join(dir, ponytailHook);
   const ponytailPkg = findHoistedPackage('@dietrichgebert/ponytail', tersioPluginDir, 'package.json')
     ?? path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
   const cavemanIndex = path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts');
@@ -58,25 +56,23 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // Probes start concurrently and report in fixed order as data settles; each resolves instead of rejecting.
   const hosts = detectHosts();
 
-  // Every host keeps a copy, so resolve the reference as Node does: the omp extensions' copy, not a pinned sibling.
-  const ponytailRef = findHoistedPackage('@dietrichgebert/ponytail', tersioPluginDir, ponytailHook);
-  // pi's settings.json names the local package that loads, and `extensions/ponytail` is not a pi path at all.
-  const piPonytailDir = piPonytailPackageDir(piAgentDir());
-  const piPonytailHook = ponytailHookPath(piPonytailDir);
-  const ponytailLoads: Record<string, string> = {
-    omp: ponytailHookPath(path.join(tersioPluginDir, 'extensions')),
-    pi: piPonytailHook,
-    opencode: ponytailHookPath(path.join(hostExtensionsDir('opencode'), 'ponytail-bundle')),
+  // Every host keeps a copy, and the copy omp loads is the reference itself, so only the hosts that get
+  // their own copy are compared below. The package root, not the hook's directory, is what the paths hang off.
+  const ponytailLoads: Record<string, { dir: string; files: readonly string[] }> = {
+    pi: { dir: piPonytailPackageDir(piAgentDir()), files: PI_PONYTAIL_FILES },
+    opencode: { dir: path.join(hostExtensionsDir('opencode'), 'ponytail-bundle'), files: PONYTAIL_BUNDLE_FILES },
   };
+  // One hook cannot stand for the set: 5.1 and 5.2 ship the same instructions file and differ inside a skill.
   const ponytailStale: string[] = [];
-  if (ponytailRef) {
-    const ref = await readTextIfExists(ponytailRef);
-    for (const host of hosts.filter((h) => h.installed)) {
-      const dir = ponytailLoads[host.id];
-      if (!dir) continue;
-      const theirs = await readTextIfExists(dir);
-      if (theirs === null || ref === null) continue;
-      if (theirs !== ref) ponytailStale.push(host.id);
+  const ponytailSource = path.dirname(ponytailPkg);
+  for (const host of hosts.filter((h) => h.installed)) {
+    const copy = ponytailLoads[host.id];
+    if (!copy) continue;
+    for (const rel of copy.files) {
+      const ref = await readTextIfExists(path.join(ponytailSource, ...rel.split('/')));
+      if (ref === null) continue;
+      const theirs = await readTextIfExists(path.join(copy.dir, ...rel.split('/')));
+      if (theirs !== ref) ponytailStale.push(`${host.id}/${rel}`);
     }
   }
   // One comparison per read file catches three directions: dropped, not received, debris left under a dropped name.
@@ -289,7 +285,9 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const ponytailVer = parseJsonObject<{ version?: string }>(ponytailPkgText)?.version ?? '';
   check('Ponytail', ponytailPkgText !== null, [ponytailVer, ponytailAge].filter(Boolean).join(' '));
   if (ponytailStale.length > 0) {
-    warnLine('Ponytail per-host bodies', `stale in ${ponytailStale.join(', ')} — run: tersio update --apply-update --yes`);
+    warnLine('Ponytail per-host bodies',
+      `stale in ${ponytailStale.length} file${ponytailStale.length === 1 ? '' : 's'}: ${ponytailStale.slice(0, 6).join(', ')}` +
+      `${ponytailStale.length > 6 ? ` +${ponytailStale.length - 6} more` : ''} — run: tersio install --host <host>`);
   }
   // Offline-safe: the registry call is best-effort, and silence means no row rather than a stale one.
   const ponytailVersionGap = await ponytailLatestGap(ponytailPkgText);

@@ -89,6 +89,19 @@ export function treeFileText(file: string): string | null {
   try { return readFileSync(sourcePath(file), 'utf8'); } catch { return null; }
 }
 
+/** The ponytail ruleset this build ships, copied to every host that cannot install the package. */
+export const PONYTAIL_SKILL_NAMES = ['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review'] as const;
+
+/** The OpenCode bundle: no node_modules there, so the ruleset rides along as files. */
+export const PONYTAIL_BUNDLE_FILES = [
+  'hooks/ponytail-instructions.js',
+  'hooks/ponytail-config.js',
+  ...PONYTAIL_SKILL_NAMES.map((skill) => `skills/${skill}/SKILL.md`),
+] as const;
+
+/** pi's local package: the same ruleset, plus the extension that injects it. */
+export const PI_PONYTAIL_FILES = ['pi-extension/index.js', ...PONYTAIL_BUNDLE_FILES] as const;
+
 /** The shipped package manifest, one level above the extension tree. */
 const MANIFEST_PATH = path.join(path.dirname(EXT_DIR), 'package.json');
 

@@ -31,7 +31,7 @@ import {
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { PI_RTK_MANIFEST, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
+import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
@@ -486,14 +486,6 @@ async function stepPstack(extDir: string, options: InstallOptions): Promise<void
 }
 
 // The tree ships no node_modules, so the ruleset rides along as files. Both hosts need the same six.
-const PONYTAIL_SKILL_NAMES = ['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review'] as const;
-
-const PONYTAIL_BUNDLE_FILES = [
-  'hooks/ponytail-instructions.js',
-  'hooks/ponytail-config.js',
-  ...PONYTAIL_SKILL_NAMES.map((skill) => `skills/${skill}/SKILL.md`),
-] as const;
-
 async function stepPonytailBundle(treeDir: string, options: InstallOptions): Promise<void> {
   const root = findHoistedPackage('@dietrichgebert/ponytail', findPackageRoot(path.dirname(fileURLToPath(import.meta.url))));
   if (!root) {
@@ -800,13 +792,6 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
 }
 
 // A local dir, not an npm spec: pi only version-checks npm entries, so this avoids the update nag.
-const PI_PONYTAIL_FILES = [
-  'pi-extension/index.js',
-  'hooks/ponytail-instructions.js',
-  'hooks/ponytail-config.js',
-  ...PONYTAIL_SKILL_NAMES.map((skill) => `skills/${skill}/SKILL.md`),
-] as const;
-
 const PI_PONYTAIL_PACKAGE = `${JSON.stringify({ name: 'ponytail', version: '0.0.0', private: true, pi: { extensions: ['./pi-extension/index.js'], skills: ['./skills'] } }, null, 2)}\n`;
 
 async function stepPonytailForPi(agentDir: string, options: InstallOptions): Promise<void> {
