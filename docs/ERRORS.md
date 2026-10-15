@@ -34,7 +34,12 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 ## The entries that stay
 
-The eight entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+The nine entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+
+## 2026-10-15 — Windows test expectations written against the POSIX exec shape
+**What happened:** Four tests stayed red on the Windows runner across four consecutive CI rounds, one shape at a time. Each asserted a POSIX detail: the bare command and argv, a quote-free `echo`, and an LF line. The product spawns a `.cmd` shim through `cmd.exe`, so the exec name is the shell, the shell's own flags precede the args, `echo` keeps the quotes it was given, and a line ends with CRLF.
+**Root cause:** Read each expectation off the passing POSIX run instead of deriving it from the helper the product calls, so every fix swapped one hard-coded shape for another and the next Windows round surfaced the next one.
+**Prevention rule:** Build every platform-dependent expectation from the same helper the product calls (`shimCommand`, `filterShell`), never from a literal. When a test is red on Windows alone, suspect the spawn path before the product.
 
 ## 2026-10-10 — Line-range deletions computed against a list an earlier deletion had shifted
 **What happened:** A python pass deleted two function blocks from `extensions/shared/agent-stats.ts` by line range. The first deletion lowered every later index, and the second range used indices read before that deletion, so it cut the middle of `readSessionTrace` instead of the gain block. The file lost 168 lines of live code while the target functions survived.
