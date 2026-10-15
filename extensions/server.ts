@@ -251,9 +251,11 @@ const plugin: Plugin.Plugin = {
 /** execFile with the promise shape `filterThroughRtk` expects. */
 function execRtk(cmd: string, args: string[], opts?: { signal?: AbortSignal; timeout?: number }): Promise<{ stdout: string; code: number }> {
   const { promise, resolve } = Promise.withResolvers<{ stdout: string; code: number }>();
-  // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell.
+  // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell. cmd.exe parses
+  // its own quoting, so the command string has to reach it verbatim: Node's default escaping turns the
+  // inner quotes into `\"`, which cmd.exe reads as literal characters and the redirect then fails.
   const shim = shimCommand(cmd, args);
-  execFile(shim.cmd, shim.args, { signal: opts?.signal, timeout: opts?.timeout }, (error, stdout) => {
+  execFile(shim.cmd, shim.args, { signal: opts?.signal, timeout: opts?.timeout, windowsVerbatimArguments: process.platform === 'win32' }, (error, stdout) => {
     const out = stdout ?? '';
     if (!error) { resolve({ stdout: out, code: 0 }); return; }
     // A non-numeric code is a spawn failure (ENOENT, EACCES, killed) and must not read as success.

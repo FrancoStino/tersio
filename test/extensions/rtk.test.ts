@@ -23,9 +23,9 @@ import { resetSharedComboState, setSharedComboMode } from "../../extensions/shar
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from "../../extensions/shared/types.ts";
 import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
-import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand, shimFlags } from "../../extensions/shared/utils.ts";
+import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { fakeRtkBin, hasSqlite, isWindows, withHome as inHome } from "../helpers/env.ts";
+import { fakeRtkBin, hasSqlite, withHome as inHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
@@ -633,8 +633,9 @@ test("a successful run returns combined output and no error", async () => {
     const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
     expect(r.isError).toBe(false);
     expect(text(r)).toBe("ok");
-    // The shell flags precede the args only on Windows, where the shim carries them.
-    expect(seen).toEqual([[...shimFlags(), "git", "status"]]);
+    // The exec is the shim the product builds, so the expectation comes from the same helper.
+    const bin = resolveRtkBinary() as string;
+    expect(seen).toEqual([shimCommand(bin, ["git", "status"]).args]);
   });
 });
 
@@ -657,9 +658,8 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
     const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
 
     expect(r.isError).toBe(false);
-    // The recorded exec name is the shell on Windows, where the shim carries the binary as an argument.
-    const expected = isWindows() ? [shimCommand("probe.cmd", []).cmd] : [fake];
-    expect(cmds).toEqual(expected);
+    // A `.cmd` runs through the shell on Windows, so the exec name comes from the same helper.
+    expect(cmds).toEqual([shimCommand(fake, []).cmd]);
     rmSync(binDir, { recursive: true, force: true });
   });
 });
@@ -694,9 +694,8 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
     const r = await sub.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, sub.ctx);
 
     expect(r.isError).toBe(false);
-    // The recorded exec name is the shell on Windows, where the shim carries the binary as an argument.
-    const expected = isWindows() ? [shimCommand("probe.cmd", []).cmd] : [fake];
-    expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual(expected);
+    // A `.cmd` runs through the shell on Windows, so the exec name comes from the same helper.
+    expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual([shimCommand(fake, []).cmd]);
     expect(r.details?.condensed).toBe(true);
     resetSharedComboState();
     rmSync(binDir, { recursive: true, force: true });

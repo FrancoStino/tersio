@@ -26,18 +26,12 @@ export function homeDir(): string {
   return home && home.trim() !== '' ? home : os.homedir();
 }
 
-/** The leading flags the shell needs. Exported so a test can build the expectation it asserts against
- * without repeating the list. */
-export function shimFlags(): string[] {
-  return process.platform === 'win32' ? ['/d', '/s', '/c'] : [];
-}
-
 /** Windows has no executable for a `.cmd` or `.bat` file, and CreateProcess spawns neither one, so a
  * resolved path that lands on a shim has to run through the shell. The CLI's `execP` does the same.
  * A real `rtk.exe` and every POSIX binary pass through untouched. */
 export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
   if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };
-  return { cmd: process.env.ComSpec || 'cmd.exe', args: [...shimFlags(), cmd, ...args] };
+  return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
 }
 
 /** rtk's own directories. Mirrors `user_dirs` in rtk's source: `config_dir()` for config.toml and

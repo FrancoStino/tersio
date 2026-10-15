@@ -185,7 +185,7 @@ test("installer does not add manifest-owned extensions to config.yml", () => {
     else process.env.HOME = previous.HOME;
     if (previous.USERPROFILE === undefined) delete process.env.USERPROFILE;
     else process.env.USERPROFILE = previous.USERPROFILE;
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -266,7 +266,7 @@ test("update rejects an unknown host before doing anything", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/Invalid --host: codex/);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -292,7 +292,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on\)/);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -344,6 +344,12 @@ function tempHome(): string {
   return home;
 }
 
+/** Windows keeps a handle on a just-touched tree for a moment, so the removal retries instead of
+ * throwing EBUSY out of a test's `finally` block. */
+function rmTree(dir: string): void {
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+}
+
 /** The registered plugin at this version: the state a successful install leaves behind. A seeded rtk goes
  * with it, because an absent one makes every install download 18MB from GitHub, which the Windows runner
  * spends far longer on than the tree assertions these tests make. */
@@ -381,7 +387,7 @@ test("dry run reports the retired copies and removes nothing", () => {
     expect(result.stdout).toMatch(/would write .*@krtclcdy[\\/]tersio[\\/]package\.json/);
     expect(readdirSync(extDir(home)).toSorted()).toEqual(before);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -404,7 +410,7 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
     expect(readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8")).toMatch(/rtk\.ts/);
     expectTreeByteIdentical(pluginExt(home), treeFilesFor("opencode"));
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -419,7 +425,7 @@ test("without the plugin the agent tree is the fallback and keeps its copies", (
     }
     expect(existsSync(path.join(extDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -450,7 +456,7 @@ test("ensure drops the legacy compiled twin instead of duplicating it", async ()
     expect(body).toMatch(/combo-toggle\/index\.ts/);
     expect(body).not.toMatch(/combo-toggle\/index\.js/);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -461,7 +467,7 @@ test("ensure leaves .js entries alone when the new path is also .js", async () =
     await ensureExtensionInConfig(file, "/x/ponytail/pi-extension/index.js", "ponytail", {});
     expect(readFileSync(file, "utf8")).toMatch(/pi-extension\/index\.js/);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -472,7 +478,7 @@ test("retired extension cleanup removes absolute and relative matching registrat
     expect(readFileSync(file, "utf8")).toBe("extensions:\n  - /x/read.ts\n");
     expect(await removeExtensionFromConfig(file, "/x/agent/extensions/shared/mode-reinforcement.ts", "retired mode reinforcement", {})).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -505,7 +511,7 @@ test("pi install writes a local Ponytail package and drops the npm spec", () => 
     expect(settings.packages).toContain(path.join(agent, "ponytail"));
     expect(settings.packages).toContain("npm:pi-subagents");
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 150000);
 
@@ -526,7 +532,7 @@ test("pi install writes every Caveman rule body", () => {
     }
     expectTreeByteIdentical(path.join(dir, ".pi", "agent", "extensions"), treeFilesFor("pi"));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 150000);
 
@@ -540,7 +546,7 @@ test("pi dry-run previews the local Ponytail package without writing", () => {
     expect(out).toMatch(/Ponytail — write the local pi package/);
     expect(readFileSync(path.join(dir, ".pi", "agent", "settings.json"), "utf8")).toBe(before);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 90000);
 
@@ -563,7 +569,7 @@ test("pi uninstall removes the local Ponytail package and its settings entry", (
     expect(existsSync(path.join(agent, "ponytail"))).toBe(false);
     expect(readFileSync(path.join(agent, "settings.json"), "utf8")).not.toMatch(SELF);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 180000);
 
@@ -598,7 +604,7 @@ test("opencode install registers one plugin and drops the rtk entry", () => {
     expect(out).toMatch(/no separate entry/);
     expectTreeByteIdentical(path.join(dir, ".config", "opencode", "plugins", "tersio"), treeFilesFor("opencode"));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 150000);
 
@@ -616,7 +622,7 @@ test("doctor --fix also drops a leftover rtk plugin entry", () => {
     const config = JSON.parse(readFileSync(path.join(dir, ".config", "opencode", "opencode.json"), "utf8")) as { plugins: string[] };
     expect(config.plugins.some((p) => p.endsWith("/plugins/rtk"))).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 150000);
 // Same `-session`/`-toggle` leftovers the omp tree grew; install retires them, a rule body in them still resolves.
@@ -636,7 +642,7 @@ test("opencode install retires the legacy `-session` and `-toggle` dirs", () => 
     // The current copies are written, so the tree is still complete.
     expect(existsSync(path.join(plugin, "caveman", "rule.md"))).toBe(true);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 }, 150000);
 
@@ -764,7 +770,7 @@ test.runIf(hasSqlite())("sqlite message rows land in the ledger under the openco
       expect(readUsageDb()?.tokens.messages).toBe(2);
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -786,7 +792,7 @@ test.runIf(hasSqlite())("session_message rows (current shape) land under the ope
       expect(tokens?.recent[0]?.id).toBe("msg_n1");
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -804,7 +810,7 @@ test.runIf(hasSqlite())("a zero-token message is skipped and a missing db is a n
       expect(readUsageDb()?.tokens.messages).toBe(0);
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -848,7 +854,7 @@ test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads 
       expect(readUsageDb()?.tokens.messages).toBe(2500);
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -878,7 +884,7 @@ test.runIf(hasSqlite())("tool names are read from content parts and backfill a s
       expect(Object.keys(tokens?.byTool ?? {}).sort()).toEqual(["read", "shell"]);
     });
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -954,7 +960,7 @@ test.skipIf(process.platform === "win32")("the packed tarball boots and reports 
     const out = execFileSync(process.execPath, [path.join(dir, "package", "dist", "tersio.js"), "--version"], { encoding: "utf8" });
     expect(out.trim()).toBe(version);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -1132,7 +1138,7 @@ test("uninstall removes extension dirs, self registration, and combo config entr
     expect(config).not.toMatch(/ponytail/);
     expect(!existsSync(path.join(home, ".omp", "agent", "config.yml.bak")), "config.yml backup removed").toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1146,7 +1152,7 @@ test("uninstall removes the caveman rule backup from the plugin tree", () => {
     const cavemanDir = path.join(home, ".omp", "plugins", "node_modules", SELF, "extensions", "caveman");
     expect(!existsSync(cavemanDir), "plugin tree removed").toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1163,7 +1169,7 @@ test("uninstall dry-run leaves backups in place", () => {
       expect(existsSync(path.join(cavemanDir, name)), `${name} kept on dry run`).toBeTruthy();
     }
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1190,7 +1196,7 @@ test("uninstall removes the bundled ponytail copy even with no legacy dep entry"
     const config = readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8");
     expect(config).not.toMatch(/ponytail/);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1209,7 +1215,7 @@ test("uninstall --keep-ponytail keeps the plugin, dep, lock entry, and config li
     const config = readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8");
     expect(config).toMatch(/ponytail/);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1230,7 +1236,7 @@ test("uninstall with removal flags drops ponytail, its lock entry, and the rtk b
     const config = readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8");
     expect(config).not.toMatch(/ponytail/);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1249,7 +1255,7 @@ test("uninstall dry-run changes no files", () => {
     expect(readFileSync(configPath, "utf8")).toBe(beforeConfig);
     expect(existsSync(path.join(home, ".omp", "agent", "extensions", "shared"))).toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1293,7 +1299,7 @@ test("uninstall --host pi lists what it removes and aborts on a declined confirm
     expect(existsSync(path.join(home, ".tersio", "settings.json")), "session defaults kept").toBeTruthy();
     expect(existsSync(extDir), "the pi tree still exists").toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1308,7 +1314,7 @@ test("uninstall --host pi proceeds when the confirm is accepted", () => {
     expect(intact, "caveman-session removed after confirming").toBeFalsy();
     expect(existsSync(path.join(home, ".tersio", "settings.json")), "session defaults removed").toBeFalsy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1322,7 +1328,7 @@ test("uninstall --host pi --yes removes without prompting", () => {
     expect(result.stdout, "no prompt when --yes is given").not.toMatch(/Proceed\?/);
     expect(intact, "caveman-session removed").toBeFalsy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1344,7 +1350,7 @@ test("uninstall --host pi --remove-rtk removes the rtk wiring file", () => {
     expect(result.stdout, "preview lists the wiring file").toMatch(/rtk\.ts/);
     expect(existsSync(wiring), "rtk wiring removed").toBeFalsy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1358,7 +1364,7 @@ test("uninstall --host pi keeps rtk wiring without --remove-rtk", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(wiring), "rtk is the user's, so it stays").toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1373,7 +1379,7 @@ test("uninstall --host pi --dry-run --remove-rtk leaves the wiring file in place
     expect(result.stdout).toMatch(/would remove/);
     expect(existsSync(wiring), "dry run removes nothing").toBeTruthy();
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmTree(home);
   }
 });
 
@@ -1395,7 +1401,7 @@ test("a matching checksum installs", async () => {
   try {
     expect(await verifyRtkArchive(archive, ASSET, `${sha}  ${ASSET}\n`)).toBe(true);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -1405,7 +1411,7 @@ test("a checksum mismatch refuses to install", async () => {
   try {
     expect(await verifyRtkArchive(archive, ASSET, `${wrong}  ${ASSET}\n`)).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -1415,7 +1421,7 @@ test("a missing checksums.txt refuses to install", async () => {
   try {
     expect(await verifyRtkArchive(archive, ASSET, null)).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -1424,7 +1430,7 @@ test("checksums.txt without an entry for this asset refuses to install", async (
   try {
     expect(await verifyRtkArchive(archive, ASSET, `${sha}  some-other-asset.tar.gz\n`)).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
 
@@ -1433,6 +1439,6 @@ test("an empty checksums.txt refuses to install", async () => {
   try {
     expect(await verifyRtkArchive(archive, ASSET, "")).toBe(false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmTree(dir);
   }
 });
