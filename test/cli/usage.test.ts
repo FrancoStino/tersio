@@ -40,7 +40,7 @@ import {
   usageDbPath,
 } from "../../extensions/shared/usage-store.ts";
 import { errorSignature, readAgentStats, readSessionTrace } from "../../extensions/shared/agent-stats.ts";
-import { sqliteExec, sqliteRead } from "../../extensions/shared/sqlite.ts";
+import { sqliteAvailable, sqliteExec, sqliteRead } from "../../extensions/shared/sqlite.ts";
 import {
   BACKUP_KEEP,
   backupDir,
@@ -60,8 +60,7 @@ import { sessionPath, writeQuotaDb, writeSessionFixture, writeUsageStore } from 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
 
-// --- usage-backups --------------------------------------------------------
-// Backup ops touch user data, so each test fails loudly.
+// --- usage-backups: touch user data, so each test fails loudly. ---
 function sandbox(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-backups-"));
   const prevDb = process.env.TERSIO_USAGE_DB;
@@ -236,8 +235,7 @@ test("a monthly schedule snapshots an empty backup dir and skips while fresh", (
   }
 });
 
-// --- usage-hosts ----------------------------------------------------------
-// One mirror over every agent Tersio reads: omp and pi transcripts plus both OpenCode on-disk shapes.
+// --- usage-hosts: one mirror over every agent Tersio reads, omp and pi plus both OpenCode shapes. ---
 
 /** Pure ingest needs no disk, only the absence of a reset marker. */
 function withNoReset(fn: () => void): void {
@@ -844,8 +842,7 @@ test.skipIf(!hasSqlite())("clearUsageDb removes the store file", () => {
   }
 });
 
-// --- usage-tokens ---------------------------------------------------------
-// Fixture rows use 2026-09-01 timestamps; keep the host reset watermark out of these tests.
+// --- usage-tokens: fixture rows use 2026-09-01 timestamps; keep the host reset watermark out. ---
 process.env.TERSIO_RESET_FILE = path.join(os.tmpdir(), "tersio-tests-no-reset-marker.json");
 if (existsSync(process.env.TERSIO_RESET_FILE)) rmSync(process.env.TERSIO_RESET_FILE);
 
@@ -898,7 +895,10 @@ test("adoption reads executed Bash commands, not assistant tool-call intent", ()
     JSON.stringify({ type: "custom", customType: "tool_execution_start", data: { toolName: "bash", args: { command: "python3 script.py" } } }),
   ].join("\n") + "\n", "utf8");
   const prev = process.env.TERSIO_SESSIONS_DIR;
+  const prevHome = process.env.TERSIO_HOME;
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-adoption-home-"));
   process.env.TERSIO_SESSIONS_DIR = dir;
+  process.env.TERSIO_HOME = home;
   try {
     clearRtkAdoptionCache();
     expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 3, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 });
@@ -909,6 +909,43 @@ test("adoption reads executed Bash commands, not assistant tool-call intent", ()
     clearRtkAdoptionCache();
     if (prev === undefined) delete process.env.TERSIO_SESSIONS_DIR;
     else process.env.TERSIO_SESSIONS_DIR = prev;
+    if (prevHome === undefined) delete process.env.TERSIO_HOME;
+    else process.env.TERSIO_HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!sqliteAvailable())("adoption counts OpenCode bash calls from its own store", () => {
+  const dir = fixtureDir();
+  const empty = path.join(dir, "no-sessions");
+  mkdirSync(empty, { recursive: true });
+  const db = path.join(dir, "opencode.db");
+  sqliteExec(db, "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT);");
+  const message = JSON.stringify({
+    time: { created: 1 },
+    model: { id: "m", providerID: "opencode" },
+    content: [
+      { type: "reasoning", text: "plan" },
+      { type: "tool", name: "shell", state: { input: { command: "git status --short" } } },
+      { type: "tool", name: "bash", state: { input: { command: "rtk gh pr list" } } },
+      { type: "tool", name: "read", state: { input: { path: "x" } } },
+    ],
+  });
+  sqliteExec(db, `INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m1', 's1', 'assistant', 1, 1, 1, '${message.replace(/'/g, "''")}');`);
+  const prevSessions = process.env.TERSIO_SESSIONS_DIR;
+  const prevDb = process.env.TERSIO_OPENCODE_DB;
+  process.env.TERSIO_SESSIONS_DIR = empty;
+  process.env.TERSIO_OPENCODE_DB = db;
+  try {
+    clearRtkAdoptionCache();
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 });
+  } finally {
+    clearRtkAdoptionCache();
+    if (prevSessions === undefined) delete process.env.TERSIO_SESSIONS_DIR;
+    else process.env.TERSIO_SESSIONS_DIR = prevSessions;
+    if (prevDb === undefined) delete process.env.TERSIO_OPENCODE_DB;
+    else process.env.TERSIO_OPENCODE_DB = prevDb;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -1174,8 +1211,7 @@ test("importer walks both hosts' session directories", () => {
   }
 });
 
-// --- data-backups ---------------------------------------------------------
-// Data snapshots hold user files, so each test runs against a fake home and fails loudly.
+// --- data-backups: snapshots hold user files, so each test runs against a fake home. ---
 let dataBackupsDir = "";
 let previous: Record<string, string | undefined> = {};
 
@@ -1295,8 +1331,7 @@ describe("data backups", () => {
   });
 });
 
-// --- gain-currency --------------------------------------------------------
-// The server owns display currency: each run is a new origin, localStorage dies, so a pick POSTs to /currency.
+// --- gain-currency: the server owns display currency, a new origin each run, so a pick POSTs. ---
 function serverEnv(home: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -1567,8 +1602,7 @@ test("the CLI and Dashboard FX snapshots agree", () => {
   expect(FX_SNAPSHOT).toEqual(FX_SNAPSHOT_RATES as unknown as Record<string, number>);
 });
 
-// --- agent-offset ---------------------------------------------------------
-// The paging param feeds a raw SQL OFFSET, so it floors to whole rows and refuses negatives; these pin that.
+// --- agent-offset: the param feeds a raw SQL OFFSET, so it floors to whole rows and refuses negatives. ---
 const url = (query: string): string => `/api/agent?range=24h&view=requests&${query}`;
 
 describe('agent offset param', () => {
@@ -1602,8 +1636,7 @@ describe('agent offset param', () => {
   });
 });
 
-// --- omp-stats ------------------------------------------------------------
-// Pins the aggregate against a fixture store: one assertion per metric-contract rule, so drift fails loudly.
+// --- omp-stats: pins the aggregate against a fixture store, one assertion per contract rule. ---
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
@@ -1769,8 +1802,9 @@ describe('omp stats', () => {
       // Rows an hour apart may straddle UTC midnight; assert only what holds either way: 250 tok/s each.
       expect(priced?.points.reduce((sum, point) => sum + point.requests, 0)).toBe(2);
       expect(priced?.points.every((point) => point.avgTokensPerSecond === 250)).toBe(true);
-      // e1: 500/2000ms, e2: 1000/4000ms, both 250 tok/s; latencies average 1000ms, a point reads the mean.
-      expect(priced?.points.every((point) => point.avgTtftMs === 1000)).toBe(true);
+      // e1: 500/2000ms, e2: 1500/4000ms, both 250 tok/s. A point holds one row when the two land in different day buckets, so a per-point mean reads 500 or 1500; the request-weighted mean is 1000 either way.
+      const ttftTotal = priced?.points.reduce((sum, point) => sum + (point.avgTtftMs ?? 0) * point.requests, 0) ?? 0;
+      expect(ttftTotal / 2).toBe(1000);
       // A provider with no timed message carries null, not a zero that would draw a flat line.
       const magpie = omp.modelPerformance.find((series) => series.provider === 'magpie');
       expect(magpie?.points.every((p) => p.avgTokensPerSecond === null && p.avgTtftMs === null)).toBe(true);
@@ -2042,9 +2076,7 @@ describe('omp stats', () => {
   });
 });
 
-// This file holds what used to be ten files, and vitest isolated those by process. One section leaving
-// TERSIO_* set, or a spawned CLI writing the reset watermark, would otherwise change what the next
-// section reads. The snapshot is taken here so it keeps the file-scope defaults the sections above set.
+// This file holds what used to be ten files, and vitest isolated those by process: one section leaving TERSIO_* set, or a spawned CLI writing the reset watermark, would change what the next section reads. The snapshot keeps the file-scope defaults the sections above set.
 const ENV_SNAPSHOT: NodeJS.ProcessEnv = { ...process.env };
 const FIXTURE_RESET = process.env.TERSIO_RESET_FILE;
 beforeEach(() => {

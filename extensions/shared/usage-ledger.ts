@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
+import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
 
 export type UsageKind = 'command' | 'toggle' | 'install' | 'update' | 'rtk-audit';
@@ -273,6 +274,55 @@ export function dayKey(ts: string | number): string | null {
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+// OpenCode tool parts carry the command in the message blob; sqliteRead is line-based, so newlines are flattened in SQL.
+const OC_BASH_CMD = "replace(replace(json_extract(j.value,'$.state.input.command'), char(10), ' '), char(13), ' ')";
+const OC_BASH_TOOL = "json_extract(j.value,'$.type')='tool' AND (json_extract(j.value,'$.name')='bash' OR json_extract(j.value,'$.name')='shell')";
+const ocBashLegacy = `SELECT message.id, json_extract(message.data,'$.sessionID'), ${OC_BASH_CMD} FROM message, json_each(message.data,'$.content') j WHERE json_extract(message.data,'$.role')='assistant' AND ${OC_BASH_TOOL}`;
+const ocBashCurrent = `SELECT session_message.id, session_message.session_id, ${OC_BASH_CMD} FROM session_message, json_each(session_message.data,'$.content') j WHERE session_message.type='assistant' AND ${OC_BASH_TOOL}`;
+
+export interface OpencodeBashRow {
+  id: string;
+  sessionId: string;
+  command: string;
+}
+
+/** Every executed bash command in an OpenCode db, v2 first and the legacy table second. */
+export function readOpencodeBashRows(db: string): OpencodeBashRow[] {
+  const rows: OpencodeBashRow[] = [];
+  try {
+    if (!fs.existsSync(db)) return rows;
+    let out = '';
+    try { out += sqliteRead(db, ocBashCurrent); } catch { /* no v2 table */ }
+    try { out += sqliteRead(db, ocBashLegacy); } catch { /* no legacy table */ }
+    for (const line of out.split('\n')) {
+      if (!line.trim()) continue;
+      const [id, sessionId, command] = line.split('\t');
+      if (typeof command !== 'string' || !command.trim()) continue;
+      rows.push({ id: id ?? '', sessionId: sessionId ?? '', command });
+    }
+  } catch { /* an unreadable db is a skip, not a failure */ }
+  return rows;
+}
+
+// Pre-v2 OpenCode stores one message per JSON file; the same tool-part shape holds the command.
+function opencodeFileBash(file: string): { commands: string[]; sessionId: string } {
+  try {
+    const message = JSON.parse(fs.readFileSync(file, 'utf8')) as { sessionID?: unknown; content?: unknown };
+    const parts = Array.isArray(message.content) ? message.content : [];
+    const commands: string[] = [];
+    for (const part of parts) {
+      const p = part as { type?: unknown; name?: unknown; state?: { input?: { command?: unknown } } };
+      if (p?.type !== 'tool') continue;
+      if (p.name !== 'bash' && p.name !== 'shell') continue;
+      const command = p.state?.input?.command;
+      if (typeof command === 'string' && command) commands.push(command);
+    }
+    return { commands, sessionId: typeof message.sessionID === 'string' ? message.sessionID : '' };
+  } catch {
+    return { commands: [], sessionId: '' };
+  }
+}
 export function walkJsonl(dir: string, out: string[], cap: number, ext = '.jsonl'): void {
   let entries: fs.Dirent[];
   try {
@@ -290,11 +340,6 @@ export function walkJsonl(dir: string, out: string[], cap: number, ext = '.jsonl
 // Recent rows are a newest-first window over lifetime history; aggregates keep everything.
 export const RECENT_LIMIT = 2000;
 const FREE_SUFFIX = /(?::free|-free)$/i;
-const RTK_ELIGIBLE_HEADS = new Set([
-  'rtk', 'git', 'grep', 'rg', 'find', 'cat', 'ls', 'tree', 'diff', 'log',
-  'npm', 'npx', 'pnpm', 'bun', 'bunx', 'cargo', 'go', 'python', 'pytest',
-  'ruff', 'mypy', 'docker', 'kubectl', 'psql', 'aws', 'gh', 'glab', 'wc',
-]);
 // Parse buffer shared by live reads and usage.db syncs, so the store is a cache and never a fork.
 export interface SessionAccum {
   byModel: Record<string, TokenBreakdown>;
@@ -650,17 +695,28 @@ export function agentOfSessionText(text: string): string {
   return 'main';
 }
 
-const adoptionFileCache = new Map<string, { size: number; mtimeMs: number; counts: { bashCalls: number; eligibleCalls: number; rtkCalls: number } }>();
+const adoptionFileCache = new Map<string, { size: number; mtimeMs: number; heads: string; counts: BashCounts }>();
 
-function parseAdoptionFile(file: string): { counts: { bashCalls: number; eligibleCalls: number; rtkCalls: number }; sessions: number } {
-  const counts = { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
+interface BashCounts { bashCalls: number; eligibleCalls: number; rtkCalls: number }
+
+function countBashCommands(commands: readonly string[], eligible: ReadonlySet<string>, counts: BashCounts): void {
+  for (const command of commands) {
+    counts.bashCalls += 1;
+    const head = leadBinary(command);
+    if (eligible.has(head)) counts.eligibleCalls += 1;
+    if (head === 'rtk') counts.rtkCalls += 1;
+  }
+}
+
+function parseAdoptionFile(file: string, eligible: ReadonlySet<string>): { counts: BashCounts; sessions: number } {
+  const counts: BashCounts = { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
   let text: string;
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch {
     return { counts, sessions: 0 };
   }
-  let sawBash = false;
+  const commands: string[] = [];
   for (const line of text.split('\n')) {
     if (!line.includes('tool_execution_start')) continue;
     try {
@@ -671,15 +727,11 @@ function parseAdoptionFile(file: string): { counts: { bashCalls: number; eligibl
       };
       if (row.type !== 'custom' || row.customType !== 'tool_execution_start' || row.data?.toolName !== 'bash') continue;
       const command = row.data.args?.command;
-      if (typeof command !== 'string') continue;
-      sawBash = true;
-      counts.bashCalls += 1;
-      const head = leadBinary(command);
-      if (RTK_ELIGIBLE_HEADS.has(head)) counts.eligibleCalls += 1;
-      if (head === 'rtk') counts.rtkCalls += 1;
+      if (typeof command === 'string') commands.push(command);
     } catch { /* skip corrupt line */ }
   }
-  return { counts, sessions: sawBash ? 1 : 0 };
+  countBashCommands(commands, eligible, counts);
+  return { counts, sessions: commands.length > 0 ? 1 : 0 };
 }
 
 export function clearRtkAdoptionCache(): void {
@@ -687,6 +739,10 @@ export function clearRtkAdoptionCache(): void {
 }
 
 export function readRtkAdoption(): RtkAdoption {
+  // The eligible set comes from rtk's rewrite contract, cached per binary version.
+  const eligible = eligibleHeads(resolveRtkBinary());
+  // A cached count is only valid for the head set that produced it.
+  const headsKey = [...eligible].sort().join(',');
   const files: string[] = [];
   for (const dir of sessionsDirs()) walkJsonl(dir, files, 2000);
   const live = new Set(files);
@@ -705,9 +761,9 @@ export function readRtkAdoption(): RtkAdoption {
       continue;
     }
     let entry = adoptionFileCache.get(file);
-    if (!entry || entry.size !== stat.size || entry.mtimeMs !== stat.mtimeMs) {
-      const parsed = parseAdoptionFile(file);
-      entry = { size: stat.size, mtimeMs: stat.mtimeMs, counts: parsed.counts };
+    if (!entry || entry.size !== stat.size || entry.mtimeMs !== stat.mtimeMs || entry.heads !== headsKey) {
+      const parsed = parseAdoptionFile(file, eligible);
+      entry = { size: stat.size, mtimeMs: stat.mtimeMs, heads: headsKey, counts: parsed.counts };
       adoptionFileCache.set(file, entry);
       sessions += parsed.sessions;
     } else if (entry.counts.bashCalls > 0) {
@@ -717,6 +773,28 @@ export function readRtkAdoption(): RtkAdoption {
     eligibleCalls += entry.counts.eligibleCalls;
     rtkCalls += entry.counts.rtkCalls;
   }
+  // OpenCode keeps its own store: a v2 sqlite db, or one JSON file per message before v2.
+  const opencode: BashCounts = { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
+  const opencodeSessions = new Set<string>();
+  if (process.env.TERSIO_SESSIONS_DIR === undefined || process.env.TERSIO_OPENCODE_DB !== undefined) {
+    for (const row of readOpencodeBashRows(opencodeDbPath())) {
+      countBashCommands([row.command], eligible, opencode);
+      if (row.sessionId) opencodeSessions.add(row.sessionId);
+    }
+  }
+  const ocFiles: string[] = [];
+  if (process.env.TERSIO_SESSIONS_DIR === undefined || process.env.TERSIO_OPENCODE_DIR !== undefined) {
+    walkJsonl(opencodeSessionsDir(), ocFiles, 5000, '.json');
+    for (const file of ocFiles) {
+      const parsed = opencodeFileBash(file);
+      countBashCommands(parsed.commands, eligible, opencode);
+      if (parsed.sessionId) opencodeSessions.add(parsed.sessionId);
+    }
+  }
+  bashCalls += opencode.bashCalls;
+  eligibleCalls += opencode.eligibleCalls;
+  rtkCalls += opencode.rtkCalls;
+  sessions += opencodeSessions.size;
   const missedCalls = Math.max(0, eligibleCalls - rtkCalls);
   return { sessions, bashCalls, eligibleCalls, rtkCalls, missedCalls, adoptionPct: eligibleCalls ? (rtkCalls / eligibleCalls) * 100 : 0 };
 }
