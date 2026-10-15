@@ -16,6 +16,10 @@ const OMP_AGENT_DIR = path.join(HOME, '.omp', 'agent');
 const OMP_PLUGINS_DIR = path.join(HOME, '.omp', 'plugins');
 const BUN_BIN_DIR = path.join(HOME, '.bun', 'bin');
 const OMP_BIN = IS_WINDOWS ? 'omp.cmd' : 'omp';
+// npm and bun are `.cmd` shims on Windows, and CreateProcess spawns neither a bare name nor a shim,
+// so the spawn name itself carries the extension the way `omp.cmd` does.
+const NPM_BIN = IS_WINDOWS ? 'npm.cmd' : 'npm';
+const BUN_BIN = IS_WINDOWS ? 'bun.cmd' : 'bun';
 
 const PACKAGE_NAME = '@krtclcdy/tersio';
 const PACKAGE_BIN = 'tersio';
@@ -384,7 +388,7 @@ function relTime(ageMs: number): string {
   return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
 }
 export {
-  IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN,
+  IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,

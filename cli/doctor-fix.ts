@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BUN_BIN_DIR, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
+  BUN_BIN_DIR, BUN_BIN, HOME, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, removeExtensionFromConfig,
   dryRun, verbose,
   debug,
@@ -311,7 +311,7 @@ async function fixPonytail(pluginsDir: string): Promise<void> {
     return;
   }
   await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-  await execNetwork('Restoring bundled Ponytail', 'npm', ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 }).catch((e) => {
+  await execNetwork('Restoring bundled Ponytail', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 }).catch((e) => {
     throw new Error(`bundled ponytail restore failed: ${(e as Error).message}`);
   });
 }

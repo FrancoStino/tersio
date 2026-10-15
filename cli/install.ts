@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BUN_BIN_DIR, COMBO_PRESET_MODES, HOME, IS_WINDOWS, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
+  BUN_BIN_DIR, BUN_BIN, COMBO_PRESET_MODES, HOME, IS_WINDOWS, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
   allowUnverified, applyUpdate, bundledPonytailSpec, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
   ponytailDefaultFlag, pstackDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
@@ -91,10 +91,10 @@ async function stepPonytail(pluginsDir: string, options: InstallOptions): Promis
   } else {
     // Reinstall only when the self-plugin step did not materialize it.
     try {
-      await execNetwork('Installing bundled Ponytail', 'npm', ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 });
+      await execNetwork('Installing bundled Ponytail', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 });
     } catch {
       try {
-        await execNetwork('Installing bundled Ponytail', 'bun', ['install'], { cwd: pluginsDir, timeout: 180000 });
+        await execNetwork('Installing bundled Ponytail', BUN_BIN, ['install'], { cwd: pluginsDir, timeout: 180000 });
       } catch (e) {
         sayTagged(`  [fail] Could not install bundled ponytail: ${(e as Error).message}`);
         console.log('  [hint] Manual: cd ~/.omp/plugins && npm install --no-audit --no-fund');
@@ -146,10 +146,10 @@ async function stepSelfPlugin(pluginsDir: string, options: InstallOptions): Prom
   await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
 
   try {
-    await execNetwork('Installing Tersio plugin dependencies', 'npm', ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 });
+    await execNetwork('Installing Tersio plugin dependencies', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 });
   } catch {
     try {
-      await execNetwork('Installing Tersio plugin dependencies', 'bun', ['install'], { cwd: pluginsDir, timeout: 180000 });
+      await execNetwork('Installing Tersio plugin dependencies', BUN_BIN, ['install'], { cwd: pluginsDir, timeout: 180000 });
     } catch (e) {
       sayTagged(`  [fail] Could not install ${PACKAGE_NAME} into plugins dir: ${(e as Error).message}`);
       sayTagged(`  [hint] Manual: cd ~/.omp/plugins && npm install ${PACKAGE_NAME}@^${PACKAGE_VERSION} --save --no-audit --no-fund`);

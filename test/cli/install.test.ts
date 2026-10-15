@@ -369,7 +369,7 @@ test("dry run reports the retired copies and removes nothing", () => {
     expect(result.stdout).toMatch(/Add-ons load from: the OMP plugin manifest/);
     expect(result.stdout).toMatch(/Retired agent copies — remove/);
     // The manifest decides what omp loads, so the install reports the manifest write it would make.
-    expect(result.stdout).toMatch(/would write .*@krtclcdy\/tersio\/package\.json/);
+    expect(result.stdout).toMatch(/would write .*@krtclcdy[\\/]tersio[\\/]package\.json/);
     expect(readdirSync(extDir(home)).toSorted()).toEqual(before);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -580,7 +580,11 @@ test("opencode install registers one plugin and drops the rtk entry", () => {
   try {
     const out = opencodePluginRun(dir, ["install", "--host", "opencode", "--yes"]);
     const config = JSON.parse(readFileSync(path.join(dir, ".config", "opencode", "opencode.json"), "utf8")) as { plugins: string[] };
-    expect(config.plugins).toEqual([expect.stringContaining("/opencode/plugins/herdr.js"), expect.stringContaining("/opencode/plugins/tersio")]);
+    // Registered entries carry the host's own separator, so `\` on Windows.
+    expect(config.plugins).toEqual([
+      expect.stringMatching(/[\\/]opencode[\\/]plugins[\\/]herdr\.js$/),
+      expect.stringMatching(/[\\/]opencode[\\/]plugins[\\/]tersio$/),
+    ]);
     expect(existsSync(path.join(dir, ".config", "opencode", "plugins", "rtk.ts"))).toBe(false);
     expect(out).toMatch(/no separate entry/);
     expectTreeByteIdentical(path.join(dir, ".config", "opencode", "plugins", "tersio"), treeFilesFor("opencode"));

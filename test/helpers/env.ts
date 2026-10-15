@@ -16,9 +16,15 @@ export function hasBun(): boolean {
   return spawnSync('bun', ['--version'], { stdio: 'ignore' }).status === 0;
 }
 
-/** An executable on PATH that a spawned CLI can run. A shebang script on POSIX, a `.cmd` batch file on
- * Windows, where CreateProcess runs neither a bare script nor an extensionless file. Returns the path
- * the resolver finds, which carries `.cmd` on Windows and nothing on POSIX. */
+/** Whether this suite runs on Windows, where the resolver asks for `rtk.exe` and `omp.cmd`. */
+export function isWindows(): boolean {
+  return process.platform === 'win32';
+}
+
+/** An executable on PATH that a spawned CLI can run. `name` is the exact name the resolver asks for,
+ * which carries `.exe` on Windows (`rtk.exe`) and nothing elsewhere. The file written is that same name
+ * on POSIX (a shebang script) and `<name>.cmd` on Windows, where CreateProcess runs neither a bare script
+ * nor an extensionless file. Returns the path the resolver finds. */
 export function fakeExecutable(dir: string, name: string, posixBody: string, windowsBody: string): string {
   mkdirSync(dir, { recursive: true });
   if (process.platform !== 'win32') {

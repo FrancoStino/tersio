@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { cliEnv, fakeExecutable } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -141,7 +141,8 @@ test("/ai-addons update ponytail without host exec still avoids npm", async () =
   expect(fakeCtx.shown.join("\n")).toMatch(/up to date|cannot fetch npm metadata/i);
 });
 
-const updateJs = path.join(root, "dist", "cli", "update.js").replace(/\\/g, "/");
+// A file:// URL, not a path: `import()` of `D:/...` reports protocol 'd:' on Windows.
+const updateJs = pathToFileURL(path.join(root, "dist", "cli", "update.js")).href;
 
 const PROBE = "import('" + updateJs + "').then(async (m) => {"
   + " const out = { cached: await m.checkForUpdate(), forced: await m.checkForUpdate(true) };"

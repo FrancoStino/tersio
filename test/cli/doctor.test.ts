@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliEnv, fakeExecutable } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable, isWindows } from "../helpers/env.ts";
 import { fileContains } from "../../extensions/shared/utils.ts";
 import { PI_PONYTAIL_FILES, TREE_FILES, sourcePath, treeFileText, treeFilesFor } from "../../cli/manifest.ts";
 import { bundledPonytailSpec } from "../../cli/common.ts";
@@ -319,7 +319,7 @@ test("doctor reports the rtk binary version", () => {
     mkdirSync(extDir, { recursive: true });
     const binDir = path.join(home, "fake-bin");
     mkdirSync(binDir, { recursive: true });
-    const rtkBin = fakeExecutable(binDir, "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
+    const rtkBin = fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
 
     const result = spawnSync(process.execPath, [installer, "doctor"], {
       cwd: root,
@@ -391,7 +391,7 @@ test("doctor warns that rtk_run needs an exec-capable host", () => {
   try {
     const binDir = path.join(home, "fake-bin");
     mkdirSync(binDir, { recursive: true });
-    const rtkBin = fakeExecutable(binDir, "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
+    const rtkBin = fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
 
     const result = spawnSync(process.execPath, [installer, "doctor"], {
       cwd: root,
@@ -475,9 +475,8 @@ test("doctor finds a marker that straddles a chunk boundary", async () => {
     const binDir = path.join(home, "big-bin");
     // fileContains reads 1 MiB at a time, so pad the marker across the boundary to catch a scan that drops the tail.
     const marker = "Worker agent: delegated tasks.";
-    const shebang = "#!/bin/sh\n";
-    const pad = (1 << 20) - Math.floor(marker.length / 2) - shebang.length;
-    const bin = fakeExecutable(binDir, "omp", `${shebang}${"x".repeat(pad)}${marker}`, "echo %MARKER%");
+    const pad = "x".repeat((1 << 20) - Math.floor(marker.length / 2));
+    const bin = fakeExecutable(binDir, "omp", `${pad}${marker}`, `${pad}${marker}`);
 
     expect(await fileContains(bin, marker)).toBe(true);
     expect(await fileContains(bin, "a marker that is not present")).toBe(false);
