@@ -4,14 +4,36 @@
 
 [![npm version](https://shieldcn.dev/npm/@krtclcdy%2Ftersio.svg?variant=branded&size=xs&logo=npm)](https://www.npmjs.com/package/@krtclcdy/tersio)
 [![node](https://shieldcn.dev/badge/node-%3E%3D20.12-22c55e.svg?variant=branded&size=xs&logo=nodedotjs)](https://nodejs.org)
-[![bun](https://shieldcn.dev/badge/bun-%3E%3D1.4.2-22c55e.svg?variant=branded&size=xs&logo=bun)](https://bun.sh)
 [![npm downloads](https://shieldcn.dev/npm/dm/@krtclcdy%2Ftersio.svg?variant=branded&size=xs&logo=npm)](https://www.npmjs.com/package/@krtclcdy/tersio)
 [![Build](https://shieldcn.dev/github/ci/KurutoDenzeru/tersio.svg?variant=branded&size=xs&logo=githubactions&label=Build)](https://github.com/KurutoDenzeru/tersio/actions)
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
 
-Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code calls, a pstack rigor mode, and a gain dashboard — one-command combo presets over one shared extension tree.
+Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one-command combos over one shared extension tree.
 
-Measured savings per mode, the prompt overhead each one adds, and the rerun protocol: [docs/BENCHMARK.md](./docs/BENCHMARK.md).
+Measured savings per mode, the prompt overhead each one adds, and the rerun protocol: [docs/BENCHMARK_GUIDE.md](./docs/BENCHMARK_GUIDE.md).
+
+## 🎯 What this is, and why you would use it
+
+Coding agents bill you per token. Three of the costs you never asked for:
+
+- **Replies carry filler.** The same three sentences, plus a greeting, a hedge, a recap, and a "hope this helps".
+- **Shell output is noise.** A failing test prints hundreds of lines to reach the four that matter.
+- **The rules repeat every turn.** Your agent re-reads its instructions on every single turn.
+
+Tersio installs into Oh My Pi, pi, or OpenCode, and cuts those costs:
+
+| Mode | What it does for you |
+|---|---|
+| 🪨 **Caveman** | Shorter replies. Answer first, filler gone, and code, commands, paths, and errors stay exact. |
+| ⚡ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
+| 🦥 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
+| 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. |
+| 🧩 **Combo** | One command sets all of the above, at three strengths. |
+| 📊 **Dashboard** | What you spent, per model and per day. |
+
+Every mode is a text block you can read in the repo. Measured savings and prompt overhead are published per mode in [docs/BENCHMARK_GUIDE.md](./docs/BENCHMARK_GUIDE.md). No total-bill claim: the tests measure reply tokens, prompt overhead, and command output only.
+
+Use an agent daily and pay per token? This is for you. Use one a few times a week? It is not worth installing.
 
 ## ⚡ Getting Started
 
@@ -53,8 +75,9 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 ### Requirements
 
 - [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — all three are supported; pick one with `tersio install --host <omp|pi|opencode>`
-- Node.js 20.12+ with npm, or Bun — the CLI runs under either, and the installer prefers Bun when it is present
-- SQLite runs in process where the runtime provides it: Bun always, Node 22.5+ through `node:sqlite`. An older Node uses the `sqlite3` binary instead, and both answer identically
+- **Node.js 20.12+ with npm.** That is the requirement. The extensions load inside your host, the CLI runs under Node, and the package declares no Bun entry point
+- **Bun is optional.** The installer prefers it when it is on PATH and falls back to npm. `npm i -g` alone installs everything. Bun also supplies SQLite in process, which is its only effect on the code
+- SQLite comes from the runtime where it can: Bun, or Node 22.5+ through `node:sqlite`. An older Node needs the `sqlite3` binary on PATH, and every engine answers identically
 - macOS or Linux, native or WSL
 
 On Windows, use WSL. There is no native Windows path: the installer, the extensions, and the RTK wiring are tested on macOS and Linux only. WSL has its own home directory, so install from inside WSL — `command -v npm` must resolve to a Linux path, not `/mnt/c/`.
@@ -88,7 +111,7 @@ It is display-only — it never enters the model context, so it costs the sessio
 | Command | Purpose |
 |---|---|
 | `/combo off\|medium\|balanced\|max\|status` | One preset for all four modes (start here): medium = caveman lite · rtk on · ponytail lite · pstack on, balanced = full/full/on/on, max = ultra/ultra/on/on, and off disables every mode; per-mode tweaks drop to `custom`. |
-| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. The legacy `wenyan` spelling still resolves, onto `megacave-full`. |
+| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. `full`, `ultra`, and `megacave-full` load upstream's own bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own bodies for registers upstream defines but no longer ships, and each one names its upstream row in the file. The legacy `wenyan` spellings still resolve: `wenyan` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-full` → `megacave-full`, `wenyan-ultra` → `megacave-ultra`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes. Review runs separately through `/ponytail-review`. |
 | `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). The medium, balanced, and max presets turn it on; `normal mode` clears it. |
@@ -138,7 +161,7 @@ An OMP install also registers the package in `~/.omp/plugins`, so it shows under
 
 **RTK missing or not executable:** run `tersio install`, then `tersio doctor`. On Linux/macOS: `chmod +x ~/.bun/bin/rtk`.
 
-**RTK commands not metered in the Dashboard:** only bash calls routed through rtk's OMP wiring (`~/.omp/agent/extensions/rtk.ts`, written by `rtk init -g --agent omp`) are metered. Missing: run that command (needs rtk ≥ 0.49) or `tersio doctor --fix rtk`, then restart OMP. Native tool calls (`read`/`edit`/`eval`) stay unmetered.
+**RTK savings and adoption:** the Gain numbers read rtk's own `history.db`, which the binary writes on every host, so pi and OpenCode runs are already in them. The adoption row counts executed Bash calls from all three stores: the omp and pi session transcripts, and OpenCode's v2 sqlite or pre-v2 JSON message tree. The eligible command list comes from `rtk rewrite` itself, cached per binary version. Native tool calls (`read`/`edit`/`eval`) stay out of RTK by design, and exact bytes bypass RTK.
 
 **Checksum warning or failure:** the installer aborts on RTK checksum mismatch but warns and continues when checksum metadata is unavailable; `/tersio update rtk` aborts when metadata is missing.
 
