@@ -23,7 +23,9 @@ function buildInstruction(): string {
   try { body = readFileSync(join(PSTACK_DIR, RULE_FILE), 'utf8'); } catch {
     return `pstack mode requested, but ${RULE_FILE} is missing. Run: tersio doctor --fix extensions`;
   }
-  cachedInstruction = `pstack mode active for this session.\n${body}`;
+  // The rule body names the files by relative path, so one line gives the directory they sit in.
+  const home = `Leaves, playbooks, and skills live at: ${PSTACK_DIR} — \`principles/<title>.md\`, \`playbooks/<title>.md\`, \`skills/<name>/SKILL.md\`, \`references/<title>.md\`.`;
+  cachedInstruction = `pstack mode active for this session.\n${body}\n${home}`;
   return cachedInstruction;
 }
 
