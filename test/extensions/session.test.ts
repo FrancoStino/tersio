@@ -216,7 +216,7 @@ test("opencode sessions restore modes independently", async () => {
 
 // rtk ships no OpenCode plugin of its own, so this hook is the whole integration.
 test("the bash hook rewrites a command through the resolved rtk binary", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %2", async () => {
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %~2", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const event = { tool: "bash", input: { command: "git status" } };
@@ -236,7 +236,8 @@ test("the after hook condenses a large grep result and leaves the rest untouched
 
     const hit = { tool: "grep", status: "completed", sessionID: "ses-on", result: { content: [{ type: "text", text: big }] } };
     await fire(hooks, "execute.after", hit);
-    expect(hit.result.content).toEqual([{ type: "text", text: "2 matches in 1F:\n" }]);
+    // batch `echo` ends the line with CRLF, so the Windows fake emits one.
+    expect(hit.result.content).toEqual([{ type: "text", text: `2 matches in 1F:${IS_WINDOWS ? "\r\n" : "\n"}` }]);
 
     // An error carries no result, so there is nothing to replace.
     const failed = { tool: "grep", status: "error", sessionID: "ses-on", error: { message: "boom" } };
@@ -272,7 +273,7 @@ test("the after hook keeps the original when rtk is absent", async () => {
 });
 
 test("the bash hook leaves other tools and rtk-less hosts alone", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %2", async () => {
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %~2", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const other = { tool: "read", input: { command: "git status" } };
