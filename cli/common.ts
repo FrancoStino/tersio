@@ -138,7 +138,7 @@ function debug(...a: unknown[]): void {
 
 const execFileP = promisify(execFile);
 
-interface ExecOptions {
+export interface ExecOptions {
   timeout?: number;
   cwd?: string;
   encoding?: BufferEncoding;
@@ -160,6 +160,8 @@ interface WriteOptions {
   dryRun?: boolean;
   quiet?: boolean;
   verbose?: boolean;
+  /** Copy the previous file aside first. Opt in for a file the user owns; a shipped asset is reproducible. */
+  backup?: boolean;
 }
 
 async function writeIfChanged(dest: string, content: string, options: WriteOptions = {}): Promise<boolean> {
@@ -173,7 +175,7 @@ async function writeIfChanged(dest: string, content: string, options: WriteOptio
     return true;
   }
   await fs.mkdir(path.dirname(dest), { recursive: true });
-  if (existing !== null) {
+  if (existing !== null && options.backup === true) {
     await fs.copyFile(dest, `${dest}.bak`);
     debug(`${path.basename(dest)} → ${path.basename(dest)}.bak`);
   }
@@ -389,5 +391,5 @@ export {
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,
   ensurePonytailConfigValue, readPluginsPackage, relTime, bundledPonytailSpec, ponytailOverride,
-  InstallOptions, PluginsPackage, PonytailConfig, ExecOptions, WriteOptions,
 };
+export type { InstallOptions, PluginsPackage, PonytailConfig, WriteOptions };

@@ -731,4 +731,5 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   });
 }
 
-export { runDashboard, saveDashboardCurrency, readDiagSchedule, setDiagSchedule, DiagSchedule, offsetFrom };
+export { runDashboard, saveDashboardCurrency, readDiagSchedule, setDiagSchedule, offsetFrom };
+export type { DiagSchedule };

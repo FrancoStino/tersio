@@ -1,11 +1,29 @@
 // Single list of install writes, shared by installer, doctor, and tests.
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
-import { writeIfChanged, WriteOptions } from './common.ts';
+import { writeIfChanged } from './common.ts';
+import type { WriteOptions } from './common.ts';
 
 export const EXT_DIR = path.join(findPackageRoot(path.dirname(fileURLToPath(import.meta.url))), 'extensions');
+
+/** Every pstack leaf, playbook, and skill the index routes to. */
+function pstackTreeFiles(): string[] {
+  const root = path.join(EXT_DIR, "pstack");
+  const out: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = path.join(dir, entry.name);
+      const relChild = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(child, relChild);
+      else if (entry.name.endsWith(".md")) out.push(`pstack/${relChild}`);
+    }
+  };
+  walk(root, "");
+  return out.toSorted();
+}
+export const TREE_PSTACK_FILES: readonly string[] = pstackTreeFiles();
 
 /** Every file in the tree, as paths relative to the extensions directory. */
 export const TREE_FILES: readonly string[] = [
@@ -19,12 +37,17 @@ export const TREE_FILES: readonly string[] = [
   'shared/pricing.ts',
   'shared/carbon.ts',
   'shared/utils.ts',
+  'shared/rtk-eligible.ts',
   'caveman/index.ts',
   'caveman/rule.md',
+  'caveman/rule-lite.md',
+  'caveman/rule-megacave-lite.md',
+  'caveman/rule-megacave-ultra.md',
   'caveman/rule-ultra.md',
   'caveman/rule-megacave.md',
   'pstack/index.ts',
   'pstack/rule.md',
+  ...TREE_PSTACK_FILES,
   'rtk/session.ts',
   'rtk/filter.ts',
   'timing/index.ts',
@@ -116,10 +139,7 @@ export function shippedOmpManifest(): Record<string, unknown> | null {
   }
 }
 
-/**
- * Write the shipped `omp` block over an installed plugin's manifest. The tree files come from this
- * build, so an entry added here reaches the host only when its manifest names it.
- */
+// Write the shipped `omp` block over an installed plugin's manifest: an entry added here reaches the host only when its manifest names it.
 export async function syncPluginManifest(pluginDir: string, options: WriteOptions = {}): Promise<void> {
   const omp = shippedOmpManifest();
   if (omp === null) return;

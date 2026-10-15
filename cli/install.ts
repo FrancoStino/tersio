@@ -12,8 +12,8 @@ import {
   debug, ensurePonytailConfigValue,
   execP, parseJsonObject, readPluginsPackage,
   writeIfChanged,
-  InstallOptions, WriteOptions,
 } from './common.ts';
+import type { InstallOptions, WriteOptions } from './common.ts';
 import {
   askInteractiveChoice, askInteractiveConfirm, closeRL, execNetwork, tty, withInteractiveSpinner, withInteractiveTask, sayTagged } from './interactive.ts';
 import { printWelcome } from './banner.ts';
@@ -25,9 +25,10 @@ import { runUsage } from './usage.ts';
 import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
-  CAVEMAN_REMOTE_ULTRA, CAVEMAN_REMOTE_MEGACAVE, RTK_RELEASE_API, RtkRelease, RtkReleaseAsset, fetchJson, findFile, findHoistedPackage, httpsGet,
+  CAVEMAN_REMOTE_ULTRA, CAVEMAN_REMOTE_MEGACAVE, RTK_RELEASE_API, fetchJson, findFile, findHoistedPackage, httpsGet,
   findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
+import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
@@ -413,9 +414,12 @@ async function stepRtkFilter(extDir: string, options: WriteOptions): Promise<voi
   await copySources(extDir, filesUnder('rtk'), 'rtk/filter.ts', options);
 }
 
-// rule.md is a deliberate fork of skills/caveman/SKILL.md: a blind sync would drop the mode switch line.
+// rule.md and rule-lite.md are our forks and always ship bundled; the other two track upstream and keep a usable body when the fetch fails.
 const CAVEMAN_RULES: ReadonlyArray<[name: string, remote: string | null]> = [
   ['rule.md', null],
+  ['rule-lite.md', null],
+  ['rule-megacave-lite.md', null],
+  ['rule-megacave-ultra.md', null],
   ['rule-ultra.md', CAVEMAN_REMOTE_ULTRA],
   ['rule-megacave.md', CAVEMAN_REMOTE_MEGACAVE],
 ];
@@ -537,7 +541,8 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.rm(path.join(HOME, '.config', 'opencode', 'plugins', 'rtk.ts'), { force: true }).catch(() => {});
   }
-  await writeIfChanged(configPath, `${JSON.stringify(config, null, 2)}\n`, options);
+  // The user's own config, so keep the previous copy beside it.
+  await writeIfChanged(configPath, `${JSON.stringify(config, null, 2)}\n`, { ...options, backup: true });
 }
 
 
@@ -995,6 +1000,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('shared', () => stepSharedSessionState(extDir, installOptions));
   await capture('rtk session', () => stepRtkSession(extDir, installOptions));
   await capture('rtk filter', () => stepRtkFilter(extDir, installOptions));
+  await capture('timing', () => stepTiming(extDir, installOptions));
   await capture('caveman', () => stepCaveman(extDir, installOptions));
   await capture('combo', () => stepCombo(extDir, installOptions));
   await capture('pstack', () => stepPstack(extDir, installOptions));

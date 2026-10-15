@@ -13,9 +13,10 @@ import {
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
 import {
-  RTK_RELEASE_API, RtkRelease, fetchJson, findFile, findPackageRoot, httpsGet,
+  RTK_RELEASE_API, fetchJson, findFile, findPackageRoot, httpsGet,
   httpsDownload, parseChecksum, readTextIfExists, resolveHostBinary, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
+import type { RtkRelease } from '../extensions/shared/utils.ts';
 import { runLatestUpdate } from './update.ts';
 import { OPENCODE_ENTRY, TREE_FILES, isObsoleteTreeFile, syncPluginManifest, syncTreeFiles, treeFilesFor } from './manifest.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
@@ -372,4 +373,5 @@ async function runDoctorRepairs(targets: FixRequest[]): Promise<string[]> {
   return failed;
 }
 
-export { runDoctorRepairs, FixTarget };
+export { runDoctorRepairs };
+export type { FixTarget };
