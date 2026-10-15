@@ -804,7 +804,7 @@ test("reinstall refreshes a named host and verifies it", () => {
     expect(result.stdout).toMatch(/Reinstall — Tersio v[\d.]+ into Oh My Pi/);
     expect(result.stdout).toMatch(/Preview — no changes will be written/);
     // The plugin manifest's tree, not the agent tree, is what a reinstall refreshes.
-    expect(result.stdout).toMatch(/plugins[\\/]node_modules[\\/]@krtclcdy\/tersio[\\/]extensions/);
+    expect(result.stdout).toMatch(/plugins[\\/]node_modules[\\/]@krtclcdy[\\/]tersio[\\/]extensions/);
     // dry-run writes nothing, so the verification pass has nothing to report.
     expect(result.stdout, "a dry run must not re-run the doctor").not.toMatch(/Reinstall verified/);
   } finally {

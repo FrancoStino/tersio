@@ -491,8 +491,9 @@ function fakeOmp(dir: string, body: string): string {
   mkdirSync(bin, { recursive: true });
   const lines = body.split("\n").map((line) => `# ${line}`).join("\n");
   // The marker lives in the file text, which subagentMarkerStatus reads beside the version it runs,
-  // so both platform forms carry it.
-  fakeExecutable(bin, "omp", `# Fake omp for the subagent-marker check.\n${lines}\nexit 0`, lines);
+  // so both platform forms carry it. The explicit exit matters: `#` is not a batch comment, so without
+  // it cmd.exe exits non-zero and the probe throws.
+  fakeExecutable(bin, "omp", `# Fake omp for the subagent-marker check.\n${lines}\nexit 0`, `${lines}\nexit /b 0`);
   return bin;
 }
 

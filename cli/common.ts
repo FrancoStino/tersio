@@ -1,6 +1,6 @@
 // cli/common.ts — shared foundation: CLI flags, paths, exec, file/config helpers.
 import { execFile } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
@@ -152,11 +152,24 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Windows has no executable named `omp` or `npm`: they are `.cmd` shims, and spawning one directly
- * throws EINVAL since the CVE-2024-27980 fix. Route those through cmd.exe, as the npm calls already do. */
+/** Windows has no executable named `omp`, `npm`, or `pgrep`: they are `.cmd` shims, and spawning one
+ * directly throws EINVAL since the CVE-2024-27980 fix. Route those through cmd.exe, as the npm calls
+ * already do. A bare name wraps only when a `<name>.cmd` really sits on PATH, so a real `pgrep.exe`
+ * from Git for Windows keeps running directly rather than behind a shell that would reinterpret `&`. */
 export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
-  if (!IS_WINDOWS || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };
-  return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+  if (!IS_WINDOWS) return { cmd, args };
+  if (/\.(?:cmd|bat)$/i.test(cmd)) {
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+  }
+  if (hasCmdShim(cmd)) {
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+  }
+  return { cmd, args };
+}
+
+function hasCmdShim(cmd: string): boolean {
+  if (cmd.includes('/') || cmd.includes('\\')) return false;
+  return (process.env.PATH || '').split(path.delimiter).some((dir) => dir && existsSync(path.join(dir, `${cmd}.cmd`)));
 }
 
 async function execP(cmd: string, args: string[], opts: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {

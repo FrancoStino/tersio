@@ -30,7 +30,7 @@ import {
 import { readUsageDb, syncUsageDb } from "../../extensions/shared/usage-store.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { cliEnv, fakeExecutable, hasSqlite, withHome } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable, fakeRtkBin, hasSqlite, isWindows, withHome } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -1078,7 +1078,8 @@ function uninstallSeed(home: string) {
     "utf8",
   );
   mkdirSync(path.join(home, ".bun", "bin"), { recursive: true });
-  writeFileSync(path.join(home, ".bun", "bin", "rtk"), "fake", "utf8");
+  // Windows resolves and removes `rtk.exe`, so the seed carries the platform's own name.
+  writeFileSync(path.join(home, ".bun", "bin", isWindows() ? "rtk.exe" : "rtk"), "fake", "utf8");
   writeFileSync(path.join(home, ".omp", "agent", "config.yml.bak"), "extensions: []\n", "utf8");
   const pluginCaveman = path.join(pluginsDir, "node_modules", SELF, "extensions", "caveman");
   mkdirSync(pluginCaveman, { recursive: true });

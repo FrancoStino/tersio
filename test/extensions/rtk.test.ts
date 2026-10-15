@@ -94,7 +94,8 @@ test("a grep result over the threshold is replaced by the rtk filter", async () 
     // A hung filter must not stall the tool result.
     expect(calls[0].timeout).toBe(5000);
     // The payload file is removed, so the gathered text does not pile up in /tmp.
-    const redirected = calls[0].args[1].match(/< "([^"]+)"/);
+    const command = calls[0].args[SHELL_INFO.flags.length];
+    const redirected = command.match(/< "([^"]+)"/);
     expect(redirected, "the filter reads the payload from a file").not.toBeNull();
     expect(existsSync(redirected![1])).toBe(false);
   });
@@ -646,8 +647,7 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
   await withPath("", async () => {
     const binDir = path.join(process.env.HOME as string, ".bun", "bin");
     mkdirSync(binDir, { recursive: true });
-    const fake = path.join(binDir, "rtk");
-    writeFileSync(fake, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    const fake = fakeRtkBin(binDir, ["echo hi"], "echo hi");
 
     const cmds: string[] = [];
     const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
@@ -681,8 +681,7 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
   const binDir = path.join(process.env.HOME as string, ".bun", "bin");
   await withPath("", async () => {
     mkdirSync(binDir, { recursive: true });
-    const fake = path.join(binDir, "rtk");
-    writeFileSync(fake, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    const fake = fakeRtkBin(binDir, ["echo hi"], "echo hi");
     setSharedComboMode("rtk", "on");
     const cmds: string[] = [];
     // No session_start: this instance's own flag is still its start-up default.

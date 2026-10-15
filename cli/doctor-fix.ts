@@ -37,9 +37,10 @@ export function serviceOrphanPids(): string[] {
     return [];
   }
   if (serviceRunning(status)) return [];
+  const grepShim = shimCommand('pgrep', ['-f', 'opencode serve --service']);
   let out = '';
   try {
-    out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+    out = spawnSync(grepShim.cmd, grepShim.args, { encoding: 'utf8' }).stdout ?? '';
   } catch { return []; }
   // Only digits: the value comes from another process, and `process.kill` throws on anything else.
   return out.split(/[\s,]+/).filter((line: string) => /^\d+$/.test(line.trim())).map((line: string) => line.trim());
@@ -59,7 +60,8 @@ export function serviceState(): { status: string; live: boolean } | null {
   if (status === '') return null;
   let live = false;
   try {
-    const out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+    const grepShim = shimCommand('pgrep', ['-f', 'opencode serve --service']);
+    const out = spawnSync(grepShim.cmd, grepShim.args, { encoding: 'utf8' }).stdout ?? '';
     live = out.split(/[\s,]+/).some((line: string) => /^\d+$/.test(line.trim()));
   } catch { live = false; }
   return { status, live };
