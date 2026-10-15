@@ -20,10 +20,13 @@ const FILTER_TIMEOUT_MS = 5000;
 
 // A shell that understands `<`, resolved per platform: Windows has no /bin/sh, and the filter needs the redirect because `rtk pipe` reads stdin only.
 // Separate flags, not one packed element: Node quotes each argv element, and cmd.exe rejects `"/d /s /c"`.
-export function filterShell(): { shell: string; flags: string[] } {
+/** The shell for one pipe, and whether the whole command needs an extra quote pair around it.
+ * `cmd.exe /s` strips the first and last quote of its command, so without the wrap a quoted binary
+ * path and a quoted redirect path inside it lose that outer pair and cmd.exe reads them as literal. */
+export function filterShell(): { shell: string; flags: string[]; wrap: boolean } {
   return process.platform === 'win32'
-    ? { shell: process.env.ComSpec || 'cmd.exe', flags: ['/d', '/s', '/c'] }
-    : { shell: '/bin/sh', flags: ['-c'] };
+    ? { shell: process.env.ComSpec || 'cmd.exe', flags: ['/d', '/s', '/c'], wrap: true }
+    : { shell: '/bin/sh', flags: ['-c'], wrap: false };
 }
 
 export type FilterExec = (
@@ -64,8 +67,9 @@ export async function filterThroughRtk(
     const file = join(dir, 'in.txt');
     writeFileSync(file, text, 'utf8');
     // `rtk pipe` reads stdin only and execFile has no stdin, so one redirect through the platform shell.
-    const { shell, flags } = filterShell();
-    const result = await exec(shell, [...flags, `"${bin}" pipe -f ${filter} < "${file}"`], { signal, timeout: FILTER_TIMEOUT_MS });
+    const { shell, flags, wrap } = filterShell();
+    const line = `"${bin}" pipe -f ${filter} < "${file}"`;
+    const result = await exec(shell, [...flags, wrap ? `"${line}"` : line], { signal, timeout: FILTER_TIMEOUT_MS });
     if (result.code !== 0) return null;
     const out = result.stdout;
     if (!out.trim() || out.length >= text.length) return null;
