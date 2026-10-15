@@ -17,7 +17,7 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 | A row field no reader filled left a column blank | the same test asserts `row.provider` for every grouped row shape |
 | A unit test imported a component file under the root tsconfig | pure logic lives in `dashboard/app/src/lib/*.ts`; `test/tsconfig.json` includes `.ts` only |
 | Slow-CI timeout on a heavy test that passed locally | `vitest.config.ts` sets `testTimeout: 30000`, so no test relies on the 5s framework default |
-| Benchmark probes raced the sweep over shared settings file | `docs/BENCHMARK.md` exports `TERSIO_HOME` into the throwaway dir, so a run never opens the live settings file for writing |
+| Benchmark probes raced the sweep over shared settings file | the benchmark guide sends output to a separate folder and never opens the live settings file for writing |
 | Pixel harness measured live data and live animations | `test/repo-integrity.test.ts` fails if any chart sets `isAnimationActive` to true, so a JS entrance animation cannot return |
 | A type-import split dropped an existing type import | `bun run build` runs `tsc`, and `bun run verify` runs the build, so a dropped name fails the build |
 | Two edits rewrote a span they only half re-emitted | the same `tsc` step; the half-rewritten interface and the dropped field are compile errors |
@@ -196,3 +196,65 @@ The eight entries below are editing and verification discipline. No test, lint r
 **Root cause:** The pragma was cosmetic housekeeping for an external tool, placed on the write path of a store whose schema sets WAL for reader/writer concurrency. One global mode, two kinds of connection, and a statement that needs exclusive access to change it.
 
 **Prevention rule:** A write path must not change the database's journal mode. The mode change needs exclusive access and undoes the concurrency the schema asked for. Prove a write path with a reader holding a read transaction, and assert the rows committed, not just that no error was raised.
+## 2026-10-14 — Command-output benchmark measured raw against raw
+**What happened:** The RTK command surface ran the "RTK" side as `bash -c "rtk <cmd>"` inside a plain shell script and the "base" side as the same command with `RTK_DISABLED=1`. Both sides produced identical byte counts for `find`, `ls`, and `git status`, because the bash rewrite never fires in a standalone script: it is a pi `tool_call` hook. The first pass compared raw output against raw output.
+**Root cause:** Assumed the rewrite fires on any shell invocation of the command. The rewrite lives in the agent's bash tool-call handler, so a plain `bash -c` runs the command unrewritten either way.
+**Prevention rule:** To measure the RTK side outside an agent turn, call the rewritten form explicitly (`rtk <cmd>`), and to measure the base side set `RTK_DISABLED=1`. Verify the side is what it claims with one probe (a condensed `ls -la .` output, or `rtk rewrite '<cmd>'`) before recording 5 reps. A pass whose two sides produce byte-identical output is a harness bug, not a zero-saving result.
+
+## 2026-10-14 — A benchmark measured a mode that never loaded, and a suite that the caller decided
+
+**What happened:**` Three host benchmarks of the same Tersio settings disagreed: pi and OpenCode reported a 715-721 token Ponytail block and omp reported 0, for the same `ponytailDefault` value. The omp runs were non-interactive (`omp -p`), where nothing publishes the state Ponytail reads. The same run class also had its agents edit `test/setup.ts` to delete `TERSIO_HOME` and `RTK_DISABLED`, because the suite resolved its stores through whatever the caller's shell carried: two wired-hook tests failed under an RTK-off shell and `tersio doctor` read a foreign settings home, so the agentic task failed its own "no test file edited" gate in 21 of 30 runs for an environment reason, not a code reason.
+
+**Root cause:**` Ponytail read one shared, process-wide state, and only an interactive session ever wrote it; the suite read the ambient environment instead of starting from a fixed one. Two different "the same input" assumptions, both false for a headless caller.
+
+**Prevention rule:**` A mode that measures a 0-token block is a harness finding before it is a product finding: load it in a headless harness first, and compare the same mode across hosts before calling a zero a saving. A test suite clears every `TERSIO_*` and `RTK_*` override in its setup file, so the caller's shell cannot choose the stores, and a benchmark that finds agents editing test files to work around the harness has a bug in the harness.
+
+## 2026-10-14 — A benchmark withheld a saving because it measured the wrong form
+
+**What happened:** The command-output surface recorded RTK as failing the fidelity check on `bun run test` and withheld its 53% saving. The condensed output had been taken as `rtk test bun run test`, the wrapper the benchmark guide's own compressible table named. Measured on the form the host's rewrite actually emits, `rtk bun run test`, the condensed output keeps the failing test name, the assertion, the file, and the line. The guide and the report both pointed at a form no agent runs.
+
+**Root cause:** The command pair was typed by hand from documentation instead of read from the host. `rtk rewrite "<cmd>"` prints the form the agent will run, and the runner-native subcommand and the generic wrapper are different products: one keeps failure details, the other truncates to a tail.
+
+**Prevention rule:** Take the condensed side from the host, not from a table: run `rtk rewrite "<cmd>"` first, or read a rewritten command out of a real session. When a fidelity check fails, prove the form under test is the form an agent uses before recording a product bug; a saving withheld on the wrong form is as wrong as a saving published on one.
+
+## 2026-10-14 — A new rule body was written from the wrong register
+
+**What happened:** Caveman`lite` and `full` both loaded `rule.md`, so a body was authored for `lite` by taking `full` and removing its worked examples and special-case prose. Upstream had already defined the register: `skills/caveman/SKILL.md` at `84cc3c1` carries an Intensity table whose `lite` row reads "No filler/hedging. Keep articles + full sentences. Professional but tight", and whose `full` row is the one that drops articles and allows fragments. The authored body dropped articles and allowed fragments, so `lite` was `full` with fewer examples rather than the lighter register upstream describes.
+
+**Root cause:** The level was assumed to be a length setting. It is a register setting: each row of upstream's table changes which rules apply, not only how much prose ships. The body was written from a sibling file in this repo instead of from the upstream definition of the level, and nothing in the tree linked a level to its source row.
+
+**Prevention rule:** Before authoring a level body, read the upstream definition of that level and quote it in the file's frontmatter with the revision it came from, so the fork is auditable. Pin the register with a test that asserts the level keeps the rules upstream assigns it and does not carry the ones it assigns to another level. A body that differs from a sibling only by length is a warning sign, not a level.
+
+## 2026-10-14 — A fork of an upstream register drifted into a neighbouring register
+
+**What happened:** Two caveman levels had no body of their own and loaded a sibling's. `lite` and `full` both read `rule.md`, and `megacave-lite` and `megacave-ultra` both read the single megacave body. The first `lite` body was then written by taking `full` and cutting its examples, which is `full` wearing a lighter label: upstream's table gives `lite` "No filler/hedging. Keep articles + full sentences" and gives `full` the article-dropping and the fragments.
+
+**Root cause:** A level was treated as a length setting, so "shorter body" looked like a correct implementation of "lighter level". Every level row in upstream's Intensity table changes which rules apply, not how much prose ships, and nothing in the tree tied a level to its source row, so a reviewer comparing two files could not see that both said the same thing.
+
+**Prevention rule:** Each level gets its own body, and its body names the upstream row it came from in frontmatter, so the fork is auditable and a drift shows without a fetch. A test asserts every level's body differs from every other level's, and that each level keeps the rules its own row assigns it. A change that only shortens a body is a rewrite, not a new level.
+
+## 2026-10-15 — A restored function was retyped from memory and got a pad argument wrong
+
+**What happened:** An edit removed the body of `dayKey` in `extensions/shared/usage-ledger.ts` by anchoring on the signature alone. The restore retyped the body from memory and wrote `String(n).padStart(2, n)` instead of `padStart(2, '0')`, so every day key rendered as `2026-99-11` and the importer's `byDay` assertions read `undefined`.
+**Root cause:** The deleted body was re-authored instead of restored, so the exact string was a guess. The same edit had also been applied once before with a wider anchor, so the file had already been touched twice in the same span.
+**Prevention rule:** Restore a deleted body with `git checkout -- <file>` or copy it out of `git diff`, never by retyping. After any edit that removes more than it adds, run `git diff` on that hunk and read the restored lines against the original before building.
+
+## 2026-10-15 — A `json_each` join selected an ambiguous column
+
+**What happened:** The OpenCode adoption query selected `id` from `session_message, json_each(data,'$.content') j`. `json_each` exposes its own implicit `id`, so SQLite answered `ambiguous column name: id` and the reader returned zero rows. The adoption test failed with all-zero counts, and the live usage run counted no OpenCode calls.
+**Root cause:** The query was written and wired without being run once against a real fixture db. The comma-join shape was copied from `readOpencodeDbRows`, which selects only scalars and never hit the collision.
+**Prevention rule:** Qualify every column in a `json_each` join, and run the SQL against a fixture db before wiring it to a reader. When a new query returns an all-zero result on data known to have rows, run the SQL by hand before debugging the caller.
+
+## 2026-10-15 — Two import edits mangled the lines they were meant to extend
+
+**What happened:** Adding one import name to `test/cli/usage.test.ts` used an anchor that swallowed the newline after it, producing `backupUsageDb,  backupUsageDir,` on one line. A second edit then added a duplicate `sqliteExec` import beside the one already there.
+**Root cause:** The anchor was chosen wider than the change, so the replacement re-emitted neighbouring lines it had not read back. The duplicate came from adding an import without first listing the file's existing imports from the same module.
+**Prevention rule:** Anchor on the smallest unique string that names the change, and re-read the import block after any edit inside an import statement. Before adding an import, grep the file for the module path so an existing import from it is extended instead of duplicated.
+
+## 2026-10-15 — A sweep measured the installed plugin, not the build under test
+
+**What happened:** A gap-closing sweep reported `caveman lite` at 4/6 and `ponytail ultra` at 60% on omp, with three code runs failing on a missing function name and a `tsc` error. All of those runs had loaded their extension code from `~/.omp/plugins/node_modules/@krtclcdy/tersio`, which held the published 2.25.6 package rather than the working tree. The failures came from two defects the tree had already fixed and the package still carried: `lite` loading `rule.md`, and `rtk_run` answering "RTK mode is off" instead of running the command. The sweep therefore measured the bug the tree had removed and was one step from publishing it as a property of the fix.
+
+**Root cause:** The harness started `omp -p` with a `TERSIO_HOME` pointing at per-mode settings, which reads as isolation, but the extension code comes from the plugin directory and no setting redirects it. A separate probe had measured the prompt block with the build swapped in, so the cost came from the tree while the behaviour came from the package, and the two agreed on nothing.
+
+**Prevention rule:** Record which build the host loads before a sweep, and assert it matches the tree under test; a per-mode settings home isolates settings, not code. When a run's failure text quotes behaviour the tree no longer has, stop and check the loaded build before scoring it.
