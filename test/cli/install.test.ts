@@ -809,7 +809,11 @@ test.runIf(hasSqlite())("a zero-token message is skipped and a missing db is a n
 });
 
 // Output past 1MB was silently dropped.
-test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads back", { timeout: 30000 }, () => {
+test.runIf(hasSqlite())("a session_message table past 1MB still syncs and reads back", {
+  // A >1MB row through the store takes ~56s on the Windows runner against ~15s on Linux; the loose
+  // budget is the platform, and the assertion still checks bytes, not timing.
+  timeout: isWindows() ? 180000 : 30000,
+}, () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-db-big-"));
   try {
     mkdirSync(path.join(dir, "sessions"), { recursive: true });
@@ -1121,7 +1125,7 @@ test("uninstall removes extension dirs, self registration, and combo config entr
     expect(config).toMatch(/caveman-session/);
     // Ponytail ships with the presets, so a full uninstall removes it; the rtk binary stays.
     expect(!existsSync(path.join(home, ".omp", "plugins", "node_modules", PONYTAIL)), "ponytail removed by default").toBeTruthy();
-    expect(existsSync(path.join(home, ".bun", "bin", "rtk")), "rtk binary kept").toBeTruthy();
+    expect(existsSync(path.join(home, ".bun", "bin", isWindows() ? "rtk.exe" : "rtk")), "rtk binary kept").toBeTruthy();
     // Wiring goes with the rest or OMP loads a hook for a gone package; the binary stays, shared on PATH.
     expect(existsSync(path.join(extDir, "rtk.ts")), "rtk wiring removed").toBeFalsy();
     expect(config).not.toMatch(/rtk\.ts/);

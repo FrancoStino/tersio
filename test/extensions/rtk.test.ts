@@ -25,7 +25,7 @@ import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
 import { findFile, resolveRtkBinary, rtkPlatformSpec } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { fakeRtkBin, hasSqlite } from "../helpers/env.ts";
+import { fakeRtkBin, hasSqlite, withHome as inHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
@@ -662,7 +662,8 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
 });
 
 test("rtk mode on with no installed binary reports it instead of guessing", async () => {
-  await withPath("", async () => {
+  // A fresh HOME, so a sibling test's managed `~/.bun/bin` cannot answer the resolver.
+  await inHome(() => withPath("", async () => {
     const cmds: string[] = [];
     const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
       [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -671,7 +672,7 @@ test("rtk mode on with no installed binary reports it instead of guessing", asyn
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/rtk binary is not installed/);
     expect(cmds).toEqual([]);
-  });
+  }));
 });
 
 
