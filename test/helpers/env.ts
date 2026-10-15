@@ -21,6 +21,14 @@ export function isWindows(): boolean {
   return process.platform === 'win32';
 }
 
+/** A fake `rtk` on PATH that a spawned CLI can run. `resolveRtkBinary` asks for `rtk.exe` on Windows and
+ * `rtk` elsewhere, and CreateProcess runs neither a bare script nor an extensionless file, so the file
+ * carries the platform's name and the platform's script shape. `lines` are the POSIX shell lines, and
+ * `cmdBody` is the batch body, defaulting to the same exit code. Returns the path the resolver finds. */
+export function fakeRtkBin(dir: string, lines: string[] = [], cmdBody?: string): string {
+  return fakeExecutable(dir, isWindows() ? 'rtk.exe' : 'rtk', lines.join('\n'), cmdBody ?? 'exit /b 0');
+}
+
 /** An executable on PATH that a spawned CLI can run. `name` is the exact name the resolver asks for,
  * which carries `.exe` on Windows (`rtk.exe`) and nothing elsewhere. The file written is that same name
  * on POSIX (a shebang script) and `<name>.cmd` on Windows, where CreateProcess runs neither a bare script

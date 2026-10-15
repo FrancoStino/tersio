@@ -29,9 +29,10 @@ type FixRequest = FixTarget | 'all';
 export function serviceOrphanPids(): string[] {
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) return [];
+  const shim = shimCommand(bin, ['service', 'status']);
   let status = '';
   try {
-    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+    status = spawnSync(shim.cmd, shim.args, { encoding: 'utf8' }).stdout.trim().toLowerCase();
   } catch {
     return [];
   }
@@ -48,9 +49,10 @@ export function serviceOrphanPids(): string[] {
 export function serviceState(): { status: string; live: boolean } | null {
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) return null;
+  const shim = shimCommand(bin, ['service', 'status']);
   let status = '';
   try {
-    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+    status = spawnSync(shim.cmd, shim.args, { encoding: 'utf8' }).stdout.trim().toLowerCase();
   } catch {
     return null;
   }

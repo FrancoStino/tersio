@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { bannerLines, bannerTier } from "../../cli/banner.ts";
 import { detectHosts, hostLabel } from "../../cli/hosts.ts";
 import type { HostEntry } from "../../cli/hosts.ts";
-import { cliEnv } from "../helpers/env.ts";
+import { cliEnv, fakeRtkBin } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -398,7 +398,7 @@ test("uninstall --host pi clears the pi tree, the package, and the shared defaul
     expect(result.stdout, "OMP targets stay out of a pi uninstall").not.toMatch(/\.omp[\\/]agent[\\/]extensions/);
     // Ponytail now lives in a local package dir we wrote, not in pi's skills dir.
     expect(result.stdout).toMatch(/\[dry-run\] would run: pi remove npm:@dietrichgebert\/ponytail/);
-    expect(result.stdout).toMatch(/\.pi\/agent\/ponytail \(local Ponytail package\)/);
+    expect(result.stdout).toMatch(/\.pi[\\/]agent[\\/]ponytail \(local Ponytail package\)/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -457,9 +457,7 @@ test("doctor --fix restores a partly written pi tree", () => {
 function seedRtk(home: string): void {
   const binDir = path.join(home, ".bun", "bin");
   mkdirSync(binDir, { recursive: true });
-  const rtk = path.join(binDir, "rtk");
-  writeFileSync(rtk, "#!/bin/sh\necho 'rtk 0.50.0'\n", "utf8");
-  chmodSync(rtk, 0o755);
+  fakeRtkBin(binDir, ["echo 'rtk 0.50.0'"], "echo rtk 0.50.0");
 }
 
 test("an existing rtk binary is bound on both hosts, never downloaded", () => {

@@ -156,9 +156,9 @@ function setup(fakeNpmBody: string, cache: unknown): { dir: string; env: Env } {
   const bin = path.join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   // A shebang script on POSIX, a `.cmd` batch file on Windows, where the script cannot run.
-  const npm = process.platform === "win32"
-    ? fakeExecutable(bin, "npm", fakeNpmBody, "echo 9.9.9")
-    : fakeExecutable(bin, "npm", fakeNpmBody, "");
+  // The batch body carries the same answer, so a registry probe reads the same on both.
+  const answered = /echo\s+9\.9\.9/.test(fakeNpmBody);
+  const npm = fakeExecutable(bin, "npm", fakeNpmBody, answered ? "echo 9.9.9" : "exit /b 1");
   const home = path.join(dir, "home");
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   if (cache !== null) {

@@ -28,7 +28,7 @@ import {
 import { formatStatus } from "../../extensions/shared/status.ts";
 import { findHoistedPackage } from "../../extensions/shared/utils.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from "../../extensions/shared/types.ts";
-import { withHome as inHome } from "../helpers/env.ts";
+import { fakeRtkBin, withHome as inHome } from "../helpers/env.ts";
 
 // ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join turns into `D:\D:\...`.
@@ -44,16 +44,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const IS_WINDOWS = process.platform === "win32";
 
 // The bash rewrite shells out to the rtk on PATH, so each test owns PATH and HOME.
-async function withFakeRtk(script: string | null, work: () => Promise<void>): Promise<void> {
+// The Windows form is a `.cmd` shim, because CreateProcess runs no bare script.
+async function withFakeRtk(script: string | null, cmdScript: string, work: () => Promise<void>): Promise<void> {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-rtk-"));
   const previous = { PATH: process.env.PATH, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   try {
     const bin = path.join(dir, "bin");
     mkdirSync(bin, { recursive: true });
     if (script !== null) {
-      const rtk = path.join(bin, "rtk");
-      writeFileSync(rtk, script, "utf8");
-      chmodSync(rtk, 0o755);
+      const body = script.replace(/^#!\/bin\/sh\n/, "");
+      fakeRtkBin(bin, body.split("\n"), cmdScript);
     }
     process.env.PATH = bin;
     process.env.HOME = dir;
@@ -216,7 +216,7 @@ test("opencode sessions restore modes independently", async () => {
 
 // rtk ships no OpenCode plugin of its own, so this hook is the whole integration.
 test("the bash hook rewrites a command through the resolved rtk binary", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", async () => {
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %2", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const event = { tool: "bash", input: { command: "git status" } };
@@ -228,7 +228,7 @@ test("the bash hook rewrites a command through the resolved rtk binary", async (
 // The after-hook is the only surface for built-in grep and glob output, and it must mutate in place.
 test("the after hook condenses a large grep result and leaves the rest untouched", async () => {
   const big = `src/a.ts:1:${"a line of grep output \n".repeat(120)}`;
-  await withFakeRtk("#!/bin/sh\necho '2 matches in 1F:'\n", async () => {
+  await withFakeRtk("#!/bin/sh\necho '2 matches in 1F:'\n", "echo 2 matches in 1F:", async () => {
     const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
     store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -261,7 +261,7 @@ test("the after hook condenses a large grep result and leaves the rest untouched
 
 test("the after hook keeps the original when rtk is absent", async () => {
   const big = "x".repeat(2000);
-  await withFakeRtk(null, async () => {
+  await withFakeRtk(null, "", async () => {
     const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
     store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -272,7 +272,7 @@ test("the after hook keeps the original when rtk is absent", async () => {
 });
 
 test("the bash hook leaves other tools and rtk-less hosts alone", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", async () => {
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %2", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const other = { tool: "read", input: { command: "git status" } };
@@ -280,7 +280,7 @@ test("the bash hook leaves other tools and rtk-less hosts alone", async () => {
     expect(other.input.command).toBe("git status");
   });
 
-  await withFakeRtk(null, async () => {
+  await withFakeRtk(null, "", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const bash = { tool: "bash", input: { command: "git status" } };

@@ -1313,7 +1313,8 @@ const AGENT_TOOLS = new Set(['task', 'subagent']);
 
 /** One transcript as spans, tracks and markers: a model span runs `ts - duration` to `ts`. */
 export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT): AgentSessionTrace {
-  const project = sessionFile.split('/sessions/')[1]?.split('/')[0] ?? '';
+  // Either separator: a Windows host writes `<drive>\...\.omp\agent\sessions\<project>\<file>`.
+  const project = sessionFile.split(/[/\\]sessions[/\\]/)[1]?.split(/[/\\]/)[0] ?? '';
   const empty: AgentSessionTrace = {
     sessionFile, project, title: '', cwd: project, startedAt: 0, endedAt: 0,
     tracks: [], markers: [], summary: emptyTraceSummary(), toolStats: [], truncated: false,

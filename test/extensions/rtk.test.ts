@@ -25,7 +25,7 @@ import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
 import { findFile, resolveRtkBinary, rtkPlatformSpec } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { hasSqlite } from "../helpers/env.ts";
+import { fakeRtkBin, hasSqlite } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
@@ -37,9 +37,7 @@ process.env.TERSIO_HOME = process.env.HOME;
 /** A `rtk` file on PATH, so `resolveRtkBinary` finds a binary the stub exec never spawns. */
 function withFakeRtk(work: (dir: string) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), "tersio-rtk-bin-"));
-  const bin = path.join(dir, "rtk");
-  writeFileSync(bin, "#!/bin/sh\nexit 0\n", "utf8");
-  chmodSync(bin, 0o755);
+  fakeRtkBin(dir);
   const previous = process.env.PATH;
   process.env.PATH = dir;
   return work(dir).finally(() => {
@@ -338,14 +336,12 @@ test.skipIf(!hasSqlite())("same command across repos folds into one row", () => 
 
 // Fake rtk binary: logs its argv beside it, exits with the given code; hermetic, never touches a real OMP dir.
 function fakeRtk(dir: string, code = 0): string {
-  const bin = path.join(dir, "rtk");
-  writeFileSync(bin, [
-    "#!/bin/sh",
-    `echo "$@" >> "${path.join(dir, "invocations.log")}"`,
-    `exit ${code}`,
-  ].join("\n"), "utf8");
-  chmodSync(bin, 0o755);
-  return bin;
+  // `echo %*>>"file"` is the batch idiom for appending the args, with no space before the redirect.
+  return fakeRtkBin(
+    dir,
+    [`echo "$@" >> "${path.join(dir, "invocations.log")}"`, `exit ${code}`],
+    `echo %*>> "${path.join(dir, "invocations.log")}"\nexit /b ${code}`,
+  );
 }
 
 function tempHome(): { dir: string; log: string } {
@@ -536,7 +532,7 @@ function withPath(value: string, work: () => Promise<void>): Promise<void> {
 function withRtkBinary(work: () => Promise<void>): Promise<void> {
   const binDir = path.join(process.env.HOME as string, ".bun", "bin");
   mkdirSync(binDir, { recursive: true });
-  writeFileSync(path.join(binDir, "rtk"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+  fakeRtkBin(binDir, ["echo hi"], "echo hi");
   return withPath("", work).finally(() => { rmSync(binDir, { recursive: true, force: true }); });
 }
 
