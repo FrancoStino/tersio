@@ -6,6 +6,8 @@
  - RTK adoption undercounted pi and opencode. Both hosts store the command the model issued, before the hook rewrites it, so a successful rewrite read as a miss. The rewrite now leaves an `rtk-audit` row in the usage ledger, and the adoption count adds those rows.
  - The adoption number blended every host into one figure, so a quiet host hid behind a busy one. Each host with recorded calls now gets its own row in `tersio usage`.
  - Caveman's `rule.md` never tracked upstream. It is a fork with one adapted line, and nothing refetched it, so an upstream change never arrived. `/tersio update caveman` now fetches it, re-applies the adaptation, and reports it beside the other two bodies.
+ - Ponytail never injected on pi, in any session. Tersio skipped its own injector there because the upstream pi-extension owns injection, and that extension reads its own config at `~/.config/ponytail/config.json` for the default. Tersio's saved `ponytailDefault` never reached that file, so upstream's default of `off` stood and no block landed. `tersio settings` and the installer now mirror the saved default into upstream's config, and a live headless pi session carries the block.
+ - The pstack tree named artifacts that do not ship in it: Cursor's `control-ui` and `control-cli` skills, the upstream helper scripts `worktree-audit.sh`, `log.sh`, `watch-pr`, `orch.ts`, and `check-plan.mjs`, and a `agent-transcripts/` directory no host creates. A run that reached for any of them read a missing file. Each is now named by category, the host-neutral form the tree already uses elsewhere, and the port-artifact test bans all of them so the next port fails the suite.
 
 ## v2.25.7
 
