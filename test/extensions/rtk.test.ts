@@ -524,6 +524,14 @@ function withPath(value: string, work: () => Promise<void>): Promise<void> {
   return work().finally(() => { process.env.PATH = previous; });
 }
 
+// A resolved rtk path with PATH cleared, so the exec paths run on a machine with no rtk installed.
+function withRtkBinary(work: () => Promise<void>): Promise<void> {
+  const binDir = path.join(process.env.HOME as string, ".bun", "bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, "rtk"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+  return withPath("", work).finally(() => { rmSync(binDir, { recursive: true, force: true }); });
+}
+
 type Exec = (cmd: string, args: string[], opts?: { signal?: AbortSignal; cwd?: string }) => Promise<{
   stdout: string;
   stderr: string;
@@ -589,33 +597,39 @@ test("a host without exec reports it instead of throwing", async () => {
   expect(text(r)).toMatch(/cannot run rtk/);
 });
 
-test("a missing rtk binary reports the error instead of crashing the tool", async () => {
-  const h = rtkToolHarness(async () => { throw new Error("spawn rtk ENOENT"); },
-    [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
-  await h.sessionStart();
-  const r = await h.tool.execute("1", { args: ["ls"] }, undefined, undefined, h.ctx);
-  expect(r.isError).toBe(true);
-  expect(text(r)).toContain("spawn rtk ENOENT");
+test("a spawn failure reports the error instead of crashing the tool", async () => {
+  await withRtkBinary(async () => {
+    const h = rtkToolHarness(async () => { throw new Error("spawn rtk ENOENT"); },
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    await h.sessionStart();
+    const r = await h.tool.execute("1", { args: ["ls"] }, undefined, undefined, h.ctx);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("spawn rtk ENOENT");
+  });
 });
 
 test("a non-zero exit is surfaced as an error with its output", async () => {
-  const h = rtkToolHarness(async () => ({ stdout: "", stderr: "bad flag", code: 2, killed: false }),
-    [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
-  await h.sessionStart();
-  const r = await h.tool.execute("1", { args: ["--nope"] }, undefined, undefined, h.ctx);
-  expect(r.isError).toBe(true);
-  expect(text(r)).toContain("bad flag");
+  await withRtkBinary(async () => {
+    const h = rtkToolHarness(async () => ({ stdout: "", stderr: "bad flag", code: 2, killed: false }),
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    await h.sessionStart();
+    const r = await h.tool.execute("1", { args: ["--nope"] }, undefined, undefined, h.ctx);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("bad flag");
+  });
 });
 
 test("a successful run returns combined output and no error", async () => {
-  const seen: string[][] = [];
-  const h = rtkToolHarness(async (_cmd, args) => { seen.push(args); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
-    [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
-  await h.sessionStart();
-  const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
-  expect(r.isError).toBe(false);
-  expect(text(r)).toBe("ok");
-  expect(seen).toEqual([["git", "status"]]);
+  await withRtkBinary(async () => {
+    const seen: string[][] = [];
+    const h = rtkToolHarness(async (_cmd, args) => { seen.push(args); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    await h.sessionStart();
+    const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
+    expect(r.isError).toBe(false);
+    expect(text(r)).toBe("ok");
+    expect(seen).toEqual([["git", "status"]]);
+  });
 });
 
 test("RTK no longer registers a natural-language input handler", () => {
