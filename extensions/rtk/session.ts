@@ -1,7 +1,7 @@
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
 import { injectPromptText, onHostEvent, setExtensionLabel, stringArrayToolParams } from '../shared/host.ts';
 import { readRtkDefault } from '../shared/plugin-settings.ts';
-import { resolveRtkBinary } from '../shared/utils.ts';
+import { resolveRtkBinary, shimCommand } from '../shared/utils.ts';
 import { announceStatus } from '../shared/status.ts';
 import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
@@ -93,7 +93,9 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
       onUpdate?.({ content: [{ type: 'text', text: `${bin === null ? '' : 'rtk '}${argv.join(' ')}` }], details: { phase: 'start' } });
       try {
         // A GUI-launched host may lack ~/.bun/bin on PATH, so prefer the resolved path.
-        const result = await pi.exec(bin ?? argv[0], argv, { signal, cwd });
+        // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell.
+        const shim = shimCommand(bin ?? argv[0], argv);
+        const result = await pi.exec(shim.cmd, shim.args, { signal, cwd });
         const text = [result.stdout, result.stderr].filter(Boolean).join('\n');
         return {
           isError: result.code !== 0,

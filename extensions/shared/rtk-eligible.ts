@@ -5,7 +5,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeRtkVersion, tersioDataPath } from './utils.ts';
+import { normalizeRtkVersion, shimCommand, tersioDataPath } from './utils.ts';
 
 /** Verified against rtk 1.0.1; the drift test fails when rtk's set moves. */
 export const FALLBACK_ELIGIBLE_HEADS: readonly string[] = [
@@ -33,7 +33,8 @@ const PROBES: Record<string, string> = {
 
 function probe(bin: string, command: string): boolean {
   try {
-    const out = execFileSync(bin, ['rewrite', command], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const shim = shimCommand(bin, ['rewrite', command]);
+    const out = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true });
     return out.trim().length > 0;
   } catch (e) {
     // Non-zero exit throws; exit 3 still prints a rewrite, exits 1 and 2 do not.
@@ -54,7 +55,8 @@ export function deriveEligibleHeads(bin: string): Set<string> {
 
 function rtkVersion(bin: string): string {
   try {
-    return normalizeRtkVersion(execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true }));
+    const shim = shimCommand(bin, ['--version']);
+    return normalizeRtkVersion(execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true }));
   } catch {
     return '';
   }

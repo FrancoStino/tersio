@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, tersioDataPath } from './utils.ts';
+import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, shimCommand, tersioDataPath } from './utils.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
 
@@ -834,7 +834,8 @@ export function readRtkRecallDiagnostics(binary: string | null = resolveRtkBinar
     try { config = fs.readFileSync(configPath, 'utf8'); } catch { /* use RTK CLI fallback */ }
     const modeMatch = /^\s*mode\s*=\s*"(sqlite|tee|disabled)"/m.exec(config);
     const mode = (modeMatch?.[1] ?? 'unknown') as RtkRecallDiagnostics['mode'];
-    const output = execFileSync(binary, ['recall', '--list'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const shim = shimCommand(binary, ['recall', '--list']);
+    const output = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true });
     const entries = /\((\d+)\s+(?:entries?|stored)\)/i.exec(output)?.[1] ?? /^\s*(\d+)\s+entries?/im.exec(output)?.[1] ?? '0';
     return { mode, entries: Number(entries) || 0, available: true };
   } catch {

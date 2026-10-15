@@ -12,7 +12,7 @@ import comboToggleExtension from './combo/index.ts';
 import tersioCommandsExtension from './commands/index.ts';
 import { getSharedComboState } from './shared/session-state.ts';
 import { formatStatus } from './shared/status.ts';
-import { resolveRtkBinary } from './shared/utils.ts';
+import { resolveRtkBinary, shimCommand } from './shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from './shared/types.ts';
 
 interface CommandConfig {
@@ -250,15 +250,17 @@ const plugin: Plugin.Plugin = {
 
 /** execFile with the promise shape `filterThroughRtk` expects. */
 function execRtk(cmd: string, args: string[], opts?: { signal?: AbortSignal; timeout?: number }): Promise<{ stdout: string; code: number }> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { signal: opts?.signal, timeout: opts?.timeout }, (error, stdout) => {
-      const out = stdout ?? '';
-      if (!error) return resolve({ stdout: out, code: 0 });
-      // A non-numeric code is a spawn failure (ENOENT, EACCES, killed) and must not read as success.
-      const raw = (error as { code?: unknown }).code;
-      resolve({ stdout: out, code: typeof raw === 'number' ? raw : 1 });
-    });
+  const { promise, resolve } = Promise.withResolvers<{ stdout: string; code: number }>();
+  // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell.
+  const shim = shimCommand(cmd, args);
+  execFile(shim.cmd, shim.args, { signal: opts?.signal, timeout: opts?.timeout }, (error, stdout) => {
+    const out = stdout ?? '';
+    if (!error) { resolve({ stdout: out, code: 0 }); return; }
+    // A non-numeric code is a spawn failure (ENOENT, EACCES, killed) and must not read as success.
+    const raw = (error as { code?: unknown }).code;
+    resolve({ stdout: out, code: typeof raw === 'number' ? raw : 1 });
   });
+  return promise;
 }
 
 /** `rtk rewrite` exit codes: 0 rewrite found, 1 no equivalent, 3 advisory; the code is the contract. */
@@ -309,20 +311,21 @@ function bundledSkills(): ReturnType<typeof parseSkillFile>[] {
 function rewriteCommand(command: string): Promise<string | null> {
   const bin = resolveRtkBinary();
   if (!bin) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile(bin, ['rewrite', command], { timeout: 5000 }, (error, stdout) => {
-      // A kill or timeout means untrustworthy output; pass the command through.
-      const err = error as { killed?: boolean; signal?: unknown; code?: unknown } | null;
-      if (err && (err.killed || err.signal)) return resolve(null);
-      const code = typeof err?.code === 'number' ? err.code : RTK_REWRITE_FOUND;
-      // Exit 1 is the only "no equivalent" answer, so anything else with output rewrites.
-      if (code === 1) return resolve(null);
-      const out = String(stdout).trim();
-      if (!out || out === command) return resolve(null);
-      if (code !== RTK_REWRITE_FOUND && code !== RTK_REWRITE_ADVISORY) return resolve(null);
-      resolve(out);
-    });
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell.
+  const shim = shimCommand(bin, ['rewrite', command]);
+  execFile(shim.cmd, shim.args, { timeout: 5000 }, (error, stdout) => {
+    // A kill or timeout means untrustworthy output; pass the command through.
+    const err = error as { killed?: boolean; signal?: unknown; code?: unknown } | null;
+    if (err && (err.killed || err.signal)) { resolve(null); return; }
+    const code = typeof err?.code === 'number' ? err.code : RTK_REWRITE_FOUND;
+    // Exit 1 is the only "no equivalent" answer, so anything else with output rewrites.
+    if (code === 1) { resolve(null); return; }
+    const out = String(stdout).trim();
+    if (!out || out === command || (code !== RTK_REWRITE_FOUND && code !== RTK_REWRITE_ADVISORY)) { resolve(null); return; }
+    resolve(out);
   });
+  return promise;
 }
 
 export default plugin;

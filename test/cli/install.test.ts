@@ -1221,7 +1221,7 @@ test("uninstall with removal flags drops ponytail, its lock entry, and the rtk b
     expect(!(PONYTAIL in pkg.dependencies), "ponytail dep removed").toBeTruthy();
     const lock = JSON.parse(readFileSync(path.join(home, ".omp", "plugins", "omp-plugins.lock.json"), "utf8"));
     expect(!(PONYTAIL in lock.plugins), "ponytail lock entry removed").toBeTruthy();
-    expect(!existsSync(path.join(home, ".bun", "bin", "rtk")), "rtk binary removed").toBeTruthy();
+    expect(!existsSync(path.join(home, ".bun", "bin", isWindows() ? "rtk.exe" : "rtk")), "rtk binary removed").toBeTruthy();
     expect(!existsSync(path.join(home, ".omp", "agent", "extensions", "rtk.ts")), "rtk OMP wiring removed with the binary").toBeTruthy();
     const config = readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8");
     expect(config).not.toMatch(/ponytail/);
