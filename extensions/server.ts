@@ -13,6 +13,7 @@ import tersioCommandsExtension from './commands/index.ts';
 import { getSharedComboState } from './shared/session-state.ts';
 import { formatStatus } from './shared/status.ts';
 import { resolveRtkBinary } from './shared/utils.ts';
+import { appendUsage } from './shared/usage-ledger.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from './shared/types.ts';
 
 interface CommandConfig {
@@ -221,7 +222,11 @@ const plugin: Plugin.Plugin = {
       if (sid !== undefined) await ensureSession(sid);
       if (!rtkActive(sid === undefined ? undefined : sessionEntriesOf(sid))) return;
       const rewritten = await rewriteCommand(input.command);
-      if (rewritten) input.command = rewritten;
+      if (!rewritten || rewritten === input.command) return;
+      const original = input.command;
+      input.command = rewritten;
+      // The transcript stores the pre-hook command, so the rewrite leaves its own row.
+      appendUsage('rtk-audit', `opencode ${original}`);
     });
 
     // Built-in grep and glob output never reaches the bash hook; mutate result.content in place.

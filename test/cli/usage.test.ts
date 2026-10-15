@@ -887,7 +887,7 @@ test("importer aggregates assistant usage by model and day, skips the rest", () 
   }
 });
 
-test("adoption reads executed Bash commands, not assistant tool-call intent", () => {
+test("adoption reads executed Bash calls from both transcript shapes", () => {
   const dir = fixtureDir();
   appendFileSync(path.join(dir, "branch", "s1.jsonl"), [
     JSON.stringify({ type: "custom", customType: "tool_execution_start", data: { toolName: "bash", args: { command: "git status --short" } } }),
@@ -901,10 +901,11 @@ test("adoption reads executed Bash commands, not assistant tool-call intent", ()
   process.env.TERSIO_HOME = home;
   try {
     clearRtkAdoptionCache();
-    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 3, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 });
-    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 3, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 });
+    // The fixture's two message-shape calls are pi's executed record, so they count beside the custom rows.
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 5, eligibleCalls: 4, rtkCalls: 2, missedCalls: 2, adoptionPct: 50, byHost: { pi: { bashCalls: 5, eligibleCalls: 4, rtkCalls: 2, missedCalls: 2, adoptionPct: 50 } } });
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 5, eligibleCalls: 4, rtkCalls: 2, missedCalls: 2, adoptionPct: 50, byHost: { pi: { bashCalls: 5, eligibleCalls: 4, rtkCalls: 2, missedCalls: 2, adoptionPct: 50 } } });
     appendFileSync(path.join(dir, "branch", "s1.jsonl"), `${JSON.stringify({ type: "custom", customType: "tool_execution_start", data: { toolName: "bash", args: { command: "rtk git diff" } } })}\n`, "utf8");
-    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 4, eligibleCalls: 3, rtkCalls: 2, missedCalls: 1, adoptionPct: (2 / 3) * 100 });
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 6, eligibleCalls: 5, rtkCalls: 3, missedCalls: 2, adoptionPct: 60, byHost: { pi: { bashCalls: 6, eligibleCalls: 5, rtkCalls: 3, missedCalls: 2, adoptionPct: 60 } } });
   } finally {
     clearRtkAdoptionCache();
     if (prev === undefined) delete process.env.TERSIO_SESSIONS_DIR;
@@ -939,7 +940,7 @@ test.skipIf(!sqliteAvailable())("adoption counts OpenCode bash calls from its ow
   process.env.TERSIO_OPENCODE_DB = db;
   try {
     clearRtkAdoptionCache();
-    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 });
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50, byHost: { opencode: { bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 } } });
   } finally {
     clearRtkAdoptionCache();
     if (prevSessions === undefined) delete process.env.TERSIO_SESSIONS_DIR;
@@ -947,6 +948,46 @@ test.skipIf(!sqliteAvailable())("adoption counts OpenCode bash calls from its ow
     if (prevDb === undefined) delete process.env.TERSIO_OPENCODE_DB;
     else process.env.TERSIO_OPENCODE_DB = prevDb;
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("adoption reads pi's message-shape bash calls and never double-counts", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-pi-shape-"));
+  mkdirSync(path.join(dir, "branch"), { recursive: true });
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-adoption-home-"));
+  const prevSessions = process.env.TERSIO_SESSIONS_DIR;
+  const prevHome = process.env.TERSIO_HOME;
+  process.env.TERSIO_SESSIONS_DIR = dir;
+  process.env.TERSIO_HOME = home;
+  try {
+    clearRtkAdoptionCache();
+    // pi records the call inside the assistant message; no custom row exists.
+    appendFileSync(path.join(dir, "branch", "s1.jsonl"), [
+      JSON.stringify({ type: "message", message: { role: "assistant", content: [
+        { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "git status --short" } },
+        { type: "toolCall", id: "call_2", name: "read", arguments: { path: "x" } },
+        { type: "toolCall", id: "call_3", name: "bash", arguments: { command: "rtk gh pr list" } },
+      ] } }),
+    ].join("\n") + "\n", "utf8");
+    expect(readRtkAdoption()).toEqual({ sessions: 1, bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50, byHost: { pi: { bashCalls: 2, eligibleCalls: 2, rtkCalls: 1, missedCalls: 1, adoptionPct: 50 } } });
+
+    // A host that writes both shapes must still count the call once.
+    appendFileSync(path.join(dir, "branch", "s2.jsonl"), [
+      JSON.stringify({ type: "custom", customType: "tool_execution_start", data: { toolCallId: "call_9", toolName: "bash", args: { command: "git diff" } } }),
+      JSON.stringify({ type: "message", message: { role: "assistant", content: [
+        { type: "toolCall", id: "call_9", name: "bash", arguments: { command: "git diff" } },
+        { type: "toolCall", id: "call_10", name: "bash", arguments: { command: "ls -la" } },
+      ] } }),
+    ].join("\n") + "\n", "utf8");
+    expect(readRtkAdoption()).toEqual({ sessions: 2, bashCalls: 4, eligibleCalls: 4, rtkCalls: 1, missedCalls: 3, adoptionPct: 25, byHost: { pi: { bashCalls: 4, eligibleCalls: 4, rtkCalls: 1, missedCalls: 3, adoptionPct: 25 } } });
+  } finally {
+    clearRtkAdoptionCache();
+    if (prevSessions === undefined) delete process.env.TERSIO_SESSIONS_DIR;
+    else process.env.TERSIO_SESSIONS_DIR = prevSessions;
+    if (prevHome === undefined) delete process.env.TERSIO_HOME;
+    else process.env.TERSIO_HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

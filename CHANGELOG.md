@@ -1,3 +1,12 @@
+## Unreleased
+
+### Fixed
+ - RTK's rewrite missed the first bash call of a fast session on pi and omp. The hook that `rtk init` writes registers its handler after an async version probe, so a call that landed before the probe finished ran unrewritten. Tersio's own filter extension now registers the same rewrite synchronously, and a live pi run with that hook removed still rewrites the command.
+ - RTK adoption was blind to pi. pi records tool calls inside the assistant message, while the reader parsed only the custom rows omp emits, so every pi bash call counted as zero. The reader now parses both shapes and dedupes by call id, because a host that writes both records each call once.
+ - RTK adoption undercounted pi and opencode. Both hosts store the command the model issued, before the hook rewrites it, so a successful rewrite read as a miss. The rewrite now leaves an `rtk-audit` row in the usage ledger, and the adoption count adds those rows.
+ - The adoption number blended every host into one figure, so a quiet host hid behind a busy one. Each host with recorded calls now gets its own row in `tersio usage`.
+ - Caveman's `rule.md` never tracked upstream. It is a fork with one adapted line, and nothing refetched it, so an upstream change never arrived. `/tersio update caveman` now fetches it, re-applies the adaptation, and reports it beside the other two bodies.
+
 ## v2.25.7
 
 ### Added
