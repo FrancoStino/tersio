@@ -23,7 +23,7 @@ import { resetSharedComboState, setSharedComboMode } from "../../extensions/shar
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from "../../extensions/shared/types.ts";
 import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
-import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand } from "../../extensions/shared/utils.ts";
+import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand, shimFlags } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
 import { fakeRtkBin, hasSqlite, isWindows, withHome as inHome } from "../helpers/env.ts";
 
@@ -634,8 +634,7 @@ test("a successful run returns combined output and no error", async () => {
     expect(r.isError).toBe(false);
     expect(text(r)).toBe("ok");
     // The shell flags precede the args only on Windows, where the shim carries them.
-    const shim = shimCommand("x", []);
-    expect(seen).toEqual([[...shim.args, "git", "status"]]);
+    expect(seen).toEqual([[...shimFlags(), "git", "status"]]);
   });
 });
 
@@ -659,7 +658,7 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
 
     expect(r.isError).toBe(false);
     // The recorded exec name is the shell on Windows, where the shim carries the binary as an argument.
-    const expected = isWindows() ? [shimCommand("x", []).cmd] : [fake];
+    const expected = isWindows() ? [shimCommand("probe.cmd", []).cmd] : [fake];
     expect(cmds).toEqual(expected);
     rmSync(binDir, { recursive: true, force: true });
   });
@@ -696,7 +695,7 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
 
     expect(r.isError).toBe(false);
     // The recorded exec name is the shell on Windows, where the shim carries the binary as an argument.
-    const expected = isWindows() ? [shimCommand("x", []).cmd] : [fake];
+    const expected = isWindows() ? [shimCommand("probe.cmd", []).cmd] : [fake];
     expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual(expected);
     expect(r.details?.condensed).toBe(true);
     resetSharedComboState();

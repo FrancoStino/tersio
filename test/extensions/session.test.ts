@@ -236,8 +236,9 @@ test("the after hook condenses a large grep result and leaves the rest untouched
 
     const hit = { tool: "grep", status: "completed", sessionID: "ses-on", result: { content: [{ type: "text", text: big }] } };
     await fire(hooks, "execute.after", hit);
-    // batch `echo` ends the line with CRLF, so the Windows fake emits one.
-    expect(hit.result.content).toEqual([{ type: "text", text: `2 matches in 1F:${IS_WINDOWS ? "\r\n" : "\n"}` }]);
+    // batch `echo` ends the line with CRLF, so the ending is normalized before the text is compared.
+    const condensed = String((hit.result.content[0] as { text: string }).text).replace(/\r\n/g, "\n");
+    expect(condensed).toBe("2 matches in 1F:\n");
 
     // An error carries no result, so there is nothing to replace.
     const failed = { tool: "grep", status: "error", sessionID: "ses-on", error: { message: "boom" } };
