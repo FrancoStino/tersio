@@ -448,7 +448,7 @@ test("doctor does not count the exec row when rtk is absent", () => {
     expect(result.status, result.stderr).toBe(0);
     // The exec question is meaningless without a binary, and a missing pstack tree is one warning, not five.
     expect(result.stdout).toMatch(/—  RTK exec: not installed/);
-    expect(result.stdout).toMatch(/Summary: 6 checks — ✅ 0 ok, ⚠️ 1 warn, ❌ 5 missing/);
+    expect(result.stdout).toMatch(/Summary: 9 checks — ✅ 3 ok, ⚠️ 1 warn, ❌ 5 missing/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

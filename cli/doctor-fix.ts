@@ -9,6 +9,7 @@ import {
   dryRun, verbose,
   debug,
   bundledPonytailSpec, execP, parseJsonObject, ponytailOverride, readPluginsPackage,
+  shimCommand,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
@@ -345,7 +346,8 @@ async function fixOpencodeService(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) { sayTagged('  [warn] opencode not found on PATH; start it with `opencode service start`'); return; }
-  await execNetwork('Starting the OpenCode service', bin, ['service', 'start'], { timeout: 60000 }).catch((e) => {
+  const shim = shimCommand(bin, ['service', 'start']);
+  await execNetwork('Starting the OpenCode service', shim.cmd, shim.args, { timeout: 60000 }).catch((e) => {
     throw new Error(`service start failed: ${shortError(e)}`);
   });
 }

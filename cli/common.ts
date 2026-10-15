@@ -148,8 +148,16 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Windows has no executable named `omp` or `npm`: they are `.cmd` shims, and spawning one directly
+ * throws EINVAL since the CVE-2024-27980 fix. Route those through cmd.exe, as the npm calls already do. */
+export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
+  if (!IS_WINDOWS || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };
+  return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+}
+
 async function execP(cmd: string, args: string[], opts: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-  return execFileP(cmd, args, {
+  const shim = shimCommand(cmd, args);
+  return execFileP(shim.cmd, shim.args, {
     timeout: opts.timeout || 120000,
     encoding: 'utf8',
     ...opts,

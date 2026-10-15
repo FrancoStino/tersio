@@ -19,6 +19,13 @@ The default one-liner installs the CLI and runs the setup menus (scope + Combo p
 curl -fsSL https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.sh | sh
 ```
 
+On Windows the same pass runs through PowerShell. The piped form installs and takes the defaults; run the script with its own arguments to get the menus:
+
+```powershell
+irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1)))
+```
+
 Each host loads its extensions from one place, so the same file never loads twice: `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` for OMP, `~/.pi/agent/extensions`, `~/.config/opencode/plugins/tersio`. The OMP agent tree keeps rtk's own `extensions/rtk.ts` wiring, which `config.yml` registers. `tersio update` without `--host` refreshes OMP.
 
 ## Requirements
@@ -26,7 +33,7 @@ Each host loads its extensions from one place, so the same file never loads twic
 - OMP, pi, or OpenCode.
 - Node.js 20.12+ with npm, or Bun. The installer prefers Bun when it is present.
 - SQLite runs in process where the runtime provides it (Bun, or Node 22.5+); an older Node uses the `sqlite3` binary instead.
-- macOS, Linux, or WSL. Install from the environment where the host runs.
+- macOS, Linux, or Windows. Install from the environment where the host runs.
 
 ## After installing
 

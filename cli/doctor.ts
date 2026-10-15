@@ -6,7 +6,7 @@ import {
   HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_NAME, PACKAGE_VERSION,
   args, dryRun, fix, yes,
   BUN_BIN_DIR, OMP_BIN,
-  execP, parseJsonObject, relTime,
+  execP, parseJsonObject, relTime, shimCommand,
 } from './common.ts';
 import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, piTersioSource } from './hosts.ts';
 import type { DetectedHost } from './hosts.ts';
@@ -14,7 +14,7 @@ import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
+import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
@@ -207,6 +207,19 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   function unused(label: string, detail: string): void {
     console.log(`  —  ${label}: not installed ${detail}`);
   }
+
+  // A Windows failure names its cause here: several rows below silently degrade when the
+  // platform has no rtk build, and a wrong home would move every one of them.
+  section('Platform');
+  const rtkSpec = rtkPlatformSpec();
+  check('Platform', rtkSpec !== null, `${process.platform}/${process.arch}${rtkSpec ? ` · node ${process.version} · rtk ${rtkSpec.triple}` : ''}`);
+  if (rtkSpec === null) {
+    // Windows on ARM today: rtk publishes no build, so the RTK rows read as not installed.
+    console.log(`      rtk publishes no build for ${process.platform}/${process.arch}; every RTK row below reads as missing`);
+  }
+  // Windows resolves data through the profile, so name the resolved home and data dir.
+  check('Home', HOME !== '', HOME);
+  check('Data', true, path.join(tersioHome(), 'usage.db'));
 
   section('Hosts');
   for (const host of hosts) {
@@ -417,7 +430,8 @@ function subagentMarkerStatus(ompBin: string | null): string | null {
   if (!ompBin) return null;
   let haystack: string;
   try {
-    haystack = execFileSync(ompBin, ['--version'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] })
+    const shim = shimCommand(ompBin, ['--version']);
+    haystack = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] })
       + readFileSync(ompBin, 'utf8');
   } catch {
     // A binary that will not run is the version row's problem, not this one's.

@@ -14,7 +14,11 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -23,5 +27,8 @@ jobs:
           bun-version-file: .bun-version
       # menu-layout renders a real PTY through a terminal emulator; without pyte
       # it skips itself, which would hide the layout regressions it guards.
+      # The module needs POSIX pty/termios, so it installs only on Linux. The
+      # layout suite self-skips elsewhere rather than failing the run.
       - run: pip install --quiet pyte
+        if: runner.os == 'Linux'
       - run: bun run verify
