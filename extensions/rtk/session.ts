@@ -23,8 +23,11 @@ function setRtkProcessEnabled(enabled: boolean): void {
   else process.env.RTK_DISABLED = '1';
 }
 
-// rtk's contract: name the rewritten surface, never the binary — a hand-typed `rtk` fights the rewrite.
-const RTK_PROMPT = `RTK guidance active. What you run is condensed automatically: searches (grep, rg), listings (ls, find, cat as read), package and test runs (bun, npm run, pnpm run), version control (git), and type and lint checks (tsc, eslint). Every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code. A command with no condensed form passes through unchanged.`;
+// rtk's contract: name the rewritten surface first and the binary second — a hand-typed `rtk` in front of a
+// rewritten command fights the rewrite, and the direct calls cover only what the rewrite cannot express.
+const RTK_PROMPT = `RTK guidance active. What you run is condensed automatically, in the host's own rewritten form: searches (grep, rg, ast-grep), listings (ls, find, tree), reads (cat), package and test runs (bun, npm, pnpm, npx, cargo, go, pytest, vitest, jest, ctest, tsc), version control and forges (git, gh, glab), containers and clusters (docker, kubectl), cloud and platform CLIs (aws, oc, dotnet), PHP tooling (phpunit, pest, phpstan, pint, ecs), lint and format (eslint, ruff, mypy, prettier, sqlfluff, playwright, prisma, next), and data tools (jq, curl, wget, psql, wc, make, tail, docker logs). The runner's own subcommand, such as \`rtk bun run test\`, keeps the failing test name, the assertion, and the file and line. Every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code.
+
+Call rtk directly for what the rewrite cannot express: \`rtk read <file> --level aggressive\` for an overview, \`--max-lines N\` for a preview, \`rtk smart <file>\` for a two-line summary, \`rtk summary <cmd>\` for a heuristic one, \`rtk err <cmd>\` for errors only, \`rtk log <file>\` to dedupe logs, \`rtk json <file>\` with \`--keys-only\` for shape, plus \`rtk deps\`, \`rtk diff\`, \`rtk env\`, \`rtk ast-grep\`, and \`rtk test <cmd>\` for a runner without its own form. A command with no condensed form passes through unchanged, so wrap it: \`rtk err node build.js\`, and \`rtk find -name '*.ts'\` in place of fd. Never type \`rtk\` in front of a command listed above.`;
 
 export default function rtkSessionExtension(pi: ExtensionApi): void {
   let enabled = DEFAULT_ENABLED;
@@ -73,27 +76,32 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
   pi.registerTool?.({
     name: 'rtk_run',
     label: 'RTK Run',
-    description: 'Run the installed `rtk` binary for compact command output when RTK mode is enabled.',
+    description: 'Run a shell command through the installed `rtk` binary when RTK mode is on, and run it plainly when RTK mode is off.',
     parameters: stringArrayToolParams(pi, 'args', {
       minItems: 1,
       description: "Arguments passed to rtk, e.g. ['git','status'] or ['read','src/index.ts']",
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       // A subagent's own flag sits at its start-up default, so honour shared state too.
-      if (!(enabled || getSharedComboState().rtk === 'on')) return fail('RTK mode is off. Run /rtk on for this session, or use bash explicitly.');
+      const rtkOn = enabled || getSharedComboState().rtk === 'on';
       if (typeof pi.exec !== 'function') return fail('This host cannot run rtk.');
-      onUpdate?.({ content: [{ type: 'text', text: `rtk ${params.args.join(' ')}` }], details: { phase: 'start' } });
+      // RTK off: run the command as given rather than answering "mode is off". The tool is the only one left under --no-tools, and a refusal there made the model spend turns re-calling it. rtk is the condenser, never the command.
+      const cwd = ctx?.cwd || pi.cwd;
+      const bin = rtkOn ? resolveRtkBinary() : null;
+      if (rtkOn && bin === null) return fail('RTK mode is on but the rtk binary is not installed. Run: tersio update');
+      const argv = params.args;
+      onUpdate?.({ content: [{ type: 'text', text: `${bin === null ? '' : 'rtk '}${argv.join(' ')}` }], details: { phase: 'start' } });
       try {
         // A GUI-launched host may lack ~/.bun/bin on PATH, so prefer the resolved path.
-        const result = await pi.exec(resolveRtkBinary() ?? 'rtk', params.args, { signal, cwd: ctx?.cwd || pi.cwd });
+        const result = await pi.exec(bin ?? argv[0], argv, { signal, cwd });
         const text = [result.stdout, result.stderr].filter(Boolean).join('\n');
         return {
           isError: result.code !== 0,
-          content: [{ type: 'text', text: text || `rtk exited ${result.code}` }],
-          details: { code: result.code, killed: result.killed, enabled },
+          content: [{ type: 'text', text: text || `exited ${result.code}` }],
+          details: { code: result.code, killed: result.killed, enabled, condensed: bin !== null },
         };
       } catch (e) {
-        return fail(`rtk could not run: ${e instanceof Error ? e.message : String(e)}`);
+        return fail(`${bin === null ? argv[0] : 'rtk'} could not run: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   });
