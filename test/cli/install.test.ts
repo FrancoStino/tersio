@@ -357,17 +357,13 @@ function pluginPresent(home: string): void {
   const pkg = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
   mkdirSync(path.join(pkg, "extensions"), { recursive: true });
   writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: PACKAGE_VERSION }), "utf8");
-  const binDir = path.join(home, ".bun", "bin");
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(path.join(binDir, isWindows() ? "rtk.exe" : "rtk"), "fake", "utf8");
+  fakeRtkBin(path.join(home, ".bun", "bin"));
 }
 
 /** Both package managers fail, so no plugin is registered and the agent tree is the fallback. A seeded rtk
  * goes with it, because an absent one downloads 18MB from GitHub and the assertions here are about the tree. */
 function noPackageManagers(home: string): Record<string, string> {
-  const binDir = path.join(home, ".bun", "bin");
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(path.join(binDir, isWindows() ? "rtk.exe" : "rtk"), "fake", "utf8");
+  fakeRtkBin(path.join(home, ".bun", "bin"));
   const stub = mkdtempSync(path.join(os.tmpdir(), "tersio-omp-nopm-"));
   fakeExecutable(stub, "npm", "exit 1", "exit /b 1");
   fakeExecutable(stub, "bun", "exit 1", "exit /b 1");
@@ -580,6 +576,9 @@ function opencodePluginHome(): string {
   writeFileSync(path.join(cfg, "opencode.json"), JSON.stringify({
     plugins: ["/Users/me/.config/opencode/plugins/rtk.ts", "/Users/me/.config/opencode/plugins/herdr.js"],
   }, null, 2));
+  // A seeded rtk is what the wire step binds. Without one every install fetches 18MB from GitHub, and a
+  // rate-limited runner answers 403, which takes the run off the path these assertions cover.
+  fakeRtkBin(path.join(dir, ".bun", "bin"));
   return dir;
 }
 
