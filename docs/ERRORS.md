@@ -233,6 +233,14 @@ The eight entries below are editing and verification discipline. No test, lint r
 
 **Prevention rule:** Each level gets its own body, and its body names the upstream row it came from in frontmatter, so the fork is auditable and a drift shows without a fetch. A test asserts every level's body differs from every other level's, and that each level keeps the rules its own row assigns it. A change that only shortens a body is a rewrite, not a new level.
 
+## 2026-10-15 — Three tool tests passed only on a machine with rtk installed
+
+**What happened:** CI failed three `rtk_run` tests: a spawn failure, a non-zero exit, and a successful run. Each passed locally because the developer machine has `rtk` on PATH, so the tool resolved a binary and took the exec path. On CI the resolved binary is null, the tool answers "the rtk binary is not installed" before any exec, and all three assertions read that message instead of the one they expect.
+
+**Root cause:** The tests predate the not-installed branch and never ran with the binary absent. Later tests in the same file already own PATH and HOME through `withPath("", …)` plus a fake `~/.bun/bin/rtk`, so the file carried the hermetic pattern the three tests skipped.
+
+**Prevention rule:** Every test that reaches a resolved binary owns PATH and HOME, or it passes only on machines that have that binary. Before pushing a change to a path that resolves one, run the suite once with the binary removed from PATH and HOME pointed at a fixture.
+
 ## 2026-10-15 — A restored function was retyped from memory and got a pad argument wrong
 
 **What happened:** An edit removed the body of `dayKey` in `extensions/shared/usage-ledger.ts` by anchoring on the signature alone. The restore retyped the body from memory and wrote `String(n).padStart(2, n)` instead of `padStart(2, '0')`, so every day key rendered as `2026-99-11` and the importer's `byDay` assertions read `undefined`.
