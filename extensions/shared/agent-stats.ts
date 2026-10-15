@@ -843,7 +843,8 @@ export function rootSessionFile(sessionFile: string): string {
   const parts = sessionFile.slice(at + marker.length).split(marker[0]);
   // `<project>/<root>.jsonl` is a root; `<project>/<root>/<child>.jsonl` belongs to that root.
   if (parts.length < 3) return sessionFile;
-  return `${base}${parts[0]}/${parts[1]}.jsonl`;
+  // Rejoined with the same separator, so a child's root matches its root file exactly.
+  return `${base}${parts[0]}${marker[0]}${parts[1]}.jsonl`;
 }
 
 /** Same normalization as the reference: ids and counters collapse, an HTTP status does not. */

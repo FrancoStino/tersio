@@ -344,15 +344,24 @@ function tempHome(): string {
   return home;
 }
 
-/** The registered plugin at this version: the state a successful install leaves behind. */
+/** The registered plugin at this version: the state a successful install leaves behind. A seeded rtk goes
+ * with it, because an absent one makes every install download 18MB from GitHub, which the Windows runner
+ * spends far longer on than the tree assertions these tests make. */
 function pluginPresent(home: string): void {
   const pkg = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
   mkdirSync(path.join(pkg, "extensions"), { recursive: true });
   writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: PACKAGE_VERSION }), "utf8");
+  const binDir = path.join(home, ".bun", "bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, isWindows() ? "rtk.exe" : "rtk"), "fake", "utf8");
 }
 
-/** Both package managers fail, so no plugin is registered and the agent tree is the fallback. */
-function noPackageManagers(): Record<string, string> {
+/** Both package managers fail, so no plugin is registered and the agent tree is the fallback. A seeded rtk
+ * goes with it, because an absent one downloads 18MB from GitHub and the assertions here are about the tree. */
+function noPackageManagers(home: string): Record<string, string> {
+  const binDir = path.join(home, ".bun", "bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(path.join(binDir, isWindows() ? "rtk.exe" : "rtk"), "fake", "utf8");
   const stub = mkdtempSync(path.join(os.tmpdir(), "tersio-omp-nopm-"));
   fakeExecutable(stub, "npm", "exit 1", "exit /b 1");
   fakeExecutable(stub, "bun", "exit 1", "exit /b 1");
@@ -402,7 +411,7 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
 test("without the plugin the agent tree is the fallback and keeps its copies", () => {
   const home = tempHome();
   try {
-    const result = runOmpInstall(home, noPackageManagers(), "--yes");
+    const result = runOmpInstall(home, noPackageManagers(home), "--yes");
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Add-ons load from: the agent tree/);
     for (const dir of RETIRED) {
