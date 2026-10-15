@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { cliEnv } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -154,9 +154,10 @@ function setup(fakeNpmBody: string, cache: unknown): { dir: string; env: Env } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-update-check-"));
   const bin = path.join(dir, "bin");
   mkdirSync(bin, { recursive: true });
-  const npm = path.join(bin, "npm");
-  writeFileSync(npm, fakeNpmBody, "utf8");
-  chmodSync(npm, 0o755);
+  // A shebang script on POSIX, a `.cmd` batch file on Windows, where the script cannot run.
+  const npm = process.platform === "win32"
+    ? fakeExecutable(bin, "npm", fakeNpmBody, "echo 9.9.9")
+    : fakeExecutable(bin, "npm", fakeNpmBody, "");
   const home = path.join(dir, "home");
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   if (cache !== null) {

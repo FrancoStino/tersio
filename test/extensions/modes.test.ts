@@ -21,7 +21,8 @@ import { readCavemanDefault } from "../../extensions/shared/plugin-settings.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
 import { cliEnv } from "../helpers/env.ts";
 
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 process.env.TERSIO_HOME = process.env.HOME;
 

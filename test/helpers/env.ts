@@ -1,6 +1,6 @@
 // Pins the pi agent vars with a temp HOME, so a spawned CLI cannot delete the real ~/.pi/agent.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,6 +14,22 @@ export function hasSqlite(): boolean {
 /** Bun carries the in-process SQLite the CLI prefers, so a check that spawns it skips without one. */
 export function hasBun(): boolean {
   return spawnSync('bun', ['--version'], { stdio: 'ignore' }).status === 0;
+}
+
+/** An executable on PATH that a spawned CLI can run. A shebang script on POSIX, a `.cmd` batch file on
+ * Windows, where CreateProcess runs neither a bare script nor an extensionless file. Returns the path
+ * the resolver finds, which carries `.cmd` on Windows and nothing on POSIX. */
+export function fakeExecutable(dir: string, name: string, posixBody: string, windowsBody: string): string {
+  mkdirSync(dir, { recursive: true });
+  if (process.platform !== 'win32') {
+    const file = path.join(dir, name);
+    writeFileSync(file, `#!/bin/sh\n${posixBody}\n`, 'utf8');
+    chmodSync(file, 0o755);
+    return file;
+  }
+  const file = path.join(dir, `${name}.cmd`);
+  writeFileSync(file, `@echo off\r\n${windowsBody.split('\n').join('\r\n')}\r\n`, 'utf8');
+  return file;
 }
 
 export function cliEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {

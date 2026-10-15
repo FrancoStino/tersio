@@ -30,7 +30,7 @@ import {
 import { readUsageDb, syncUsageDb } from "../../extensions/shared/usage-store.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { cliEnv, hasSqlite, withHome } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable, hasSqlite, withHome } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -354,10 +354,9 @@ function pluginPresent(home: string): void {
 /** Both package managers fail, so no plugin is registered and the agent tree is the fallback. */
 function noPackageManagers(): Record<string, string> {
   const stub = mkdtempSync(path.join(os.tmpdir(), "tersio-omp-nopm-"));
-  writeFileSync(path.join(stub, "npm"), "#!/bin/sh\nexit 1\n", "utf8");
-  writeFileSync(path.join(stub, "bun"), "#!/bin/sh\nexit 1\n", "utf8");
-  spawnSync("chmod", ["+x", path.join(stub, "npm"), path.join(stub, "bun")]);
-  return { PATH: `${stub}:${process.env.PATH}` };
+  fakeExecutable(stub, "npm", "exit 1", "exit /b 1");
+  fakeExecutable(stub, "bun", "exit 1", "exit /b 1");
+  return { PATH: [stub, process.env.PATH || ""].join(path.delimiter) };
 }
 
 test("dry run reports the retired copies and removes nothing", () => {

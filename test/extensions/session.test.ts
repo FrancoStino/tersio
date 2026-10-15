@@ -31,13 +31,17 @@ import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from
 import { withHome as inHome } from "../helpers/env.ts";
 
 // ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join turns into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 // The bare fixture is HOME to a dozen siblings, so TERSIO_HOME must sit under it: afterEach deletes it.
 process.env.TERSIO_HOME = join(process.env.HOME, ".tersio");
 
 /** The repo root, so a rule body can be read from the file the extension reads. */
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Windows opens a browser through cmd.exe, not a `start` executable.
+const IS_WINDOWS = process.platform === "win32";
 
 // The bash rewrite shells out to the rtk on PATH, so each test owns PATH and HOME.
 async function withFakeRtk(script: string | null, work: () => Promise<void>): Promise<void> {
@@ -1757,7 +1761,13 @@ test("/tersio dashboard exports and opens the Dashboard", async () => {
   expect(h.execCalls[0].cmd).toBe("tersio");
   expect(h.execCalls[0].args.slice(0, 2)).toEqual(["dashboard", "--export"]);
   expect(h.execCalls[0].args[2]).toMatch(/tersio-dashboard-.*\.html/);
-  expect(["open", "xdg-open", "start"].includes(h.execCalls[1].cmd), JSON.stringify(h.execCalls)).toBeTruthy();
+  // `start` is a cmd.exe builtin, not an executable, so the open routes through the shell there.
+  if (IS_WINDOWS) {
+    expect(h.execCalls[1].cmd).toBe(process.env.ComSpec || "cmd.exe");
+    expect(h.execCalls[1].args.slice(0, 4)).toEqual(["/d", "/s", "/c", "start"]);
+  } else {
+    expect(["open", "xdg-open"].includes(h.execCalls[1].cmd), JSON.stringify(h.execCalls)).toBeTruthy();
+  }
   expect(h.notifications.join("\n")).toMatch(/dashboard: opened in your browser/);
 });
 

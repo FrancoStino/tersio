@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // The filter spawns a shell for the `<` redirect, and Windows has no /bin/sh.
 const SHELL_INFO = filterShell();
@@ -27,7 +27,8 @@ import { findFile, resolveRtkBinary, rtkPlatformSpec } from "../../extensions/sh
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
 import { hasSqlite } from "../helpers/env.ts";
 
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 process.env.TERSIO_HOME = process.env.HOME;
 
