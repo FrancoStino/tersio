@@ -179,7 +179,7 @@ test("doctor --fix dry-run previews debris removal", () => {
 test("doctor --fix repairs missing extension files in an empty home", () => {
   const home = missingHome();
   try {
-    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "updater/index.ts"];
+    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-lite.md", "caveman/rule-megacave-lite.md", "caveman/rule-megacave-ultra.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "updater/index.ts"];
     for (const rel of missing) {
       expect(resultFileMissing(home, rel)).toBe(true);
     }
@@ -195,7 +195,7 @@ test("doctor --fix repairs missing extension files in an empty home", () => {
     for (const rel of missing) {
       expect(resultFileMissing(home, rel), rel).toBe(false);
     }
-    for (const name of ["rule.md", "rule-ultra.md", "rule-megacave.md"]) {
+    for (const name of ["rule.md", "rule-lite.md", "rule-megacave-lite.md", "rule-megacave-ultra.md", "rule-ultra.md", "rule-megacave.md"]) {
       const installed = readFileSync(path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio", "extensions", "caveman", name), "utf8");
       expect(installed, name).toBe(readFileSync(path.join(root, "extensions", "caveman", name), "utf8"));
     }
@@ -446,9 +446,28 @@ test("doctor does not count the exec row when rtk is absent", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    // The exec question is meaningless without a binary.
+    // The exec question is meaningless without a binary, and a missing pstack tree is one warning, not five.
     expect(result.stdout).toMatch(/—  RTK exec: not installed/);
-    expect(result.stdout).toMatch(/Summary: 5 checks/);
+    expect(result.stdout).toMatch(/Summary: 6 checks — ✅ 0 ok, ⚠️ 1 warn, ❌ 5 missing/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("doctor names the missing pstack tree, not just the rule", () => {
+  const home = missingHome();
+  try {
+    const result = spawnSync(process.execPath, [installer, "doctor"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    // The index routes to files, so a rule with no leaves serves a mode that cannot apply one.
+    expect(result.stdout).toMatch(/⚠️ pstack tree: warn missing \d+ files: playbooks\//);
+    expect(result.stdout).toMatch(/pstack rule: MISSING/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -576,7 +595,10 @@ test("doctor warns when a host tree holds an older Caveman body", () => {
     const result = runDoctor(home, path.join(home, "empty-bin"));
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Per-host add-on files/);
-    expect(result.stdout).toMatch(/pi\/caveman\/rule\.md/);
+    // The line names only the first few stale files, so assert the class rather than one path: every Caveman body in the seeded tree is stale, and the fix command is named.
+    const line = (result.stdout.match(/Per-host add-on files:.*$/m) ?? [""])[0];
+    const named = [...line.matchAll(/(pi\/caveman\/[a-z-]+\.md)/g)].map((m) => m[1]);
+    expect(named.length, `caveman bodies named: ${named.join(", ")}`).toBeGreaterThan(0);
     expect(result.stdout).toMatch(/tersio install --host/);
   } finally {
     rmSync(home, { recursive: true, force: true });

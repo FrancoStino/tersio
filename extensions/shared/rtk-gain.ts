@@ -1,4 +1,4 @@
-// Savings read from rtk history, never estimated; modes bench in docs/BENCHMARK.md.
+// Savings read from rtk history, never estimated; modes bench in docs/BENCHMARK_GUIDE.md.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

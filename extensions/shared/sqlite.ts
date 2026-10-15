@@ -1,14 +1,9 @@
-// One place that runs SQL against a database file.
-//
-// Bun and Node 22.5+ carry SQLite in process, so the `sqlite3` binary is a fallback rather than a
-// requirement: hosts without it kept silently reading nothing. Reads come back exactly as the sqlite3
-// CLI printed them -- rows on their own lines, cells joined by tabs, NULL an empty cell, one trailing
-// newline -- because every caller already parses that shape. The engine rungs take one statement per
-// read, so a caller with several queries calls once per query.
-//
-// The write path leaves the journal mode alone. The store's own schema sets WAL so a reader (the
-// dashboard) never blocks a writer, and changing the mode needs exclusive access: with a reader holding
-// the file the pragma fails, which is a failure reported after the caller's rows have already committed.
+// One place that runs SQL against a database file. Bun and Node 22.5+ carry SQLite in process, so the
+// `sqlite3` binary is a fallback: hosts without it kept silently reading nothing. Reads return the sqlite3
+// CLI shape (one row per line, cells tab-joined, NULL an empty cell) because every caller parses that.
+// The write path leaves the journal mode alone: the schema sets WAL so a reader never blocks a writer,
+// and the pragma needs exclusive access, so with a reader holding the file it fails after the caller's
+// rows have already committed (see docs/ERRORS.md).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -65,8 +60,7 @@ function engine(): Engine | null {
   } catch { /* not Bun, or no SQLite in this build */ }
   try {
     const { DatabaseSync } = requireOptional('node:sqlite') as { DatabaseSync: new (db: string, opts?: { readOnly?: boolean }) => NodeDatabase };
-    // Rows arrive keyed by column name unless the statement returns arrays. A duplicate name collapses
-    // its key and shifts every later cell, so a Node that cannot return arrays is no engine at all.
+    // Rows arrive keyed by column name unless the statement returns arrays: a duplicate name collapses its key and shifts every later cell, so a Node that cannot return arrays is no engine.
     const probe = new DatabaseSync(':memory:');
     try {
       if (typeof probe.prepare('SELECT 1').setReturnArrays !== 'function') throw new Error('no positional rows');

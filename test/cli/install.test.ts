@@ -301,6 +301,20 @@ const PACKAGE_VERSION = (JSON.parse(readFileSync(path.join(root, "package.json")
 const extDir = (home: string): string => path.join(home, ".omp", "agent", "extensions");
 const pluginExt = (home: string): string => path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio", "extensions");
 
+// These two track upstream, so a networked install may fetch a newer revision than the bundle holds.
+const UPSTREAM_BODIES = new Set(["caveman/rule-ultra.md", "caveman/rule-megacave.md"]);
+
+/** Every declared file must land byte-identical: a step that forgets a directory leaves the published copy in place, and doctor then reports it stale. */
+function expectTreeByteIdentical(base: string, files: readonly string[]): void {
+  for (const rel of files) {
+    if (GENERATED_TREE_FILES[rel] !== undefined) continue;
+    const at = path.join(base, ...rel.split("/"));
+    expect(existsSync(at), `${rel} written`).toBe(true);
+    if (UPSTREAM_BODIES.has(rel)) continue;
+    expect(readFileSync(at, "utf8"), `${rel} matches this build`).toBe(readFileSync(sourcePath(rel), "utf8"));
+  }
+}
+
 // What an install before the single-owner fix left behind.
 const RETIRED = ["ai-addons-updater", "combo-toggle", "lib", "rtk-filter", "rtk-session", "shared", "tersio-commands"];
 
@@ -380,6 +394,7 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
     expect(existsSync(path.join(extDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
     expect(existsSync(path.join(extDir(home), "herdr")), "foreign dir kept").toBe(true);
     expect(readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8")).toMatch(/rtk\.ts/);
+    expectTreeByteIdentical(pluginExt(home), treeFilesFor("opencode"));
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -493,13 +508,15 @@ test("pi install writes every Caveman rule body", () => {
       cwd: root, encoding: "utf8", timeout: 120000, env: offline(dir),
     });
     const caveman = path.join(dir, ".pi", "agent", "extensions", "caveman");
-    // rule.md is our fork and ships verbatim; the other two track upstream, so byte equality would flake.
+    // rule.md and rule-lite.md are our forks and ship verbatim; the other two track upstream, so byte equality would flake.
     expect(readFileSync(path.join(caveman, "rule.md"), "utf8")).toBe(readFileSync(path.join(root, "extensions", "caveman", "rule.md"), "utf8"));
+    for (const name of ["rule-lite.md", "rule-megacave-lite.md", "rule-megacave-ultra.md"]) expect(readFileSync(path.join(caveman, name), "utf8")).toBe(readFileSync(path.join(root, "extensions", "caveman", name), "utf8"));
     for (const name of ["rule-ultra.md", "rule-megacave.md"]) {
       const body = readFileSync(path.join(caveman, name), "utf8");
       expect(ruleBodyProblem(body), `${name} must be a usable body`).toBeNull();
       expect(body, `${name} must keep its floor rules`).toMatch(/## Floor/);
     }
+    expectTreeByteIdentical(path.join(dir, ".pi", "agent", "extensions"), treeFilesFor("pi"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -567,6 +584,7 @@ test("opencode install registers one plugin and drops the rtk entry", () => {
     expect(config.plugins).toEqual([expect.stringContaining("/opencode/plugins/herdr.js"), expect.stringContaining("/opencode/plugins/tersio")]);
     expect(existsSync(path.join(dir, ".config", "opencode", "plugins", "rtk.ts"))).toBe(false);
     expect(out).toMatch(/no separate entry/);
+    expectTreeByteIdentical(path.join(dir, ".config", "opencode", "plugins", "tersio"), treeFilesFor("opencode"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -896,11 +914,11 @@ test("packed tarball carries both .js (CLI runtime) and .ts (OMP) for every CLI-
 
 test("packed tarball carries every Caveman rule body", () => {
   const packed = packedFiles();
-  for (const name of ["rule.md", "rule-ultra.md", "rule-megacave.md"]) {
+  for (const name of ["rule.md", "rule-lite.md", "rule-megacave-lite.md", "rule-megacave-ultra.md", "rule-ultra.md", "rule-megacave.md"]) {
     expect(packed, `manifest-loaded Caveman must receive ${name}`).toContain(`extensions/caveman/${name}`);
   }
-  // Bodies load at runtime; rule.md aliases `ultra`/`wenyan`; contract in test/extensions/caveman.test.ts.
-  for (const name of ["rule.md", "rule-ultra.md", "rule-megacave.md"]) {
+  // Bodies load at runtime; each level is its own body; contract in test/extensions/modes.test.ts.
+  for (const name of ["rule.md", "rule-lite.md", "rule-megacave-lite.md", "rule-megacave-ultra.md", "rule-ultra.md", "rule-megacave.md"]) {
     expect(ruleBodyProblem(readFileSync(path.join(root, "extensions", "caveman", name), "utf8")),
       `${name} must pass the install-time body gate`).toBeNull();
   }
@@ -1063,6 +1081,9 @@ function uninstallSeed(home: string) {
   mkdirSync(pluginCaveman, { recursive: true });
   writeFileSync(path.join(pluginCaveman, "rule.md"), "fetched rule", "utf8");
   writeFileSync(path.join(pluginCaveman, "rule.md.bak"), "previous rule", "utf8");
+  writeFileSync(path.join(pluginCaveman, "rule-lite.md.bak"), "previous lite", "utf8");
+  writeFileSync(path.join(pluginCaveman, "rule-megacave-lite.md.bak"), "previous megacave lite", "utf8");
+  writeFileSync(path.join(pluginCaveman, "rule-megacave-ultra.md.bak"), "previous megacave ultra", "utf8");
   writeFileSync(path.join(pluginCaveman, "rule-ultra.md.bak"), "previous ultra", "utf8");
   writeFileSync(path.join(pluginCaveman, "rule-megacave.md.bak"), "previous wenyan", "utf8");
 }
@@ -1121,7 +1142,7 @@ test("uninstall dry-run leaves backups in place", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(path.join(home, ".omp", "agent", "config.yml.bak")), "config.yml backup kept on dry run").toBeTruthy();
-    for (const name of ["rule.md.bak", "rule-ultra.md.bak", "rule-megacave.md.bak"]) {
+    for (const name of ["rule.md.bak", "rule-lite.md.bak", "rule-megacave-lite.md.bak", "rule-megacave-ultra.md.bak", "rule-ultra.md.bak", "rule-megacave.md.bak"]) {
       expect(existsSync(path.join(cavemanDir, name)), `${name} kept on dry run`).toBeTruthy();
     }
   } finally {
@@ -1339,8 +1360,7 @@ test("uninstall --host pi --dry-run --remove-rtk leaves the wiring file in place
   }
 });
 
-// An RTK binary runs with the user's privileges, so an unverifiable download must not be installed.
-// A file URL keeps the runner's own argv away from cli/common.ts's flag parser.
+// An RTK binary runs with the user's privileges, so an unverifiable download must not be installed; a file URL keeps the runner's own argv away from cli/common.ts's flag parser.
 const { verifyRtkArchive } = await import(new URL("file:///" + path.join(root, "cli/install.ts").replace(/\\/g, "/")).href);
 
 const ASSET = "rtk-x86_64-apple-darwin.tar.gz";

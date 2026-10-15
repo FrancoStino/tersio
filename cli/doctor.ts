@@ -9,13 +9,15 @@ import {
   execP, parseJsonObject, relTime,
 } from './common.ts';
 import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, piTersioSource } from './hosts.ts';
+import type { DetectedHost } from './hosts.ts';
+import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
-import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, TREE_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
+import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
 import { serviceRunning, serviceState } from './doctor-fix.ts';
 
 /** Bytes at the scale a transcript gap reads in: `5.6M`, not `5571992`. */
@@ -56,8 +58,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // Probes start concurrently and report in fixed order as data settles; each resolves instead of rejecting.
   const hosts = detectHosts();
 
-  // Every host keeps a copy, and the copy omp loads is the reference itself, so only the hosts that get
-  // their own copy are compared below. The package root, not the hook's directory, is what the paths hang off.
+  // Only hosts with their own copy are compared: omp's copy is the reference. Paths hang off the package root.
   const ponytailLoads: Record<string, { dir: string; files: readonly string[] }> = {
     pi: { dir: piPonytailPackageDir(piAgentDir()), files: PI_PONYTAIL_FILES },
     opencode: { dir: path.join(hostExtensionsDir('opencode'), 'ponytail-bundle'), files: PONYTAIL_BUNDLE_FILES },
@@ -80,12 +81,10 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const treeMissing: string[] = [];
   const treeOrphan: string[] = [];
   // The tree a host loads: omp reads the plugin package, every other host its own directory.
-  const treeBaseFor = (host: ReturnType<typeof detectHosts>[number]): string =>
+  const treeBaseFor = (host: DetectedHost): string =>
     host.id === 'omp' ? path.join(tersioPluginDir, 'extensions') : hostExtensionsDir(host.id);
-  // A tree holding at least one file of this build is compared even when the host reads as not
-  // installed. pi auto-discovers every index.ts it finds, so a half-written tree needs reporting,
-  // and `detectHosts` reads one as absent: it wants every file or a declared package.
-  const treeHoldsOwnFiles = (host: ReturnType<typeof detectHosts>[number]): boolean =>
+  // A tree holding any file of this build is compared even when the host reads as not installed: pi auto-discovers every index.ts it finds, so a half-written tree needs reporting.
+  const treeHoldsOwnFiles = (host: DetectedHost): boolean =>
     treeFilesFor(host.id === 'omp' ? 'opencode' : host.id).some((rel) => existsSync(path.join(treeBaseFor(host), ...rel.split('/'))));
   for (const host of hosts.filter((h) => h.installed || treeHoldsOwnFiles(h))) {
     const treeId = host.id === 'omp' ? 'opencode' : host.id;
@@ -110,6 +109,20 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       }
     }
   }
+  // A host reading as installed whose tree is short of this build's declared files: the pair loop above cannot see a file that is absent on both sides.
+  const unwrittenTreeFiles = async (): Promise<string[]> => {
+    const out: string[] = [];
+    for (const host of hosts.filter((h) => h.installed)) {
+      const treeId = host.id === 'omp' ? 'opencode' : host.id;
+      const base = treeBaseFor(host);
+      for (const rel of treeFilesFor(treeId)) {
+        if (existsSync(path.join(base, ...rel.split('/')))) continue;
+        if (host.id === 'omp' && GENERATED_TREE_FILES[rel] !== undefined) continue;
+        out.push(`${host.id}/${rel}`);
+      }
+    }
+    return out;
+  };
   const probes = {
     ompPkgText: readTextIfExists(path.join(ompPackageDir(), 'package.json')),
     configText: readTextIfExists(path.join(OMP_AGENT_DIR, 'config.yml')),
@@ -117,9 +130,15 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     rtkBinText: rtkBin ? readTextIfExists(rtkBin) : Promise.resolve(null),
     cavemanIndexText: readTextIfExists(cavemanIndex),
     cavemanRuleText: readTextIfExists(cavemanRule('rule.md')),
+    cavemanLiteText: readTextIfExists(cavemanRule('rule-lite.md')),
+    cavemanMegacaveLiteText: readTextIfExists(cavemanRule('rule-megacave-lite.md')),
+    cavemanMegacaveUltraText: readTextIfExists(cavemanRule('rule-megacave-ultra.md')),
     cavemanUltraText: readTextIfExists(cavemanRule('rule-ultra.md')),
     cavemanMegacaveText: readTextIfExists(cavemanRule('rule-megacave.md')),
     pstackRuleText: readTextIfExists(pstackRule),
+    pstackTreeFiles: Promise.all(
+      TREE_PSTACK_FILES.map((rel) => readTextIfExists(path.join(tersioPluginDir, "extensions", ...rel.split("/")))),
+    ),
     rtkIndexText: readTextIfExists(rtkIndex),
     updaterIndexText: readTextIfExists(updaterIndex),
     rtkMtime: rtkBin ? fs.stat(rtkBin).catch(() => null) : Promise.resolve(null),
@@ -138,7 +157,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
     ? Promise.resolve(serviceState())
     : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -151,9 +170,13 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     ]),
     Promise.all([
       probes.cavemanRuleText,
+      probes.cavemanLiteText,
+      probes.cavemanMegacaveLiteText,
+      probes.cavemanMegacaveUltraText,
       probes.cavemanUltraText,
       probes.cavemanMegacaveText,
       probes.pstackRuleText,
+      probes.pstackTreeFiles,
       probes.ruleMtime,
       probes.rtkBinText,
       probes.rtkMtime,
@@ -206,8 +229,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     check(host.label, true, `${kind} ${PACKAGE_NAME}${host.version ? ` ${host.version}` : ''}`);
   }
 
-  // A healthy service adds no row: the host row already names the install with its version, and
-  // this row earns its place only when the manager's report and the live process disagree.
+  // A healthy service adds no row: the host row already names the install, and this row only shows when the manager's report and the live process disagree.
   if (opencodeService) {
     const running = serviceRunning(opencodeService.status);
     if (!running && opencodeService.live) {
@@ -242,7 +264,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
 
   section('Add-ons');
   const ruleAge = ruleMtime ? `(updated ${relTime(Date.now() - ruleMtime.mtimeMs)} · ${absDate(ruleMtime.mtimeMs)})` : '';
-  const cavemanRules = [['rule.md', cavemanRuleText], ['rule-ultra.md', cavemanUltraText], ['rule-megacave.md', cavemanMegacaveText]];
+  const cavemanRules = [['rule.md', cavemanRuleText], ['rule-lite.md', cavemanLiteText], ['rule-megacave-lite.md', cavemanMegacaveLiteText], ['rule-megacave-ultra.md', cavemanMegacaveUltraText], ['rule-ultra.md', cavemanUltraText], ['rule-megacave.md', cavemanMegacaveText]];
   const missingRules = cavemanRules.filter(([, text]) => text === null).map(([name]) => name);
   check('Caveman rule', missingRules.length === 0, missingRules.length ? `missing: ${missingRules.join(', ')}` : ruleAge);
   for (const [name, text] of cavemanRules) {
@@ -255,6 +277,15 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   if (pstackRuleText !== null) {
     const problem = ruleBodyProblem(pstackRuleText);
     if (problem) warnLine('pstack rule.md', `unusable body (${problem}) — run: tersio install`);
+  }
+  // The index routes to files, so a tree with the rule but no leaves serves a mode that cannot apply.
+  const pstackOnDisk: Record<string, true> = {};
+  TREE_PSTACK_FILES.forEach((rel: string, i: number) => {
+    if (pstackTreeFiles[i] !== null) pstackOnDisk[rel] = true;
+  });
+  const pstackMissing = TREE_PSTACK_FILES.filter((rel: string) => !pstackOnDisk[rel]).map((rel: string) => rel.replace(/^pstack\//, ''));
+  if (pstackMissing.length > 0) {
+    warnLine('pstack tree', `missing ${pstackMissing.length} file${pstackMissing.length === 1 ? '' : 's'}: ${pstackMissing.slice(0, 6).join(', ')}${pstackMissing.length > 6 ? ` +${pstackMissing.length - 6} more` : ''} — run: tersio install`);
   }
   // A verbatim sentence read out of omp's own prompt, so a re-worded release stops Caveman reaching subagents.
   const subagentGap = subagentMarkerStatus(ompBinary());
@@ -274,6 +305,12 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     warnLine('Per-host add-on files',
       `orphaned in ${treeOrphan.length} file${treeOrphan.length === 1 ? '' : 's'}: ${treeOrphan.join(', ')}` +
       ` — run: tersio doctor --fix extensions`);
+  }
+  // A count of pairs compared cannot show a file that is absent from disk and absent from the declaration, so assert every declared file landed.
+  const unwritten = await unwrittenTreeFiles();
+  if (unwritten.length > 0) {
+    check('Add-on tree content', false,
+      `${unwritten.length} declared file${unwritten.length === 1 ? '' : 's'} not written for a host reading as installed: ${unwritten.slice(0, 6).join(', ')}${unwritten.length > 6 ? ` +${unwritten.length - 6} more` : ''} — run: tersio doctor --fix extensions`);
   }
   const rtkAge = rtkMtime ? `(updated ${relTime(Date.now() - rtkMtime.mtimeMs)} · ${absDate(rtkMtime.mtimeMs)})` : '';
   check('RTK binary', rtkBin !== null, rtkBinText === null ? 'not found in PATH' : [rtkVersion, rtkAge].filter(Boolean).join(' '));
@@ -341,8 +378,8 @@ function ompBinary(): string | null {
   return existsSync(managed) ? managed : null;
 }
 
-// The rule bodies a per-host tree carries. rule.md is the bundled fork; the others track upstream.
-const CAVEMAN_BODIES = ['rule.md', 'rule-ultra.md', 'rule-megacave.md'] as const;
+// The rule bodies a per-host tree carries. rule.md and rule-lite.md are bundled forks; the others track upstream.
+const CAVEMAN_BODIES = ['rule.md', 'rule-lite.md', 'rule-megacave-lite.md', 'rule-megacave-ultra.md', 'rule-ultra.md', 'rule-megacave.md'] as const;
 
 /** `"installed < latest"` when npm answers, else null: silence means "no row", not "stale". */
 async function ponytailLatestGap(installedPkgText: string | null): Promise<string | null> {

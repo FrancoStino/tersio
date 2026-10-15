@@ -339,8 +339,7 @@ test("the context hook skips Ponytail on a pi host and keeps the rest", async ()
       "utf8",
     );
     process.env.PI_CODING_AGENT = "true";
-    // The skip needs the marker on disk, so pin the agent dir. Reading the real one
-    // made this test pass only where an upstream extension happened to be installed.
+    // The skip needs the marker on disk, so pin the agent dir: reading the real one made this test pass only where an upstream extension happened to be installed.
     process.env.PI_CODING_AGENT_DIR = path.join(home, "pi-agent");
     mkdirSync(path.join(process.env.PI_CODING_AGENT_DIR, "ponytail", "pi-extension"), { recursive: true });
     writeFileSync(
@@ -370,8 +369,7 @@ test("the context hook skips Ponytail on a pi host and keeps the rest", async ()
   }
 });
 
-// ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
-// The bare fixture is HOME to a dozen siblings, so TERSIO_HOME must sit under it: afterEach deletes it.
+// ponytail: hermetic HOME — session-start fallbacks read the real lock file. The bare fixture is HOME to a dozen siblings, so TERSIO_HOME sits under it and afterEach deletes it.
 
 const MARKED_PROMPT = `System instructions.\n${OMP_SUBAGENT_MARKER}`;
 const UNMARKED_PROMPT = "System instructions for an unrelated headless session.";
@@ -1381,6 +1379,66 @@ test("a persisted Combo default applies to a new empty session", async () => {
     h.ctx.sessionManager = { getBranch: () => [] };
     await h.handlers.get("before_agent_start")!({ systemPrompt: [] }, h.ctx);
     expect(getSharedComboState().level).toBe("balanced");
+  });
+});
+
+test("a headless session still restores saved modes and injects the Ponytail block", async () => {
+  // `host -p` has no UI, and a benchmark on omp measured Block 0 for every Ponytail level and for the Ponytail part of every Combo: Ponytail reads the shared bridge and only a UI session published to it.
+  await withHome(async (home) => {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
+      comboDefault: "off",
+      comboSetupComplete: true,
+      cavemanDefault: "off",
+      rtkDefault: false,
+      ponytailDefault: "full",
+    }), "utf8");
+
+    const h = firstRunHarness(undefined, false);
+    await h.handlers.get("session_start")!({}, h.ctx);
+
+    const result = await h.handlers.get("before_agent_start")!({ systemPrompt: [] }, h.ctx) as { systemPrompt: string[] };
+    expect(result.systemPrompt.at(-1)).toMatch(/PONYTAIL MODE ACTIVE — level: full/);
+  });
+});
+
+test("a headless worker still inherits the parent's Ponytail level", async () => {
+  // The saved default must not reach a subagent branch: the parent's own level already published, so the bridge is no longer clear and the worker's start publishes nothing.
+  await withHome(async (home) => {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
+      comboDefault: "off",
+      comboSetupComplete: true,
+      ponytailDefault: "lite",
+    }), "utf8");
+
+    const parent = firstRunHarness(undefined, true);
+    await parent.handlers.get("session_start")!({}, parent.ctx);
+    // The parent runs at its saved default, so the worker's inheritance is not simply the default.
+    expect(instruction(await parent.handlers.get("before_agent_start")!({ systemPrompt: [] }, parent.ctx))).toMatch(/level: lite/);
+
+    const worker = firstRunHarness(undefined, false);
+    await worker.handlers.get("session_start")!({}, worker.ctx);
+    expect(getSharedComboState().ponytail, "a worker start publishes nothing").toBe("lite");
+    expect(instruction(await worker.handlers.get("before_agent_start")!({ systemPrompt: [] }, worker.ctx))).toMatch(/level: lite/);
+  });
+});
+
+test("a stored pstack default survives without a sibling mode key", async () => {
+  // `tersio settings --pstack-default on` alone must not be read back as the Combo preset's `off`.
+  await withHome(async (home) => {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
+      comboDefault: "off",
+      comboSetupComplete: true,
+      pstackDefault: "on",
+    }), "utf8");
+
+    const h = firstRunHarness(undefined);
+    await h.handlers.get("session_start")!({}, h.ctx);
+
+    expect(h.entries.find((entry) => entry.customType === "pstack-mode")?.data?.mode).toBe("on");
+    expect(getSharedComboState().pstack).toBe("on");
   });
 });
 

@@ -312,7 +312,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
 
   // Cleared last: writeConfigLines above would just make a fresh one.
   const cavemanDir = path.join(pluginsDir, 'node_modules', PACKAGE_NAME, 'extensions', 'caveman-session');
-  for (const backup of [`${configPath}.bak`, path.join(cavemanDir, 'rule.md.bak'), path.join(cavemanDir, 'rule-ultra.md.bak'), path.join(cavemanDir, 'rule-megacave.md.bak')]) {
+  for (const backup of [`${configPath}.bak`, path.join(cavemanDir, 'rule.md.bak'), path.join(cavemanDir, 'rule-lite.md.bak'), path.join(cavemanDir, 'rule-megacave-lite.md.bak'), path.join(cavemanDir, 'rule-megacave-ultra.md.bak'), path.join(cavemanDir, 'rule-ultra.md.bak'), path.join(cavemanDir, 'rule-megacave.md.bak')]) {
     await removeUninstallTarget(backup, shouldDryRun, false);
   }
 

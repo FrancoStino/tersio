@@ -1,5 +1,4 @@
-// pi records a response's total duration but no first-token latency, so TTFT reads null there.
-// omp writes its own `ttft` and OpenCode records `time.streamed`, so this fills the gap only for pi.
+// pi records total duration but no first-token latency, so TTFT reads null there; omp writes its own `ttft` and OpenCode records `time.streamed`, so this fills the gap only for pi.
 import type { ExtensionApi } from '../shared/types.ts';
 
 interface AssistantMessage {

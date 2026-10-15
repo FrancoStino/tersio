@@ -38,8 +38,7 @@ let remembered: ExtensionCtx | undefined;
 let lastText: string | undefined;
 let lastUi: UiApi | undefined;
 
-// Paint the host footer bar; same text on the same UI is skipped, a new ctx repaints it.
-// One key only: the combo line already names the caveman mode, and a second key renders as a second footer line.
+// Paint the host footer bar; same text on the same UI is skipped. One key only: the combo line already names the caveman mode, and a second key renders as a second footer line.
 export function announceStatus(ctx: ExtensionCtx | undefined): void {
   const state = getSharedComboState();
   const text = formatStatus(state);

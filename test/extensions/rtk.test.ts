@@ -1,5 +1,4 @@
-// Zero coverage once shipped a crashing tool call; keep it covered.
-// Every failure path must keep the original output: a wrong filtered result is worse.
+// Zero coverage once shipped a crashing tool call; keep it covered. Every failure path must keep the original output: a wrong filtered result is worse.
 import { expect, test } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
@@ -570,12 +569,16 @@ function rtkToolHarness(exec?: Exec, entries: Array<{ type: string; customType: 
 
 const text = (r: { content: Array<{ text: string }> }): string => r.content.map((c) => c.text).join("\n");
 
-test("the tool is refused while RTK is off", async () => {
-  const h = rtkToolHarness(async () => ({ stdout: "", stderr: "", code: 0, killed: false }));
+test("rtk_run runs the command plainly while RTK is off", async () => {
+  // The tool is the only one left when the host runs with --no-tools, so a refusal there made the model spend turns re-calling it. rtk is the condenser, never the command.
+  const cmds: Array<{ cmd: string; args: string[] }> = [];
+  const h = rtkToolHarness(async (cmd, args) => { cmds.push({ cmd, args }); return { stdout: "plain out", stderr: "", code: 0, killed: false }; });
   await h.sessionStart();
   const r = await h.tool.execute("1", { args: ["ls"] }, undefined, undefined, h.ctx);
-  expect(r.isError).toBe(true);
-  expect(text(r)).toMatch(/RTK mode is off/);
+  expect(r.isError).toBe(false);
+  expect(text(r)).toContain("plain out");
+  expect(cmds).toEqual([{ cmd: "ls", args: ["ls"] }]);
+  expect(r.details?.condensed).toBe(false);
 });
 
 test("a host without exec reports it instead of throwing", async () => {
@@ -640,21 +643,28 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
   });
 });
 
-test("the tool falls back to bare `rtk` when no binary resolves", async () => {
+test("rtk mode on with no installed binary reports it instead of guessing", async () => {
   await withPath("", async () => {
     const cmds: string[] = [];
     const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
       [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
     await h.sessionStart();
-    await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
-    expect(cmds).toEqual(["rtk"]);
+    const r = await h.tool.execute("1", { args: ["ls"] }, undefined, undefined, h.ctx);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toMatch(/rtk binary is not installed/);
+    expect(cmds).toEqual([]);
   });
 });
+
 
 // A late subagent registers its listener late, so it keeps the session default and needs shared state.
 test("rtk_run uses shared state when a late subagent's own flag is off", async () => {
   resetSharedComboState();
+  const binDir = path.join(process.env.HOME as string, ".bun", "bin");
   await withPath("", async () => {
+    mkdirSync(binDir, { recursive: true });
+    const fake = path.join(binDir, "rtk");
+    writeFileSync(fake, "#!/bin/sh\necho hi\n", { mode: 0o755 });
     setSharedComboMode("rtk", "on");
     const cmds: string[] = [];
     // No session_start: this instance's own flag is still its start-up default.
@@ -663,21 +673,24 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
     const r = await sub.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, sub.ctx);
 
     expect(r.isError).toBe(false);
-    expect(cmds).toEqual(["rtk"]);
+    expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual([fake]);
+    expect(r.details?.condensed).toBe(true);
     resetSharedComboState();
+    rmSync(binDir, { recursive: true, force: true });
   });
 });
 
-test("rtk_run stays refused when neither the flag nor shared state is on", async () => {
+test("rtk mode off with no shared state still runs the command plainly", async () => {
   resetSharedComboState();
   await withPath("", async () => {
     setSharedComboMode("rtk", "off");
-    const h = rtkToolHarness(async () => ({ stdout: "ok", stderr: "", code: 0, killed: false }));
+    const cmds: string[] = [];
+    const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; });
 
     const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
 
-    expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/RTK mode is off/);
+    expect(r.isError).toBe(false);
+    expect(cmds, "the command runs uncondensed, not through rtk").toEqual(["git"]);
     resetSharedComboState();
   });
 });

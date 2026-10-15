@@ -358,8 +358,7 @@ test("usdCost calls only a firm tier priced", () => {
   });
 });
 
-// A reader keyed by column name collapses a repeated name and shifts every later cell, so the adapter
-// must answer positionally, the way the sqlite3 CLI did.
+// A reader keyed by column name collapses a repeated name and shifts every later cell, so the adapter must answer positionally, the way the sqlite3 CLI did.
 test.skipIf(!hasSqlite())("the sqlite adapter keeps cells positional, whichever engine answers", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-sqlite-"));
   const db = path.join(dir, "shape.db");
@@ -383,8 +382,7 @@ test.skipIf(!hasSqlite())("the sqlite adapter keeps cells positional, whichever 
   }
 });
 
-// The adapter opens and closes a connection per call, so this holds a second one to stand in for the
-// reader another process keeps: the dashboard reads the store while a sync writes to it.
+// The adapter opens and closes a connection per call, so this holds a second one to stand in for the reader another process keeps: the dashboard reads the store while a sync writes to it.
 function heldConnection(db: string): { exec(sql: string): void; rows(sql: string): number; close(): void } {
   const load = createRequire(import.meta.url);
   try {
@@ -401,9 +399,7 @@ function heldConnection(db: string): { exec(sql: string): void; rows(sql: string
   return { exec: (sql) => d.exec(sql), rows: (sql) => d.prepare(sql).all().length, close: () => d.close() };
 }
 
-// A reader must not block a writer, and the write path must not move the store out of WAL. The pragma
-// that flipped the mode made a sync throw after its rows had committed, and guarding it left the store
-// in a mode where the next write never landed at all.
+// A reader must not block a writer and the write path must not move the store out of WAL: the pragma that flipped the mode made a sync throw after its rows had committed, and guarding it left the store in a mode where the next write never landed.
 test.skipIf(sqliteEngine() !== "bun" && sqliteEngine() !== "node")(
   "a write commits while another connection holds a read transaction",
   () => {
@@ -431,8 +427,7 @@ test.skipIf(sqliteEngine() !== "bun" && sqliteEngine() !== "node")(
   },
 );
 
-// Vitest runs its workers on Node even when Bun starts the suite, so the Bun engine, the one OMP users
-// get in process, is only reachable by spawning Bun. Both rungs must answer byte for byte.
+// Vitest runs its workers on Node even when Bun starts the suite, so the Bun engine, the one OMP users get in process, is only reachable by spawning Bun. Both rungs answer byte for byte.
 test.skipIf(!hasBun() || !hasSqlite())("the Bun engine answers exactly as this suite's engine", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-bun-rung-"));
   const fixture = "CREATE TABLE t (a TEXT, b INTEGER); INSERT INTO t VALUES ('x', 1), (NULL, 2);";

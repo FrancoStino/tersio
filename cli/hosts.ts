@@ -23,6 +23,9 @@ export interface HostEntry {
   dir: string | null;
 }
 
+/** One detected host, as `detectHosts` returns it. */
+export type DetectedHost = HostEntry;
+
 
 
 export function hostExtensionsDir(id: HostId, agentDir = piAgentDir()): string {
@@ -105,8 +108,7 @@ function detect(agentDir = piAgentDir()): HostEntry[] {
   return HOSTS.map((host) => {
     const pkgDir = host.id === 'omp' ? ompPackageDir() : host.id === 'pi' ? piPackageDir(agentDir) : null;
     const tree = hostExtensionsDir(host.id, agentDir);
-    // A tree wins: it is what the installer writes, and it carries no package.json, so its version is ours.
-    // OpenCode keeps no package to fall back to, so a present tree is the install; its drifted files get the per-host warning instead.
+    // A tree wins: the installer writes it and it carries no package.json, so its version is ours. OpenCode keeps no package to fall back to, so a present tree is the install and drift gets the per-host warning.
     const via = missingTreeFiles(host.id, agentDir).length === 0 || (host.id === 'opencode' && existsSync(tree))
       ? 'tree'
       : pkgDir && existsSync(pkgDir) ? 'package' : null;

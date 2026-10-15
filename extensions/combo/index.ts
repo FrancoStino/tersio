@@ -51,8 +51,11 @@ function piHasUpstreamPonytail(): boolean {
   }
 }
 
+// Each level's own rule, quoted from the installed Ponytail so a host that cannot resolve the package still gets the right register: `lite` builds what was asked and offers the smaller option, and only `ultra` questions the request.
 const PONYTAIL_FALLBACK_INTENSITY: Record<string, string> = {
-  lite: 'Prefer the simplest correct solution.',
+  lite: 'Build what was asked. Name the smaller option in one line and let the user pick.',
+  full: 'The rules above. Default.',
+  ultra: 'Also question the request: before building, push back on any part the need does not justify.',
 };
 
 // Fallback text when Ponytail cannot be found; exported for its own test.
@@ -81,6 +84,15 @@ async function loadPonytailInstructions(mode: string): Promise<string> {
   return ponytailFallback(mode);
 }
 
+// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies all four. pstackDefault counts as its own default, so a session that stores only it still honors it instead of losing it to the preset's `off`.
+function savedModes(): { caveman: string; rtk: string; ponytail: string; pstack: string } {
+  const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault'].some((key) => key in readPluginSettings());
+  const preset = COMBO_LEVELS[readComboDefault()];
+  return hasModeDefaults
+    ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault() }
+    : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail, pstack: preset.pstack };
+}
+
 export default function comboToggleExtension(pi: ExtensionApi): void {
   setExtensionLabel(pi, 'Combo session toggle (all four add-ons)');
 
@@ -99,14 +111,9 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     pi.appendEntry?.('combo-level', { level });
   }
   function restoreConfiguredDefaults(): void {
-    const settings = readPluginSettings();
-    const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault'].some((key) => key in settings);
     const combo = readComboDefault();
     const preset = COMBO_LEVELS[combo];
-    // A stored per-mode default wins; with none, the preset supplies all four.
-    const modes = hasModeDefaults
-      ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault() }
-      : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail, pstack: preset.pstack };
+    const modes = savedModes();
     setSharedComboModes(modes);
     if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off') return;
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
@@ -216,6 +223,18 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     // The configured defaults apply when a fresh session has no persisted mode state.
     const entries = sessionEntries(ctx);
     if (!hasModeState(entries) && (ctx?.hasUI || OPENCODE)) restoreConfiguredDefaults();
+    else if (!hasModeState(entries)) {
+      // A headless root session (`host -p`) has no UI to publish the bridge, and Ponytail reads only
+      // the bridge, so it never loaded: a benchmark on omp measured Block 0 for every Ponytail level and
+      // for the Ponytail part of every Combo. Publish the saved modes only while the bridge is clear:
+      // once a parent or a toggle has published, the bridge carries that session's own choice and a
+      // subagent branch must keep inheriting it. All four go together, because Caveman, RTK, and pstack
+      // already restored their own levels and a disagreeing bridge resets them.
+      const shared = getSharedComboState();
+      if (shared.caveman === 'off' && shared.rtk === 'off' && shared.ponytail === 'off' && shared.pstack === 'off') {
+        setSharedComboModes(savedModes());
+      }
+    }
     // Announced last, so any default above is reflected.
     announceStatus(ctx);
   });
@@ -231,6 +250,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
 
   pi.on<SystemPromptEvent>('before_agent_start', async (event, ctx) => {
     if (ctx?.hasUI) reconcile(ctx);
+    // Shared state, with no marker check: the marker is a sentence copied out of the host binary, so matching on it would drop Ponytail after a host reworded the line.
     const mode = getSharedComboState().ponytail;
     // On pi, an installed upstream pi-extension is the sole injector, so Tersio only falls back with none.
     if (isPiProcess() && piHasUpstreamPonytail()) return;

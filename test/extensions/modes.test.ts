@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cavemanSessionExtension from "../../extensions/caveman/index.ts";
-import comboToggleExtension from "../../extensions/combo/index.ts";
+import comboToggleExtension, { ponytailFallback } from "../../extensions/combo/index.ts";
 import pstackSessionExtension from "../../extensions/pstack/index.ts";
 import {
   deriveLevel,
@@ -229,9 +229,9 @@ test("full mode injects the rule file", async () => {
 test("each level injects its own rule file verbatim, with no paraphrase alongside it", async () => {
   const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extensions", "caveman");
   const bodies = {
-    lite: "rule.md", full: "rule.md",
+    lite: "rule-lite.md", full: "rule.md",
     ultra: "rule-ultra.md",
-    "megacave-lite": "rule-megacave.md", "megacave-full": "rule-megacave.md", "megacave-ultra": "rule-megacave.md",
+    "megacave-lite": "rule-megacave-lite.md", "megacave-full": "rule-megacave.md", "megacave-ultra": "rule-megacave-ultra.md",
   } as const;
   for (const [mode, file] of Object.entries(bodies)) {
     resetSharedComboState();
@@ -244,6 +244,11 @@ test("each level injects its own rule file verbatim, with no paraphrase alongsid
     expect(result.systemPrompt.at(-1)).toBe(`Caveman ${mode} active for this session.\n${rule}`);
   }
   // The registers actually differ.
+  expect(readFileSync(path.join(extDir, bodies.lite), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies.full), "utf8"));
+  expect(readFileSync(path.join(extDir, bodies.lite), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies.ultra), "utf8"));
+  expect(readFileSync(path.join(extDir, bodies["megacave-lite"]), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies["megacave-full"]), "utf8"));
+  expect(readFileSync(path.join(extDir, bodies["megacave-ultra"]), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies["megacave-full"]), "utf8"));
+  expect(readFileSync(path.join(extDir, bodies["megacave-lite"]), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies["megacave-ultra"]), "utf8"));
   expect(readFileSync(path.join(extDir, bodies.ultra), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies.full), "utf8"));
   expect(readFileSync(path.join(extDir, bodies["megacave-full"]), "utf8")).not.toBe(readFileSync(path.join(extDir, bodies.full), "utf8"));
 });
@@ -259,10 +264,52 @@ test("a missing rule.md names the fix instead of shipping a degraded paraphrase"
 });
 
 // Inline samples, one per pack: the contract each body must keep whatever upstream does.
+test("lite keeps articles and full sentences, the way upstream defines the register", () => {
+  // Upstream skills/caveman/SKILL.md at 84cc3c1: `lite` is "No filler/hedging. Keep articles + full sentences". Dropping articles and allowing fragments is `full`'s job, so a lite body that does either is the wrong register.
+  const lite = readFileSync(path.join(root, "extensions", "caveman", "rule-lite.md"), "utf8");
+  const full = readFileSync(path.join(root, "extensions", "caveman", "rule.md"), "utf8");
+
+  // The register statement, in upstream's own words where it matters.
+  expect(lite).toContain("Keep articles + full sentences");
+  expect(lite).toContain("Professional but tight");
+  // Lite does not carry the article-dropping or the fragment licence; full does.
+  expect(lite).not.toContain("Articles optional");
+  expect(lite).not.toContain("Fragments fine");
+  expect(full).toContain("Articles optional");
+  expect(full).toContain("Fragments fine");
+  // Provenance is in the body, so a reader can audit the fork against its source.
+  expect(lite).toMatch(/84cc3c1/);
+  expect(lite).toMatch(/No filler\/hedging/);
+});
+
+test("megacave-lite and megacave-ultra keep the registers upstream assigns them", () => {
+  // Upstream skills/caveman/SKILL.md at 84cc3c1: wenyan-lite keeps grammar structure, wenyan-full strips it, wenyan-ultra is "Extreme abbreviation while keeping classical Chinese feel". Three levels, three bodies -- the collapse that left lite loading full's body must not return.
+  const lite = readFileSync(path.join(root, "extensions", "caveman", "rule-megacave-lite.md"), "utf8");
+  const ultra = readFileSync(path.join(root, "extensions", "caveman", "rule-megacave-ultra.md"), "utf8");
+  const full = readFileSync(path.join(root, "extensions", "caveman", "rule-megacave.md"), "utf8");
+
+  // Each names the upstream row it came from.
+  expect(lite).toContain("Semi-classical. Drop filler/hedging but keep grammar");
+  expect(ultra).toContain("Extreme abbreviation while keeping classical Chinese");
+  expect(lite).toMatch(/84cc3c1/);
+  expect(ultra).toMatch(/84cc3c1/);
+  // Lite keeps grammar; ultra and full do not promise to.
+  expect(lite).toContain("Subject, verb, and object stay where a reader expects them");
+  // The classical-Chinese floor is shared, so no register loses it.
+  for (const body of [lite, ultra, full]) expect(body).toContain("Never cut or translate");
+  // Provenance lives in the body, and the register wording is not reused across levels.
+  expect(lite).not.toBe(ultra);
+  expect(lite).not.toBe(full);
+  expect(ultra).not.toBe(full);
+});
+
 test("every rule pack passes the body gate and keeps its contract markers", () => {
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extensions", "caveman");
   const samples: Record<string, string[]> = {
     "rule.md": ["Only fluff die", "Never drop not/never/no/only/except", "Code blocks unchanged", "compress the style, not the language"],
+    "rule-lite.md": ["Keep articles + full sentences", "Professional but tight", "Never cut: code blocks, commands, paths, API names, error strings (verbatim)", "Kill ceremony"],
+    "rule-megacave-lite.md": ["Semi-classical", "keep grammar structure", "Never cut or translate", "Classical flavour, modern grammar"],
+    "rule-megacave-ultra.md": ["Extreme abbreviation", "classical Chinese feel", "Never cut or translate", "Extreme abbreviation"],
     "rule-ultra.md": ["Payload only", "Never cut: code, commands, paths, API names, error strings (verbatim)", "One word when one word is enough", "no arrows"],
     "rule-megacave.md": ["以文言答", "Never cut or translate: code, commands, paths, API names, error strings", "negation (不, 非, 勿, 未, 毋)", "文言, not 白話"],
   };
@@ -270,6 +317,14 @@ test("every rule pack passes the body gate and keeps its contract markers", () =
     const body = readFileSync(path.join(dir, file), "utf8");
     expect(ruleBodyProblem(body), `${file} must pass the install-time body gate`).toBeNull();
     for (const marker of markers) expect(body.toLowerCase(), `${file} lost "${marker}"`).toContain(marker.toLowerCase());
+  }
+  // Every register is its own body, so no level silently pays another level's cost.
+  const files = Object.keys(samples);
+  for (const a of files) {
+    for (const b of files) {
+      if (a === b) continue;
+      expect(readFileSync(path.join(dir, a), "utf8"), `${a} must differ from ${b}`).not.toBe(readFileSync(path.join(dir, b), "utf8"));
+    }
   }
 });
 
@@ -386,6 +441,16 @@ test("off mode gets no injection, on mode gets it on any turn", async () => {
 });
 
 // The header is the only level-specific text; YAGNI appears in every level.
+test("the Ponytail fallback carries the installed package's own level rules", async () => {
+  // The fallback only fires when the hoisted package cannot be resolved, so it is the one place our text speaks for Ponytail: its per-level rule must be the package's own, not a paraphrase.
+  for (const level of ["lite", "full", "ultra"] as const) {
+    // The injected body comes from the installed package, so an empty row means the package did not resolve and this test would otherwise compare the fallback against itself.
+    const row = (/^\|\s*\*\*\w+\*\*\s*\|([^|]*)/m.exec(await injectMarked(level))?.[1] ?? "").trim();
+    expect(row, `ponytail ${level} ships a level row`).not.toBe("");
+    expect(ponytailFallback(level), `fallback ${level} must use ponytail's own rule`).toContain(row);
+  }
+});
+
 test("each level injects its own header", async () => {
   for (const level of ["lite", "full", "ultra"] as const) {
     const text = await injectMarked(level);

@@ -18,7 +18,7 @@ export default defineConfig({
         test: {
           name: "cli",
           setupFiles: ["./test/setup.ts"],
-          exclude: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "dashboard/**"],
+          exclude: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "dashboard/**", "bench/**"],
         },
       },
       {

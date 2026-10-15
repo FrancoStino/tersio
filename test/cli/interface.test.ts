@@ -15,9 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const installer = path.join(root, "dist", "tersio.js");
 const { version } = createRequire(import.meta.url)("../../package.json");
 
-// ---------------------------------------------------------------------------
 // bootstrap
-// ---------------------------------------------------------------------------
 
 const script = path.join(root, "install.sh");
 
@@ -216,11 +214,7 @@ const TARBALL_FALLBACK = 'env TERSIO_TARBALL_URL=file:///nonexistent/tersio-npm.
   }
 });
 
-// ---------------------------------------------------------------------------
-// host-menus
-// ---------------------------------------------------------------------------
-
-// Host menus target one agent; the option label carries the current state.
+// host-menus: they target one agent; the option label carries the current state.
 const cli = path.join(root, "dist", "tersio.js");
 
 function tempHome(): string {
@@ -491,11 +485,7 @@ test("an existing rtk binary is bound on both hosts, never downloaded", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// menu-layout
-// ---------------------------------------------------------------------------
-
-// Clack anchors to the cursor, so an over-tall welcome scrolls; proving it needs `pyte`, and skips without it.
+// menu-layout: Clack anchors to the cursor, so an over-tall welcome scrolls; proving it needs `pyte`, and skips without it.
 
 const PY = [
   "import os, pty, select, fcntl, termios, struct, time, sys, json",
@@ -620,8 +610,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
     expect(lines.some((l) => l.includes("Checking npm registry")), "no spinner residue").toBe(false);
   }, 20000);
 
-  // The welcome prints before the update prompt, and the spinner line sits above it: on a 20-row screen
-  // the tips used to scroll off. The menu itself waits behind the prompt, so the tips are what must fit.
+  // The welcome prints before the update prompt and the spinner sits above it: on a 20-row screen the tips used to scroll off. The menu waits behind the prompt, so the tips are what must fit.
   test("an available update does not scroll the tips off a 20-row screen", () => {
     const lines = screenAtUpdate(20);
     expect(lines.some((l) => l.includes("set up add-ons")), `tips visible; screen:\n${lines.join("\n")}`).toBe(true);
@@ -667,10 +656,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
   }, 20000);
 });
 
-// ---------------------------------------------------------------------------
 // banner
-// ---------------------------------------------------------------------------
-
 const strip = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 test("bannerLines renders 6 rows at most 16 wide in every tier", () => {
@@ -705,10 +691,7 @@ test("bannerTier honors NO_COLOR and COLORTERM", () => {
   }
 });
 
-// ---------------------------------------------------------------------------
 // cli
-// ---------------------------------------------------------------------------
-
 function cliRun(...args: string[]) {
   return spawnSync(process.execPath, [installer, ...args], {
     cwd: root,

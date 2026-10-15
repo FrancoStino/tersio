@@ -79,8 +79,7 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
   const boxRef = useRef<HTMLSpanElement>(null);
   const trackRef = useRef<HTMLSpanElement>(null);
   const [scroll, setScroll] = useState(false);
-  // The mode row scrolls only when it cannot fit, so a short row stays still. The first copy
-  // alone is measured: the loop's duplicate would otherwise double the width it compares.
+  // The mode row scrolls only when it cannot fit, so a short row stays still. The first copy alone is measured: the loop's duplicate would otherwise double the width it compares.
   useEffect(() => {
     const box = boxRef.current;
     const track = trackRef.current;
