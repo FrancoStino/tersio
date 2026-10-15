@@ -33,7 +33,11 @@ test("the tree ships a leaf per principle, a file per playbook, and every routed
 test("no Cursor-only surface survives anywhere in the tree", () => {
   // Every file is read by the model, so one surviving slash command teaches it a command it has no handler for.
   const banned = [/\/setup-pstack/, /poteto-agent/, /subagent_type/, /AskQuestion/,
-    /disable-model-invocation/, /cursor-team-kit/, /grok-4/, /claude-opus-5/, /environment: "cloud"/];
+    /disable-model-invocation/, /cursor-team-kit/, /grok-4/, /claude-opus-5/, /environment: "cloud"/,
+    /skillsthe /, /the [\w-]+ skill`/, /`the [\w-]+ skill`/, /pstack-models\.mdc/, /\/loop\b/, /\.cursor/,
+    // Cursor's control skills and helper scripts never ship in this tree, so naming them sends the model to a missing file.
+    /control-ui/, /control-cli/, /agent-transcripts/, /scripts\/worktree-audit\.sh/, /scripts\/log\.sh/,
+    /scripts\/watch-pr/, /scripts\/orch\//, /scripts\/check-plan\.mjs/];
   const isProvenance = (l: string): boolean => /^\s*(?:\*\s*)?(?:Forked from|Source:)/.test(l);
   for (const f of tree) {
     for (const l of read(f).split("\n")) {

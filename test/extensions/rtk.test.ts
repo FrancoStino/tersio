@@ -68,10 +68,47 @@ function harness(exec: FilterExec | undefined, entries: Entries = []) {
   rtkFilterExtension(api as unknown as ExtensionApi);
   const ctx = { hasUI: false, sessionManager: { getBranch: () => entries } } as ExtensionCtx;
   const has = (name: string): boolean => handlers.has(name);
-  return { fire: (event: ToolResultEvent) => handlers.get("tool_result")!(event, ctx), has };
+  return {
+    fire: (event: ToolResultEvent) => handlers.get("tool_result")!(event, ctx),
+    call: (event: { toolName?: string; input?: { command?: string } }) => handlers.get("tool_call")!(event, ctx),
+    has,
+  };
 }
 
 const grepEvent = (text: string): ToolResultEvent => ({ toolName: "grep", content: [{ type: "text", text }] });
+
+// Registered synchronously, so the first call of a fast session is covered: the rtk-init hook awaits a version probe first.
+test("a bash command is rewritten through rtk before it runs", async () => {
+  await withFakeRtk(async () => {
+    const seen: string[][] = [];
+    const h = harness(async (_cmd, args) => { seen.push(args); return { stdout: "rtk git status", stderr: "", code: 0 }; },
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const event = { toolName: "bash", input: { command: "git status" } };
+    await h.call(event);
+    expect(event.input.command).toBe("rtk git status");
+    expect(seen).toEqual([["rewrite", "git status"]]);
+  });
+});
+
+test("a command rtk leaves alone, and a mode-off session, keep the original", async () => {
+  await withFakeRtk(async () => {
+    const off = harness(async () => ({ stdout: "", stderr: "", code: 1 }), []);
+    const offEvent = { toolName: "bash", input: { command: "git status" } };
+    await off.call(offEvent);
+    expect(offEvent.input.command).toBe("git status");
+
+    const on = harness(async () => ({ stdout: "", stderr: "", code: 1 }),
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const onEvent = { toolName: "bash", input: { command: "journalctl -u nginx" } };
+    await on.call(onEvent);
+    expect(onEvent.input.command).toBe("journalctl -u nginx");
+
+    // An already-rewritten command must not gain a second prefix.
+    const twice = { toolName: "bash", input: { command: "rtk git status" } };
+    await on.call(twice);
+    expect(twice.input.command).toBe("rtk git status");
+  });
+});
 
 test("a grep result over the threshold is replaced by the rtk filter", async () => {
   await withFakeRtk(async () => {
