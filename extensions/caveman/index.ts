@@ -8,8 +8,12 @@ import { readCavemanDefault } from '../shared/plugin-settings.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
 const CAVERN_DIR = dirname(fileURLToPath(import.meta.url));
-// Upstream ships one skill per register: default, ultracave, megacave.
-const RULE_FILES = { lite: 'rule.md', full: 'rule.md', ultra: 'rule-ultra.md', 'megacave-lite': 'rule-megacave.md', 'megacave-full': 'rule-megacave.md', 'megacave-ultra': 'rule-megacave.md' };
+// `rule.md`, `rule-ultra.md`, and `rule-megacave.md` track upstream's three registers: `rule.md` is bundled with
+// one host-adapted line, and the other two are fetched from upstream on install and updated in-session.
+// `lite`, `megacave-lite`, and `megacave-ultra` are our forks of upstream's rows at 84cc3c1, so they are
+// bundled rather than fetched. rule-ultra.md and rule-megacave.md are never edited here: the in-session
+// updater rewrites them from upstream and restores the backup when the write does not match.
+const RULE_FILES = { lite: 'rule-lite.md', full: 'rule.md', ultra: 'rule-ultra.md', 'megacave-lite': 'rule-megacave-lite.md', 'megacave-full': 'rule-megacave.md', 'megacave-ultra': 'rule-megacave-ultra.md' };
 
 const DEFAULT_MODE = 'off';
 
