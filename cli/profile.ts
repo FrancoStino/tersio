@@ -91,11 +91,12 @@ async function storedProfile(): Promise<Profile> {
 }
 
 function legacyOmpLockPath(): string {
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
   return [
-    path.join(os.homedir(), '.omp', 'plugins', 'omp-plugins.lock.json'),
+    path.join(home, '.omp', 'plugins', 'omp-plugins.lock.json'),
     path.join(configHome, 'omp', 'plugins', 'omp-plugins.lock.json'),
-  ].find((p) => existsSync(p)) ?? path.join(os.homedir(), '.omp', 'plugins', 'omp-plugins.lock.json');
+  ].find((p) => existsSync(p)) ?? path.join(home, '.omp', 'plugins', 'omp-plugins.lock.json');
 }
 
 function parseStored(raw: string | null): StoredSettings | null {

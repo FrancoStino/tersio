@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sqliteRead } from './sqlite.ts';
+import { homeDir } from './utils.ts';
 import { usageDbPath } from './usage-store.ts';
 
 export type RangeKey = '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
@@ -83,7 +84,7 @@ export function statsDbPath(): string {
 
 /** Quota snapshots. Only omp records these, so this stays omp's own database. */
 export function agentDbPath(): string {
-  return process.env.TERSIO_AGENT_SESSIONS_DB ?? path.join(os.homedir(), '.omp', 'agent', 'agent.db');
+  return process.env.TERSIO_AGENT_SESSIONS_DB ?? path.join(homeDir(), '.omp', 'agent', 'agent.db');
 }
 
 /** The row shape every query groups by: a message joined to its file, since path and facts live apart. */
@@ -117,14 +118,21 @@ function providerExpr(model: string): string {
   return `CASE WHEN instr(${model}, '/') = 0 THEN '' ELSE CASE ${named} ${cases} ELSE ${named} END END`;
 }
 
-/** SQL: the project a transcript belongs to, named by its session folder. A flat session tree uses its data dir. */
+/** SQL: the project a transcript belongs to, named by its session folder. A flat session tree uses its data dir.
+ * The separator follows the stored path: omp and pi write `/`, a Windows run writes `\`, and a path
+ * that mixes them (a Windows host storing forward slashes) slices on its session marker's own slash. */
 function projectExpr(file: string): string {
-  const marker = `instr(${file}, '/sessions/')`;
-  const seg = `substr(${file}, ${marker} + 10, instr(substr(${file}, ${marker} + 10) || '/', '/') - 1)`;
-  const base = `replace(${file}, rtrim(${file}, replace(${file}, '/', '')), '')`;
+  // Position of the session marker under either separator; 0 when the path has none.
+  const posAt = `instr(${file}, '/sessions/')`;
+  const posWin = `instr(${file}, '\\sessions\\')`;
+  const at = `CASE WHEN ${posAt} > 0 THEN ${posAt} ELSE ${posWin} END`;
+  // Which separator to slice on: the one the matched marker used, else the one the path uses.
+  const sep = `CASE WHEN ${posAt} > 0 THEN '/' WHEN ${posWin} > 0 THEN '\\' WHEN instr(${file}, '\\') > 0 THEN '\\' ELSE '/' END`;
+  const seg = `substr(${file}, ${at} + 10, instr(substr(${file}, ${at} + 10) || ${sep}, ${sep}) - 1)`;
+  const base = `replace(${file}, rtrim(${file}, replace(${file}, ${sep}, '')), '')`;
   const dir = `substr(${file}, 1, length(${file}) - length(${base}) - 1)`;
-  const dirBase = `replace(${dir}, rtrim(${dir}, replace(${dir}, '/', '')), '')`;
-  return `CASE WHEN ${marker} > 0 THEN ${seg} ELSE ${dirBase} END`;
+  const dirBase = `replace(${dir}, rtrim(${dir}, replace(${dir}, ${sep}, '')), '')`;
+  return `CASE WHEN ${at} > 0 THEN ${seg} ELSE ${dirBase} END`;
 }
 
 /** Every column a query reads, mapped to the store's schema in one place. */
@@ -825,13 +833,14 @@ function foldTraces(rows: AgentTraceRow[]): AgentTraceRow[] {
     .toSorted((a, b) => b.lastTs - a.lastTs);
 }
 
-/** The root session file for a transcript, which is itself when it is already a root. */
+/** The root session file for a transcript, which is itself when it is already a root.
+ * Splits on whichever separator the stored path uses: a Windows run writes `\`. */
 export function rootSessionFile(sessionFile: string): string {
-  const marker = '/sessions/';
+  const marker = sessionFile.includes('/sessions/') ? '/sessions/' : '\\sessions\\';
   const at = sessionFile.indexOf(marker);
   if (at < 0) return sessionFile;
   const base = sessionFile.slice(0, at + marker.length);
-  const parts = sessionFile.slice(at + marker.length).split('/');
+  const parts = sessionFile.slice(at + marker.length).split(marker[0]);
   // `<project>/<root>.jsonl` is a root; `<project>/<root>/<child>.jsonl` belongs to that root.
   if (parts.length < 3) return sessionFile;
   return `${base}${parts[0]}/${parts[1]}.jsonl`;

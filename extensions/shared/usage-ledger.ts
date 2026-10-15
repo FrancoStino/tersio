@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
+import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, tersioDataPath } from './utils.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
 
@@ -829,10 +829,7 @@ export function processSessionText(accum: SessionAccum, state: { codexProvider: 
 export function readRtkRecallDiagnostics(binary: string | null = resolveRtkBinary()): RtkRecallDiagnostics {
   if (!binary) return { mode: 'unknown', entries: 0, available: false };
   try {
-    const configPath = process.env.RTK_CONFIG
-      || (process.platform === 'darwin'
-        ? path.join(homeDir(), 'Library', 'Application Support', 'rtk', 'config.toml')
-        : path.join(process.env.XDG_DATA_HOME || path.join(homeDir(), '.local', 'share'), 'rtk', 'config.toml'));
+    const configPath = process.env.RTK_CONFIG || path.join(rtkDirs().config, 'config.toml');
     let config = '';
     try { config = fs.readFileSync(configPath, 'utf8'); } catch { /* use RTK CLI fallback */ }
     const modeMatch = /^\s*mode\s*=\s*"(sqlite|tee|disabled)"/m.exec(config);

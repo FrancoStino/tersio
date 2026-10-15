@@ -5,9 +5,13 @@ import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+// The filter spawns a shell for the `<` redirect, and Windows has no /bin/sh.
+const SHELL_INFO = filterShell();
+
 import rtkFilterExtension, {
   FILTER_BY_TOOL,
   MIN_FILTER_BYTES,
+  filterShell,
   filterThroughRtk,
   filterableText,
   rtkActive,
@@ -82,9 +86,12 @@ test("a grep result over the threshold is replaced by the rtk filter", async () 
     const result = await h.fire(grepEvent(big())) as { content: Array<{ type: string; text: string }> };
 
     expect(result.content).toEqual([{ type: "text", text: "3 matches in 1F:\n  src/file.ts (3)\n" }]);
-    expect(calls[0].cmd, "an absolute shell, so a minimal PATH cannot break the spawn").toBe("/bin/sh");
-    expect(calls[0].args[0]).toBe("-c");
-    expect(calls[0].args[1]).toMatch(/pipe -f grep/);
+    // Windows has no /bin/sh, so the filter spawns cmd.exe there instead.
+    expect(calls[0].cmd, "an absolute shell, so a minimal PATH cannot break the spawn")
+      .toBe(SHELL_INFO.shell);
+    expect(calls[0].args.slice(0, SHELL_INFO.flags.length)).toEqual(SHELL_INFO.flags);
+    expect(calls[0].args[SHELL_INFO.flags.length]).toMatch(/pipe -f grep/);
+    expect(calls[0].args.at(-1)).toMatch(/< "/);
     // A hung filter must not stall the tool result.
     expect(calls[0].timeout).toBe(5000);
     // The payload file is removed, so the gathered text does not pile up in /tmp.

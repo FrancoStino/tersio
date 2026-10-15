@@ -136,8 +136,8 @@
     "extensions/pstack/**/*.md"
   ],
   "scripts": {
-    "clean": "rm -rf dist dashboard/dist",
-    "build": "tsc && bun run build:dashboard && cp extensions/caveman/*.md dist/extensions/caveman/ && cp extensions/pstack/*.md dist/extensions/pstack/ && cp -R extensions/pstack/principles extensions/pstack/playbooks extensions/pstack/skills extensions/pstack/references dist/extensions/pstack/",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc && bun run build:dashboard && node scripts/copy-rules.mjs",
     "build:dashboard": "bun install --cwd dashboard/app --frozen-lockfile && bun run --cwd dashboard/app build",
     "prepublishOnly": "bun run build",
     "check": "tsc --noEmit",

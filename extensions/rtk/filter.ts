@@ -18,8 +18,13 @@ export const FILTER_BY_TOOL = new Map([
 export const MIN_FILTER_BYTES = 1200;
 const FILTER_TIMEOUT_MS = 5000;
 
-/** Absolute, so a minimal PATH in the host cannot break the spawn. */
-const SHELL = '/bin/sh';
+// A shell that understands `<`, resolved per platform: Windows has no /bin/sh, and the filter needs the redirect because `rtk pipe` reads stdin only.
+// Separate flags, not one packed element: Node quotes each argv element, and cmd.exe rejects `"/d /s /c"`.
+export function filterShell(): { shell: string; flags: string[] } {
+  return process.platform === 'win32'
+    ? { shell: process.env.ComSpec || 'cmd.exe', flags: ['/d', '/s', '/c'] }
+    : { shell: '/bin/sh', flags: ['-c'] };
+}
 
 export type FilterExec = (
   cmd: string,
@@ -58,8 +63,9 @@ export async function filterThroughRtk(
     dir = mkdtempSync(join(tmpdir(), 'tersio-rtk-'));
     const file = join(dir, 'in.txt');
     writeFileSync(file, text, 'utf8');
-    // `rtk pipe` reads stdin only and execFile has no stdin, so one redirect.
-    const result = await exec(SHELL, ['-c', `"${bin}" pipe -f ${filter} < "${file}"`], { signal, timeout: FILTER_TIMEOUT_MS });
+    // `rtk pipe` reads stdin only and execFile has no stdin, so one redirect through the platform shell.
+    const { shell, flags } = filterShell();
+    const result = await exec(shell, [...flags, `"${bin}" pipe -f ${filter} < "${file}"`], { signal, timeout: FILTER_TIMEOUT_MS });
     if (result.code !== 0) return null;
     const out = result.stdout;
     if (!out.trim() || out.length >= text.length) return null;

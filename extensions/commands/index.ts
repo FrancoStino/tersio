@@ -38,8 +38,13 @@ async function openDashboard(pi: ExtensionApi, ctx?: ExtensionCtx): Promise<void
   try {
     const exported = await pi.exec?.('tersio', ['dashboard', '--export', file], { cwd: ctx?.cwd });
     if (!exported || exported.code !== 0) throw new Error((exported?.stderr || 'export failed').trim());
-    const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    await pi.exec?.(openCmd, [file], { cwd: ctx?.cwd });
+    // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
+    const [openCmd, openArgs]: [string, string[]] = process.platform === 'darwin'
+      ? ['open', [file]]
+      : process.platform === 'win32'
+        ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'start', '', file]]
+        : ['xdg-open', [file]];
+    await pi.exec?.(openCmd, openArgs, { cwd: ctx?.cwd });
     ctx?.ui?.notify?.(`tersio dashboard: opened in your browser.`, 'info');
   } catch (e) {
     ctx?.ui?.notify?.(`tersio dashboard: could not open (${(e as Error).message}). Run 'tersio dashboard --open' in a shell.`, 'warning');

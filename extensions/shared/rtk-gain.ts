@@ -1,7 +1,7 @@
 // Savings read from rtk history, never estimated; modes bench in docs/BENCHMARK_GUIDE.md.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { rtkDirs } from './utils.ts';
 import { sqliteRead } from './sqlite.ts';
 
 export interface RtkCommandRow {
@@ -32,11 +32,7 @@ const CMD_ONE_LINE = `replace(replace(replace(rtk_cmd, char(10), ' '), char(13),
 export function rtkDbPath(): string {
   const override = process.env.TERSIO_RTK_DB;
   if (override) return override;
-  if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'rtk', 'history.db');
-  }
-  const xdg = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(xdg, 'rtk', 'history.db');
+  return path.join(rtkDirs().data, 'history.db');
 }
 
 function query(db: string, sql: string): string[][] {

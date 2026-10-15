@@ -257,13 +257,14 @@ export function providerMeta(provider: string): ProviderMeta {
   return { slug: PROVIDER_MARKS[provider] ?? "" };
 }
 
-/** The agent that recorded a session, from the transcript path, the row's only host marker; matches `AgentLogo`. */
+/** The agent that recorded a session, from the transcript path, the row's only host marker; matches `AgentLogo`.
+ * Each pattern allows either separator: a Windows run writes `C:\...\.omp\agent\sessions\`. */
 export function hostOfSession(sessionFile: string): { label: string; host: "omp" | "pi" | "opencode" | "unknown" } {
   const file = String(sessionFile ?? "");
   // omp writes `~/.omp/agent/sessions/`; the older `.agent/agent/sessions/` spelling still counts.
-  if (/\/\.(?:omp|agent)\/agent\/sessions\//.test(file)) return { label: "OMP", host: "omp" };
-  if (/\.pi\/agent\/sessions\//.test(file)) return { label: "Pi", host: "pi" };
-  if (/(config\/opencode|local\/share\/opencode)\/agent\/sessions\//.test(file)) return { label: "OpenCode", host: "opencode" };
+  if (/[/\\]\.(?:omp|agent)[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "OMP", host: "omp" };
+  if (/[/\\]\.pi[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "Pi", host: "pi" };
+  if (/(?:config|local[/\\]share)[/\\]opencode[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "OpenCode", host: "opencode" };
   return { label: "OMP", host: "unknown" };
 }
 

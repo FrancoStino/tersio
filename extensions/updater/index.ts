@@ -16,6 +16,7 @@ import {
   fetchJson,
   findFile,
   findHoistedPackage,
+  homeDir,
   httpsGet,
   httpsDownload,
   sha256Hex,
@@ -38,7 +39,7 @@ const CAVEMAN_SIBLING = (name: string): string => path.join(EXTENSION_DIR, '..',
 function cavemanRule(name: string): string {
   const beside = CAVEMAN_SIBLING(name);
   if (fsSync.existsSync(beside)) return beside;
-  const plugin = path.join(os.homedir(), '.omp', 'plugins', 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
+  const plugin = path.join(homeDir(), '.omp', 'plugins', 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
   return fsSync.existsSync(plugin) ? plugin : beside;
 }
 

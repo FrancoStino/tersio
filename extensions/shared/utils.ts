@@ -26,6 +26,24 @@ export function homeDir(): string {
   return home && home.trim() !== '' ? home : os.homedir();
 }
 
+/** rtk's own directories. Mirrors `user_dirs` in rtk's source: `config_dir()` for config.toml and
+ * `data_local_dir()` for history.db, which differ on Windows (Roaming vs Local) and on Linux
+ * (`~/.config` vs `~/.local/share`). A guess here silently empties the Gain charts. */
+export function rtkDirs(): { data: string; config: string } {
+  if (process.platform === 'darwin') {
+    const base = path.join(homeDir(), 'Library', 'Application Support', 'rtk');
+    return { data: base, config: base };
+  }
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA || path.join(homeDir(), 'AppData', 'Local');
+    const roaming = process.env.APPDATA || path.join(homeDir(), 'AppData', 'Roaming');
+    return { data: path.join(local, 'rtk'), config: path.join(roaming, 'rtk') };
+  }
+  const xdgData = process.env.XDG_DATA_HOME || path.join(homeDir(), '.local', 'share');
+  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(homeDir(), '.config');
+  return { data: path.join(xdgData, 'rtk'), config: path.join(xdgConfig, 'rtk') };
+}
+
 export const RTK_RELEASE_API = 'https://api.github.com/repos/rtk-ai/rtk/releases/latest';
 export const CAVEMAN_REMOTE_ULTRA = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/ultracave/SKILL.md';
 export const CAVEMAN_REMOTE_MEGACAVE = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/megacave/SKILL.md';
