@@ -32,7 +32,7 @@ import { fakeRtkBin, withHome as inHome } from "../helpers/env.ts";
 
 // ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join turns into `D:\D:\...`.
-process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/session", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 // The bare fixture is HOME to a dozen siblings, so TERSIO_HOME must sit under it: afterEach deletes it.
 process.env.TERSIO_HOME = join(process.env.HOME, ".tersio");
@@ -217,9 +217,11 @@ test("opencode sessions restore modes independently", async () => {
 // rtk ships no OpenCode plugin of its own, so this hook is the whole integration.
 test("the bash hook rewrites a command through the resolved rtk binary", async () => {
   await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %~2", async () => {
-    const { ctx, hooks } = fakeCtx();
+    const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
-    const event = { tool: "bash", input: { command: "git status" } };
+    // The gate reads this entry, so state it rather than inherit a sibling test's default.
+    store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const event = { tool: "bash", sessionID: "ses-on", input: { command: "git status" } };
     await fire(hooks, "execute.before", event);
     expect(event.input.command).toBe("rtk compact git status");
   });

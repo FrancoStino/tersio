@@ -28,7 +28,7 @@ import { sqliteExec } from "../../extensions/shared/sqlite.ts";
 import { fakeRtkBin, hasSqlite, withHome as inHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
-process.env.HOME = fileURLToPath(new URL("../definitely-missing-home", import.meta.url));
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/rtk", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 process.env.TERSIO_HOME = process.env.HOME;
 

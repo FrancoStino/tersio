@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { adaptCavemanFull } from "../../extensions/updater/index.ts";
 
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+process.env.HOME = new URL("../definitely-missing-home/updater", import.meta.url).pathname;
 process.env.TERSIO_HOME = process.env.HOME;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
