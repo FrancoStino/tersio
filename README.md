@@ -168,7 +168,7 @@ An OMP install also registers the package in `~/.omp/plugins`, so it shows under
 
 **RTK missing or not executable:** run `tersio install`, then `tersio doctor`. On Linux/macOS: `chmod +x ~/.bun/bin/rtk`. On Windows the binary is `rtk.exe`, and rtk publishes no `aarch64-pc-windows` build, so a Windows-on-ARM host has no rtk to install. The doctor's Platform row names this directly.
 
-**RTK savings and adoption:** the Gain numbers read rtk's own `history.db`, which the binary writes on every host, so pi and OpenCode runs are already in them. On Windows it lives under `%LOCALAPPDATA%\rtk`, because rtk resolves its data dir through Rust's `data_local_dir`. The adoption row counts executed Bash calls from all three stores: the omp and pi session transcripts, and OpenCode's v2 sqlite or pre-v2 JSON message tree. The eligible command list comes from `rtk rewrite` itself, cached per binary version. Native tool calls (`read`/`edit`/`eval`) stay out of RTK by design, and exact bytes bypass RTK.
+**RTK savings and adoption:** the Gain numbers read rtk's own `history.db` (`%LOCALAPPDATA%\rtk` on Windows), so pi and OpenCode runs are already in them. The adoption row counts executed Bash calls from the omp and pi transcripts and OpenCode's v2 sqlite or pre-v2 JSON tree. The eligible list comes from `rtk rewrite`, cached per binary version. Native tool calls (`read`/`edit`/`eval`) and exact bytes bypass RTK.
 
 **Checksum warning or failure:** the installer aborts on RTK checksum mismatch but warns and continues when checksum metadata is unavailable; `/tersio update rtk` aborts when metadata is missing.
 
