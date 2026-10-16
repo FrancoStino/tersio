@@ -131,6 +131,12 @@ export function findPackageRoot(fromDir: string): string {
   }
 }
 
+/** Where a mode's rule bodies sit: beside the module, else the package's own `extensions/<name>`. */
+export function ruleDir(name: string, ownDir: string): string {
+  if (existsSync(path.join(ownDir, 'rule.md'))) return ownDir;
+  try { return path.join(findPackageRoot(ownDir), 'extensions', name); } catch { return ownDir; }
+}
+
 // The 3xx+location redirect rule shared by httpsGet/httpsDownload.
 function redirectNext(res: { statusCode?: number; headers: { location?: string } }, url: string): string | null {
   if (res.statusCode !== undefined && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {

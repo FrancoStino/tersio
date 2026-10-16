@@ -123,8 +123,6 @@
   },
   "files": [
     "dist/**/*.js",
-    "dist/extensions/caveman/*.md",
-    "dist/extensions/pstack/*.md",
     "dashboard/dist/**/*",
     "extensions/**/*.ts",
     "extensions/caveman/rule.md",
@@ -137,7 +135,7 @@
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsc && bun run build:dashboard && node scripts/copy-rules.mjs",
+    "build": "tsc && bun run build:dashboard",
     "build:dashboard": "bun install --cwd dashboard/app --frozen-lockfile && bun run --cwd dashboard/app build",
     "prepublishOnly": "bun run build",
     "check": "tsc --noEmit",
