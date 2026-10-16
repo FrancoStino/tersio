@@ -1,24 +1,21 @@
-## Unreleased
+## v2.25.8
+
+### Added
+ - Windows runs Tersio natively, installed through PowerShell. WSL stays an option, never a requirement.
+ - The doctor reports your platform, architecture, Node version, rtk build, and the folders it resolved, so a failure names its own cause.
+
+### Changed
+ - The build needs no Unix shell any more, and every rule file ships once instead of twice.
+ - CI runs the whole suite on Windows and macOS as well as Linux, and runs the linter for the first time.
 
 ### Fixed
- - Windows is a first-class platform. The install, the extensions, the RTK wiring, and the paths are all tested on it now.
- - The RTK filter never ran on Windows. It spawned `/bin/sh` for the one redirect the payload needs, and Windows has no `/bin/sh`, so the spawn failed and the filter silently no-opped. The filter now spawns the platform shell, and because `cmd.exe /s` strips one outer quote pair, the command is wrapped in that pair and passed verbatim, so the quoted binary and redirect paths survive.
- - The dashboard and the usage panel never opened on Windows. Both spawned `start` by name, which is a cmd.exe builtin, not an executable, so the spawn failed with `ENOENT`. They now route through `cmd.exe /d /s /c start "" <target>`.
- - The Gain panel read nothing on Windows. rtk resolves its data directory through Rust's `data_local_dir` (`%LOCALAPPDATA%` on Windows) and its config directory through `config_dir` (`%APPDATA%` on Windows), which differ there and also differ from each other on Linux (`~/.local/share` versus `~/.config`). The old code guessed the data path on both, so `history.db` and `config.toml` were never found. Both now resolve per platform through one `rtkDirs()` helper. The OpenCode data path already matched, because OpenCode uses `~/.local/share` on every platform.
- - The dashboard labelled every Windows row OMP. Its host regexes matched `/` only, and a Windows session path uses `\`. The same blind spot in the SQL project expression returned an empty project name, and `rootSessionFile` never found a child transcript. Both now split on whichever separator the stored path uses.
- - Three spawns failed on Windows with an `EINVAL` or a silent skip. `omp` and `npm` are `.cmd` shims, and spawning one directly throws since Node's CVE-2024-27980 fix. `execP` now routes a `.cmd` or `.bat` through `cmd.exe`, and the two sync spawns in doctor take the same path. Windows users saw "[fail] omp not found" on a machine that had omp.
- - `bun run build` failed on Windows. It chained `cp` and `rm -rf`, which cmd.exe does not have. The copies now run through one Node script, so the build needs no POSIX shell.
- - Windows installers had no entry point. `install.ps1` now mirrors `install.sh` step for step, both are attached to every release, and CI runs the suite on `windows-latest` so the platform is proven, not promised.
- - Three modules read the home directory directly instead of honoring the `HOME` override the rest of the tree uses, so a redirected home was ignored by one and obeyed by the rest.
- - The doctor gains a Platform row that names the platform, the architecture, the Node version, the rtk target, the resolved home, and the data path. A Windows failure now names its cause, and a platform rtk publishes no build for (Windows on ARM today) says so outright instead of reading as a missing install.
- - Verified on the real releases: the RTK Windows asset `rtk-x86_64-pc-windows-msvc.zip` carries `rtk.exe`, its SHA-256 matches that release's `checksums.txt`, and the SQLite engine ladder is platform-neutral (Bun and Node answer in process; the `sqlite3` was already found as `sqlite3.exe`).
- - RTK's rewrite missed the first bash call of a fast session on pi and omp. The hook that `rtk init` writes registers its handler after an async version probe, so a call that landed before the probe finished ran unrewritten. Tersio's own filter extension now registers the same rewrite synchronously, and a live pi run with that hook removed still rewrites the command.
- - RTK adoption was blind to pi. pi records tool calls inside the assistant message, while the reader parsed only the custom rows omp emits, so every pi bash call counted as zero. The reader now parses both shapes and dedupes by call id, because a host that writes both records each call once.
- - RTK adoption undercounted pi and opencode. Both hosts store the command the model issued, before the hook rewrites it, so a successful rewrite read as a miss. The rewrite now leaves an `rtk-audit` row in the usage ledger, and the adoption count adds those rows.
- - The adoption number blended every host into one figure, so a quiet host hid behind a busy one. Each host with recorded calls now gets its own row in `tersio usage`.
- - Caveman's `rule.md` never tracked upstream. It is a fork with one adapted line, and nothing refetched it, so an upstream change never arrived. `/tersio update caveman` now fetches it, re-applies the adaptation, and reports it beside the other two bodies.
- - Ponytail never injected on pi, in any session. Tersio skipped its own injector there because the upstream pi-extension owns injection, and that extension reads its own config at `~/.config/ponytail/config.json` for the default. Tersio's saved `ponytailDefault` never reached that file, so upstream's default of `off` stood and no block landed. `tersio settings` and the installer now mirror the saved default into upstream's config, and a live headless pi session carries the block.
- - The pstack tree named artifacts that do not ship in it: Cursor's `control-ui` and `control-cli` skills, the upstream helper scripts `worktree-audit.sh`, `log.sh`, `watch-pr`, `orch.ts`, and `check-plan.mjs`, and a `agent-transcripts/` directory no host creates. A run that reached for any of them read a missing file. Each is now named by category, the host-neutral form the tree already uses elsewhere, and the port-artifact test bans all of them so the next port fails the suite.
+ - Windows: condensing, the dashboard, the spend chart, the installer, the updater, the doctor, and the RTK wiring all work. Each of them quietly did nothing before.
+ - Windows: folders resolve per platform, so your home and rtk's own data are found where they really are.
+ - Windows: session rows carry the right host label, and a project name resolves under either path separator.
+ - The RTK summary missed part of your pi and OpenCode work, and one busy host could hide a quiet one. Every host reports its own row now.
+ - Ponytail never turned on in pi sessions and stayed off in headless runs. Both apply now.
+ - Caveman's rule file refreshes when the upstream wording changes.
+ - The pstack library named files it never shipped. It ships complete now, and a test rejects the old shapes.
 
 ## v2.25.7
 
