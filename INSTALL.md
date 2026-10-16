@@ -23,7 +23,7 @@ On Windows the same pass runs through PowerShell. The piped form installs and ta
 
 ```powershell
 irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex
-& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1)))
+& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1))) --npm
 ```
 
 Each host loads its extensions from one place, so the same file never loads twice: `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` for OMP, `~/.pi/agent/extensions`, `~/.config/opencode/plugins/tersio`. The OMP agent tree keeps rtk's own `extensions/rtk.ts` wiring, which `config.yml` registers. `tersio update` without `--host` refreshes OMP.

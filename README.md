@@ -45,11 +45,11 @@ All install paths in one table, with update and remove commands: [INSTALL.md](./
 curl -fsSL https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.sh | sh
 ```
 
-**Windows** — the same pass through PowerShell. Run it with its own arguments to get the menus; the piped form installs and then takes the defaults:
+**Windows** — the same pass through PowerShell. The piped form takes the defaults; the scriptblock form keeps the console, so it shows the menus and takes flags:
 
 ```powershell
-irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex     # defaults, non-interactive
-& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1)))  # menus
+irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1))) --npm
 ```
 
 Then run the CLI. Bare `tersio` opens a menu and asks which agent to install into:
