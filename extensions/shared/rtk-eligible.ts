@@ -1,11 +1,8 @@
-// Eligible command heads, taken from rtk's own contract rather than a hardcoded guess.
-// `rtk rewrite <probe>` prints a rewrite and exits 0 or 3 when rtk handles the command,
-// and exits 1 when no equivalent exists. Each probe below is a representative workload
-// command, because subcommand-scoped tools such as `gh` rewrite `gh pr list` but not `gh`.
+// Eligible heads come from rtk's own contract: `rtk rewrite <probe>` exits 0 or 3 when rtk handles the command, 1 when it has no equivalent.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeRtkVersion, tersioDataPath } from './utils.ts';
+import { normalizeRtkVersion, shimCommand, tersioDataPath } from './utils.ts';
 
 /** Verified against rtk 1.0.1; the drift test fails when rtk's set moves. */
 export const FALLBACK_ELIGIBLE_HEADS: readonly string[] = [
@@ -33,7 +30,8 @@ const PROBES: Record<string, string> = {
 
 function probe(bin: string, command: string): boolean {
   try {
-    const out = execFileSync(bin, ['rewrite', command], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const shim = shimCommand(bin, ['rewrite', command]);
+    const out = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true });
     return out.trim().length > 0;
   } catch (e) {
     // Non-zero exit throws; exit 3 still prints a rewrite, exits 1 and 2 do not.
@@ -54,16 +52,14 @@ export function deriveEligibleHeads(bin: string): Set<string> {
 
 function rtkVersion(bin: string): string {
   try {
-    return normalizeRtkVersion(execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true }));
+    const shim = shimCommand(bin, ['--version']);
+    return normalizeRtkVersion(execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true }));
   } catch {
     return '';
   }
 }
 
-/**
- * Heads rtk rewrites, cached per binary version so an upgrade re-derives once.
- * Without a binary, or on any read failure, the verified fallback stands.
- */
+/** Heads rtk rewrites, cached per binary version; without a binary, or on any read failure, the verified fallback stands. */
 export function eligibleHeads(bin: string | null): ReadonlySet<string> {
   if (!bin) return new Set(FALLBACK_ELIGIBLE_HEADS);
   const version = rtkVersion(bin);

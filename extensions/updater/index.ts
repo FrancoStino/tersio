@@ -12,10 +12,12 @@ import { setExtensionLabel } from '../shared/host.ts';
 import {
   CAVEMAN_REMOTE_ULTRA,
   CAVEMAN_REMOTE_MEGACAVE,
+  CAVEMAN_REMOTE_FULL,
   RTK_RELEASE_API,
   fetchJson,
   findFile,
   findHoistedPackage,
+  homeDir,
   httpsGet,
   httpsDownload,
   sha256Hex,
@@ -38,15 +40,20 @@ const CAVEMAN_SIBLING = (name: string): string => path.join(EXTENSION_DIR, '..',
 function cavemanRule(name: string): string {
   const beside = CAVEMAN_SIBLING(name);
   if (fsSync.existsSync(beside)) return beside;
-  const plugin = path.join(os.homedir(), '.omp', 'plugins', 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
+  const plugin = path.join(homeDir(), '.omp', 'plugins', 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
   return fsSync.existsSync(plugin) ? plugin : beside;
 }
 
 const CAVEMAN_LOCAL = cavemanRule('rule.md');
-const CAVEMAN_TRACKED: ReadonlyArray<{ file: string; remote: string }> = [
+// `rule.md` is upstream's body with one adapted line, so a refresh re-applies the adaptation.
+const adaptCavemanFull = (text: string): string =>
+  text.replace('`/caveman-compress` exempt.', '`/caveman-compress`, where the host offers it, is exempt.');
+const CAVEMAN_TRACKED: ReadonlyArray<{ file: string; remote: string; adapt?: (text: string) => string }> = [
+  { file: CAVEMAN_LOCAL, remote: CAVEMAN_REMOTE_FULL, adapt: adaptCavemanFull },
   { file: cavemanRule('rule-ultra.md'), remote: CAVEMAN_REMOTE_ULTRA },
   { file: cavemanRule('rule-megacave.md'), remote: CAVEMAN_REMOTE_MEGACAVE },
 ];
+export { adaptCavemanFull };
 // Host-neutral: this updater runs inside pi, OMP, and OpenCode alike.
 const RELOAD_MSG = 'Reminder: restart your agent (or reload extensions) for updates to take effect.';
 
@@ -144,11 +151,13 @@ function checkRtk(): Promise<AddonStatus> {
 function checkCaveman(): Promise<AddonStatus> {
   return runCheck('Caveman', async () => {
     const parts: string[] = [(await readTextIfExists(CAVEMAN_LOCAL)) ? 'rule.md ok' : 'rule.md missing'];
-    for (const { file, remote } of CAVEMAN_TRACKED) {
+    for (const { file, remote, adapt } of CAVEMAN_TRACKED) {
       const name = path.basename(file);
       try {
         const [remoteText, localText] = await Promise.all([httpsGet(remote), readTextIfExists(file)]);
-        parts.push(!localText ? `${name} missing` : shortHash(localText) === shortHash(remoteText) ? `${name} up to date` : `${name} update available`);
+        // Compare the text a refresh would write, so the adapted line never reads as drift.
+        const nextHash = shortHash(adapt ? adapt(remoteText) : remoteText);
+        parts.push(!localText ? `${name} missing` : shortHash(localText) === nextHash ? `${name} up to date` : `${name} update available`);
       } catch {
         parts.push(`${name} check skipped`);
       }
@@ -366,13 +375,15 @@ async function updateRtk(ctx: AddonUpdaterCtx, dryRun = false): Promise<string> 
 
 async function updateCaveman(ctx: AddonUpdaterCtx, dryRun = false): Promise<string> {
   const results: string[] = [];
-  for (const { file, remote } of CAVEMAN_TRACKED) {
+  for (const { file, remote, adapt } of CAVEMAN_TRACKED) {
     const name = path.basename(file);
     let remoteText: string;
     try { remoteText = await httpsGet(remote); }
     catch (e) { results.push(report(ctx, `Caveman ${name} update failed: ${(e as Error).message}`, 'warning')); continue; }
 
-    const remoteHash = shortHash(remoteText);
+    // A tracked fork compares against the text it would write, so an adapted body still reads up to date.
+    const nextText = adapt ? adapt(remoteText) : remoteText;
+    const remoteHash = shortHash(nextText);
     const oldLocal = await readTextIfExists(file);
     const oldHash = oldLocal ? shortHash(oldLocal) : null;
     if (oldHash === remoteHash) { results.push(`${name} up to date: ${remoteHash}`); continue; }
@@ -386,7 +397,7 @@ async function updateCaveman(ctx: AddonUpdaterCtx, dryRun = false): Promise<stri
       await fs.mkdir(path.dirname(file), { recursive: true });
       const backupPath = `${file}.bak`;
       if (oldLocal !== null) await fs.writeFile(backupPath, oldLocal, 'utf8');
-      await fs.writeFile(file, remoteText, 'utf8');
+      await fs.writeFile(file, nextText, 'utf8');
       const writtenHash = shortHash(await fs.readFile(file, 'utf8'));
       if (writtenHash !== remoteHash) {
         if (oldLocal !== null) await fs.writeFile(file, oldLocal, 'utf8');

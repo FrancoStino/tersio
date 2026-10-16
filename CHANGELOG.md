@@ -1,3 +1,22 @@
+## v2.25.8
+
+### Added
+ - Windows runs Tersio natively, installed through PowerShell. WSL stays an option, never a requirement.
+ - The doctor reports your platform, architecture, Node version, rtk build, and the folders it resolved, so a failure names its own cause.
+
+### Changed
+ - The build needs no Unix shell any more, and every rule file ships once instead of twice.
+ - CI runs the whole suite on Windows and macOS as well as Linux, and runs the linter for the first time.
+
+### Fixed
+ - Windows: condensing, the dashboard, the spend chart, the installer, the updater, the doctor, and the RTK wiring all work. Each of them quietly did nothing before.
+ - Windows: folders resolve per platform, so your home and rtk's own data are found where they really are.
+ - Windows: session rows carry the right host label, and a project name resolves under either path separator.
+ - The RTK summary missed part of your pi and OpenCode work, and one busy host could hide a quiet one. Every host reports its own row now.
+ - Ponytail never turned on in pi sessions and stayed off in headless runs. Both apply now.
+ - Caveman's rule file refreshes when the upstream wording changes.
+ - The pstack library named files it never shipped. It ships complete now, and a test rejects the old shapes.
+
 ## v2.25.7
 
 ### Added

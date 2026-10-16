@@ -285,6 +285,11 @@ function printReport(report: UsageReport): void {
     ['Tokens', `${fmt(t.input)} in · ${fmt(t.output)} out · ${fmt(t.cacheRead)} cache read · ${fmt(t.cacheWrite)} cache write`],
     ['Cost', `${formatCurrency(report.usd, report.currency)}${report.priced ? '' : ' (includes default pricing)'} · ~${formatCurrency(report.savedUsd, report.currency)} cache-saved (est.) · ~${report.co2g.toFixed(1)}g CO2 (est.)${costNote}`],
     ['RTK adoption', `${fmt(a.rtkCalls)}/${fmt(a.eligibleCalls)} eligible Bash calls use RTK (${a.adoptionPct.toFixed(1)}%) · ${fmt(a.missedCalls)} missed · recall ${report.rtkRecall.available ? `${report.rtkRecall.mode} (${report.rtkRecall.entries})` : 'unavailable'}`],
+    // A blended number hides a quiet host, so each host reporting bash calls gets its own row.
+    ...Object.entries(a.byHost)
+      .filter(([, c]) => c.bashCalls > 0)
+      .sort((x, y) => y[1].eligibleCalls - x[1].eligibleCalls)
+      .map(([name, c]) => [`RTK — ${name}`, `${fmt(c.rtkCalls)}/${fmt(c.eligibleCalls)} eligible calls (${c.adoptionPct.toFixed(1)}%) · ${fmt(c.missedCalls)} missed · ${fmt(c.bashCalls)} bash calls`] as [string, string]),
   ], [false, false], 118)) console.log(l);
   if (measuredCount > 0) {
     // Named, because a measured figure is only worth trusting when a reader sees whose it is.

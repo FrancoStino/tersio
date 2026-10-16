@@ -34,7 +34,22 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 ## The entries that stay
 
-The eight entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+The eleven entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+
+## 2026-10-16 — A test that inherited its precondition from a sibling test
+**What happened:** `test/extensions/session.test.ts > the bash hook rewrites a command through the resolved rtk binary` failed once in about seven full-suite runs, always passed inside its own file, and failed every time under `-t` in 7ms.
+**Root cause:** The hook gates on `rtkActive`, which falls back to `readRtkDefault()`, false without a settings file. The test never stated its rtk state, so a sibling test had to set it first. Four test files also shared one `HOME`, so a worker could poison another's settings and usage ledger.
+**Prevention rule:** A test that reads session or settings state seeds it itself. Give each test file its own home.
+
+## 2026-10-16 — Two edits whose old_string was retyped from a preview
+**What happened:** The `ruleDir` insertion in `extensions/shared/utils.ts` opened its anchor with `/**` where the file has `//`, which left an unterminated block comment; `tsc` caught it at once. Later, a comment collapse in `test/extensions/pstack.test.ts` retyped `\/watch-pr` as `/watch-pr`, silently turning two regexes into literals with invalid flags.
+**Root cause:** The anchor came from a grep or census preview, which trims whitespace and hides escapes, and it was typed from memory instead of read. The fuzzy matcher tolerated the difference, so the wrong text was written back.
+**Prevention rule:** Read the exact target lines before using them as an anchor, and never retype an anchor from a preview, because escapes are part of the text. Run `tsc --noEmit` and a comment-only diff audit after any edit that touches a comment, a regex, or a block boundary.
+
+## 2026-10-15 — Windows test expectations written against the POSIX exec shape
+**What happened:** Four tests stayed red on the Windows runner across four consecutive CI rounds, one shape at a time. Each asserted a POSIX detail: the bare command and argv, a quote-free `echo`, and an LF line. The product spawns a `.cmd` shim through `cmd.exe`, so the exec name is the shell, the shell's own flags precede the args, `echo` keeps the quotes it was given, and a line ends with CRLF.
+**Root cause:** Read each expectation off the passing POSIX run instead of deriving it from the helper the product calls, so every fix swapped one hard-coded shape for another and the next Windows round surfaced the next one.
+**Prevention rule:** Build every platform-dependent expectation from the same helper the product calls (`shimCommand`, `filterShell`), never from a literal. When a test is red on Windows alone, suspect the spawn path before the product.
 
 ## 2026-10-10 — Line-range deletions computed against a list an earlier deletion had shifted
 **What happened:** A python pass deleted two function blocks from `extensions/shared/agent-stats.ts` by line range. The first deletion lowered every later index, and the second range used indices read before that deletion, so it cut the middle of `readSessionTrace` instead of the gain block. The file lost 168 lines of live code while the target functions survived.

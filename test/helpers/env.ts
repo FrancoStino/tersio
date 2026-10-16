@@ -1,6 +1,6 @@
 // Pins the pi agent vars with a temp HOME, so a spawned CLI cannot delete the real ~/.pi/agent.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,6 +14,30 @@ export function hasSqlite(): boolean {
 /** Bun carries the in-process SQLite the CLI prefers, so a check that spawns it skips without one. */
 export function hasBun(): boolean {
   return spawnSync('bun', ['--version'], { stdio: 'ignore' }).status === 0;
+}
+
+/** Whether this suite runs on Windows, where the resolver asks for `rtk.exe` and `omp.cmd`. */
+export function isWindows(): boolean {
+  return process.platform === 'win32';
+}
+
+/** A fake `rtk` on PATH, carrying the platform's name and script shape; returns the path the resolver finds. */
+export function fakeRtkBin(dir: string, lines: string[] = [], cmdBody?: string): string {
+  return fakeExecutable(dir, isWindows() ? 'rtk.exe' : 'rtk', lines.join('\n'), cmdBody ?? 'exit /b 0');
+}
+
+/** An executable on PATH under the exact name the resolver asks for, written as a POSIX script or a Windows `<name>.cmd`. */
+export function fakeExecutable(dir: string, name: string, posixBody: string, windowsBody: string): string {
+  mkdirSync(dir, { recursive: true });
+  if (process.platform !== 'win32') {
+    const file = path.join(dir, name);
+    writeFileSync(file, `#!/bin/sh\n${posixBody}\n`, 'utf8');
+    chmodSync(file, 0o755);
+    return file;
+  }
+  const file = path.join(dir, `${name}.cmd`);
+  writeFileSync(file, `@echo off\r\n${windowsBody.split('\n').join('\r\n')}\r\n`, 'utf8');
+  return file;
 }
 
 export function cliEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {

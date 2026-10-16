@@ -1,6 +1,6 @@
 {
   "name": "@krtclcdy/tersio",
-  "version": "2.25.7",
+  "version": "2.25.8",
   "description": "✂️ Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one-command combos over one shared extension tree.",
   "keywords": [
     "token-saving",
@@ -123,8 +123,6 @@
   },
   "files": [
     "dist/**/*.js",
-    "dist/extensions/caveman/*.md",
-    "dist/extensions/pstack/*.md",
     "dashboard/dist/**/*",
     "extensions/**/*.ts",
     "extensions/caveman/rule.md",
@@ -136,8 +134,8 @@
     "extensions/pstack/**/*.md"
   ],
   "scripts": {
-    "clean": "rm -rf dist dashboard/dist",
-    "build": "tsc && bun run build:dashboard && cp extensions/caveman/*.md dist/extensions/caveman/ && cp extensions/pstack/*.md dist/extensions/pstack/ && cp -R extensions/pstack/principles extensions/pstack/playbooks extensions/pstack/skills extensions/pstack/references dist/extensions/pstack/",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc && bun run build:dashboard",
     "build:dashboard": "bun install --cwd dashboard/app --frozen-lockfile && bun run --cwd dashboard/app build",
     "prepublishOnly": "bun run build",
     "check": "tsc --noEmit",

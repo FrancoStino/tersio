@@ -26,9 +26,32 @@ export function homeDir(): string {
   return home && home.trim() !== '' ? home : os.homedir();
 }
 
+/** Windows cannot run a `.cmd` or `.bat` directly, so a shim path goes through the shell; a real `.exe` or POSIX binary passes through. */
+export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
+  if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };
+  return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+}
+
+/** rtk's own dirs: `config_dir()` for config.toml and `data_local_dir()` for history.db, which differ per platform; a guess here empties the Gain charts. */
+export function rtkDirs(): { data: string; config: string } {
+  if (process.platform === 'darwin') {
+    const base = path.join(homeDir(), 'Library', 'Application Support', 'rtk');
+    return { data: base, config: base };
+  }
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA || path.join(homeDir(), 'AppData', 'Local');
+    const roaming = process.env.APPDATA || path.join(homeDir(), 'AppData', 'Roaming');
+    return { data: path.join(local, 'rtk'), config: path.join(roaming, 'rtk') };
+  }
+  const xdgData = process.env.XDG_DATA_HOME || path.join(homeDir(), '.local', 'share');
+  const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(homeDir(), '.config');
+  return { data: path.join(xdgData, 'rtk'), config: path.join(xdgConfig, 'rtk') };
+}
+
 export const RTK_RELEASE_API = 'https://api.github.com/repos/rtk-ai/rtk/releases/latest';
 export const CAVEMAN_REMOTE_ULTRA = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/ultracave/SKILL.md';
 export const CAVEMAN_REMOTE_MEGACAVE = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/megacave/SKILL.md';
+export const CAVEMAN_REMOTE_FULL = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/caveman/SKILL.md';
 
 // A fetch that returns an error page or a truncated body must not reach the extension tree.
 export function ruleBodyProblem(text: string): string | null {
@@ -102,6 +125,12 @@ export function findPackageRoot(fromDir: string): string {
     if (parent === dir) throw new Error('package root not found');
     dir = parent;
   }
+}
+
+/** Where a mode's rule bodies sit: beside the module, else the package's own `extensions/<name>`. */
+export function ruleDir(name: string, ownDir: string): string {
+  if (existsSync(path.join(ownDir, 'rule.md'))) return ownDir;
+  try { return path.join(findPackageRoot(ownDir), 'extensions', name); } catch { return ownDir; }
 }
 
 // The 3xx+location redirect rule shared by httpsGet/httpsDownload.

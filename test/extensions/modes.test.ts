@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,10 +18,11 @@ import {
 } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry } from "../../extensions/shared/types.ts";
 import { readCavemanDefault } from "../../extensions/shared/plugin-settings.ts";
-import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
+import { ruleBodyProblem, ruleDir } from "../../extensions/shared/utils.ts";
 import { cliEnv } from "../helpers/env.ts";
 
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/modes", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 process.env.TERSIO_HOME = process.env.HOME;
 
@@ -694,7 +695,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const installer = path.join(root, "dist", "tersio.js");
 
 function run(...args: string[]) {
-  const missingHome = path.join(root, "test", "definitely-missing-home");
+  const missingHome = path.join(root, "test", "definitely-missing-home", "modes");
   const result = spawnSync(process.execPath, [installer, ...args], {
     cwd: root,
     encoding: "utf8",
@@ -717,4 +718,19 @@ test("caveman and rtk flags override the combo preset", () => {
   );
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toMatch(/Defaults: combo=max \(caveman=lite · rtk=off · ponytail=ultra · pstack=on\)/);
+});
+
+test("ruleDir keeps a self-contained tree and falls back to the package's own extension dir", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const source = path.join(root, "extensions", "pstack");
+  expect(ruleDir("pstack", source)).toBe(source);
+  // An empty dir stands in for dist, whose tree holds compiled JS only.
+  const bare = mkdtempSync(path.join(root, "test", "rule-dir-"));
+  try {
+    const resolved = ruleDir("pstack", bare);
+    expect(resolved).toBe(source);
+    expect(existsSync(path.join(resolved, "rule.md"))).toBe(true);
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
+  }
 });

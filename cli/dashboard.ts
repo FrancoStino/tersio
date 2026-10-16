@@ -483,8 +483,13 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 function openBrowser(url: string): void {
-  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-  spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
+  // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
+  const [cmd, args]: [string, string[]] = process.platform === 'darwin'
+    ? ['open', [url]]
+    : process.platform === 'win32'
+      ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'start', '', url]]
+      : ['xdg-open', [url]];
+  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
 // Replacers throughout: session data holds `$'` (shell quoting) and `</script>`, which String.replace would mangle.

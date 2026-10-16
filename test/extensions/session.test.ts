@@ -28,28 +28,32 @@ import {
 import { formatStatus } from "../../extensions/shared/status.ts";
 import { findHoistedPackage } from "../../extensions/shared/utils.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from "../../extensions/shared/types.ts";
-import { withHome as inHome } from "../helpers/env.ts";
+import { fakeRtkBin, withHome as inHome } from "../helpers/env.ts";
 
 // ponytail: hermetic HOME — session-start fallbacks read the real lock file, so the suite must not use it.
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join turns into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/session", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 // The bare fixture is HOME to a dozen siblings, so TERSIO_HOME must sit under it: afterEach deletes it.
 process.env.TERSIO_HOME = join(process.env.HOME, ".tersio");
 
 /** The repo root, so a rule body can be read from the file the extension reads. */
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// Windows opens a browser through cmd.exe, not a `start` executable.
+const IS_WINDOWS = process.platform === "win32";
 
 // The bash rewrite shells out to the rtk on PATH, so each test owns PATH and HOME.
-async function withFakeRtk(script: string | null, work: () => Promise<void>): Promise<void> {
+// The Windows form is a `.cmd` shim, because CreateProcess runs no bare script.
+async function withFakeRtk(script: string | null, cmdScript: string, work: () => Promise<void>): Promise<void> {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-rtk-"));
   const previous = { PATH: process.env.PATH, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   try {
     const bin = path.join(dir, "bin");
     mkdirSync(bin, { recursive: true });
     if (script !== null) {
-      const rtk = path.join(bin, "rtk");
-      writeFileSync(rtk, script, "utf8");
-      chmodSync(rtk, 0o755);
+      const body = script.replace(/^#!\/bin\/sh\n/, "");
+      fakeRtkBin(bin, body.split("\n"), cmdScript);
     }
     process.env.PATH = bin;
     process.env.HOME = dir;
@@ -212,10 +216,12 @@ test("opencode sessions restore modes independently", async () => {
 
 // rtk ships no OpenCode plugin of its own, so this hook is the whole integration.
 test("the bash hook rewrites a command through the resolved rtk binary", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", async () => {
-    const { ctx, hooks } = fakeCtx();
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %~2", async () => {
+    const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
-    const event = { tool: "bash", input: { command: "git status" } };
+    // The gate reads this entry, so state it rather than inherit a sibling test's default.
+    store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const event = { tool: "bash", sessionID: "ses-on", input: { command: "git status" } };
     await fire(hooks, "execute.before", event);
     expect(event.input.command).toBe("rtk compact git status");
   });
@@ -224,7 +230,7 @@ test("the bash hook rewrites a command through the resolved rtk binary", async (
 // The after-hook is the only surface for built-in grep and glob output, and it must mutate in place.
 test("the after hook condenses a large grep result and leaves the rest untouched", async () => {
   const big = `src/a.ts:1:${"a line of grep output \n".repeat(120)}`;
-  await withFakeRtk("#!/bin/sh\necho '2 matches in 1F:'\n", async () => {
+  await withFakeRtk("#!/bin/sh\necho '2 matches in 1F:'\n", "echo 2 matches in 1F:", async () => {
     const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
     store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -232,7 +238,9 @@ test("the after hook condenses a large grep result and leaves the rest untouched
 
     const hit = { tool: "grep", status: "completed", sessionID: "ses-on", result: { content: [{ type: "text", text: big }] } };
     await fire(hooks, "execute.after", hit);
-    expect(hit.result.content).toEqual([{ type: "text", text: "2 matches in 1F:\n" }]);
+    // batch `echo` ends the line with CRLF, so the ending is normalized before the text is compared.
+    const condensed = String((hit.result.content[0] as { text: string }).text).replace(/\r\n/g, "\n");
+    expect(condensed).toBe("2 matches in 1F:\n");
 
     // An error carries no result, so there is nothing to replace.
     const failed = { tool: "grep", status: "error", sessionID: "ses-on", error: { message: "boom" } };
@@ -257,7 +265,7 @@ test("the after hook condenses a large grep result and leaves the rest untouched
 
 test("the after hook keeps the original when rtk is absent", async () => {
   const big = "x".repeat(2000);
-  await withFakeRtk(null, async () => {
+  await withFakeRtk(null, "", async () => {
     const { ctx, hooks, store } = fakeCtx();
     await setup(ctx);
     store.set("entries:ses-on", [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -268,7 +276,7 @@ test("the after hook keeps the original when rtk is absent", async () => {
 });
 
 test("the bash hook leaves other tools and rtk-less hosts alone", async () => {
-  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", async () => {
+  await withFakeRtk("#!/bin/sh\necho \"rtk compact $2\"\n", "echo rtk compact %~2", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const other = { tool: "read", input: { command: "git status" } };
@@ -276,7 +284,7 @@ test("the bash hook leaves other tools and rtk-less hosts alone", async () => {
     expect(other.input.command).toBe("git status");
   });
 
-  await withFakeRtk(null, async () => {
+  await withFakeRtk(null, "", async () => {
     const { ctx, hooks } = fakeCtx();
     await setup(ctx);
     const bash = { tool: "bash", input: { command: "git status" } };
@@ -1757,7 +1765,13 @@ test("/tersio dashboard exports and opens the Dashboard", async () => {
   expect(h.execCalls[0].cmd).toBe("tersio");
   expect(h.execCalls[0].args.slice(0, 2)).toEqual(["dashboard", "--export"]);
   expect(h.execCalls[0].args[2]).toMatch(/tersio-dashboard-.*\.html/);
-  expect(["open", "xdg-open", "start"].includes(h.execCalls[1].cmd), JSON.stringify(h.execCalls)).toBeTruthy();
+  // `start` is a cmd.exe builtin, not an executable, so the open routes through the shell there.
+  if (IS_WINDOWS) {
+    expect(h.execCalls[1].cmd).toBe(process.env.ComSpec || "cmd.exe");
+    expect(h.execCalls[1].args.slice(0, 4)).toEqual(["/d", "/s", "/c", "start"]);
+  } else {
+    expect(["open", "xdg-open"].includes(h.execCalls[1].cmd), JSON.stringify(h.execCalls)).toBeTruthy();
+  }
   expect(h.notifications.join("\n")).toMatch(/dashboard: opened in your browser/);
 });
 

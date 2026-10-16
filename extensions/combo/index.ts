@@ -224,12 +224,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     const entries = sessionEntries(ctx);
     if (!hasModeState(entries) && (ctx?.hasUI || OPENCODE)) restoreConfiguredDefaults();
     else if (!hasModeState(entries)) {
-      // A headless root session (`host -p`) has no UI to publish the bridge, and Ponytail reads only
-      // the bridge, so it never loaded: a benchmark on omp measured Block 0 for every Ponytail level and
-      // for the Ponytail part of every Combo. Publish the saved modes only while the bridge is clear:
-      // once a parent or a toggle has published, the bridge carries that session's own choice and a
-      // subagent branch must keep inheriting it. All four go together, because Caveman, RTK, and pstack
-      // already restored their own levels and a disagreeing bridge resets them.
+      // A headless root session has no UI to publish the bridge, so Ponytail never loaded; publish the saved modes only while the bridge is clear, or a subagent branch stops inheriting.
       const shared = getSharedComboState();
       if (shared.caveman === 'off' && shared.rtk === 'off' && shared.ponytail === 'off' && shared.pstack === 'off') {
         setSharedComboModes(savedModes());

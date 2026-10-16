@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BUN_BIN_DIR, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
+  BUN_BIN_DIR, BUN_BIN, HOME, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, removeExtensionFromConfig,
   dryRun, verbose,
   debug,
   bundledPonytailSpec, execP, parseJsonObject, ponytailOverride, readPluginsPackage,
+  shimCommand,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
@@ -28,16 +29,18 @@ type FixRequest = FixTarget | 'all';
 export function serviceOrphanPids(): string[] {
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) return [];
+  const shim = shimCommand(bin, ['service', 'status']);
   let status = '';
   try {
-    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+    status = spawnSync(shim.cmd, shim.args, { encoding: 'utf8' }).stdout.trim().toLowerCase();
   } catch {
     return [];
   }
   if (serviceRunning(status)) return [];
+  const grepShim = shimCommand('pgrep', ['-f', 'opencode serve --service']);
   let out = '';
   try {
-    out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+    out = spawnSync(grepShim.cmd, grepShim.args, { encoding: 'utf8' }).stdout ?? '';
   } catch { return []; }
   // Only digits: the value comes from another process, and `process.kill` throws on anything else.
   return out.split(/[\s,]+/).filter((line: string) => /^\d+$/.test(line.trim())).map((line: string) => line.trim());
@@ -47,16 +50,18 @@ export function serviceOrphanPids(): string[] {
 export function serviceState(): { status: string; live: boolean } | null {
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) return null;
+  const shim = shimCommand(bin, ['service', 'status']);
   let status = '';
   try {
-    status = spawnSync(bin, ['service', 'status'], { encoding: 'utf8' }).stdout.trim().toLowerCase();
+    status = spawnSync(shim.cmd, shim.args, { encoding: 'utf8' }).stdout.trim().toLowerCase();
   } catch {
     return null;
   }
   if (status === '') return null;
   let live = false;
   try {
-    const out = spawnSync('pgrep', ['-f', 'opencode serve --service'], { encoding: 'utf8' }).stdout ?? '';
+    const grepShim = shimCommand('pgrep', ['-f', 'opencode serve --service']);
+    const out = spawnSync(grepShim.cmd, grepShim.args, { encoding: 'utf8' }).stdout ?? '';
     live = out.split(/[\s,]+/).some((line: string) => /^\d+$/.test(line.trim()));
   } catch { live = false; }
   return { status, live };
@@ -310,7 +315,7 @@ async function fixPonytail(pluginsDir: string): Promise<void> {
     return;
   }
   await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-  await execNetwork('Restoring bundled Ponytail', 'npm', ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 }).catch((e) => {
+  await execNetwork('Restoring bundled Ponytail', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 }).catch((e) => {
     throw new Error(`bundled ponytail restore failed: ${(e as Error).message}`);
   });
 }
@@ -345,7 +350,8 @@ async function fixOpencodeService(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const bin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   if (!bin) { sayTagged('  [warn] opencode not found on PATH; start it with `opencode service start`'); return; }
-  await execNetwork('Starting the OpenCode service', bin, ['service', 'start'], { timeout: 60000 }).catch((e) => {
+  const shim = shimCommand(bin, ['service', 'start']);
+  await execNetwork('Starting the OpenCode service', shim.cmd, shim.args, { timeout: 60000 }).catch((e) => {
     throw new Error(`service start failed: ${shortError(e)}`);
   });
 }

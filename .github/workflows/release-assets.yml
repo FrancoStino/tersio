@@ -24,5 +24,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${GITHUB_REF_NAME}" install.sh tersio-npm.tgz --clobber --repo "${GITHUB_REPOSITORY}" \
-            || gh release create "${GITHUB_REF_NAME}" install.sh tersio-npm.tgz --generate-notes --repo "${GITHUB_REPOSITORY}"
+          gh release upload "${GITHUB_REF_NAME}" install.sh install.ps1 tersio-npm.tgz --clobber --repo "${GITHUB_REPOSITORY}" \
+            || gh release create "${GITHUB_REF_NAME}" install.sh install.ps1 tersio-npm.tgz --generate-notes --repo "${GITHUB_REPOSITORY}"

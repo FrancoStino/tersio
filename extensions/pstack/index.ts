@@ -7,9 +7,10 @@ import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue
 import { injectPromptText, onHostEvent, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus } from '../shared/status.ts';
 import { readPstackDefault } from '../shared/plugin-settings.ts';
+import { ruleDir } from '../shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
-const PSTACK_DIR = dirname(fileURLToPath(import.meta.url));
+const PSTACK_DIR = ruleDir('pstack', dirname(fileURLToPath(import.meta.url)));
 const RULE_FILE = 'rule.md';
 const DEFAULT_MODE = 'off';
 

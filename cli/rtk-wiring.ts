@@ -3,6 +3,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { shimCommand } from '../extensions/shared/utils.ts';
 export interface WiringOptions {
   dryRun?: boolean;
   quiet?: boolean;
@@ -21,16 +22,18 @@ function shortWiringError(e: unknown): string {
 }
 
 function execFileP(cmd: string, args: string[], timeout: number): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout, encoding: 'utf8' }, (err, stdout, stderr) => {
-      if (err) {
-        (err as Error & { stderr?: string }).stderr = String(stderr || '');
-        reject(err);
-      } else {
-        resolve({ stdout: String(stdout), stderr: String(stderr) });
-      }
-    });
+  const { promise, resolve, reject } = Promise.withResolvers<{ stdout: string; stderr: string }>();
+  // A `.cmd` shim cannot be spawned directly on Windows, so it runs through the shell.
+  const shim = shimCommand(cmd, args);
+  execFile(shim.cmd, shim.args, { timeout, encoding: 'utf8' }, (err, stdout, stderr) => {
+    if (err) {
+      (err as Error & { stderr?: string }).stderr = String(stderr || '');
+      reject(err);
+    } else {
+      resolve({ stdout: String(stdout), stderr: String(stderr) });
+    }
   });
+  return promise;
 }
 
 // Idempotent: rtk rewrites its file on every init run.
@@ -120,3 +123,4 @@ async function tryRtkInit(rtkBin: string, initArgs: string[]): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 2000));
   await execFileP(rtkBin, initArgs, 30000);
 }
+

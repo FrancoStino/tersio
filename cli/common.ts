@@ -1,6 +1,6 @@
 // cli/common.ts — shared foundation: CLI flags, paths, exec, file/config helpers.
 import { execFile } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
@@ -16,6 +16,10 @@ const OMP_AGENT_DIR = path.join(HOME, '.omp', 'agent');
 const OMP_PLUGINS_DIR = path.join(HOME, '.omp', 'plugins');
 const BUN_BIN_DIR = path.join(HOME, '.bun', 'bin');
 const OMP_BIN = IS_WINDOWS ? 'omp.cmd' : 'omp';
+// npm and bun are `.cmd` shims on Windows, and CreateProcess spawns neither a bare name nor a shim,
+// so the spawn name itself carries the extension the way `omp.cmd` does.
+const NPM_BIN = IS_WINDOWS ? 'npm.cmd' : 'npm';
+const BUN_BIN = IS_WINDOWS ? 'bun.cmd' : 'bun';
 
 const PACKAGE_NAME = '@krtclcdy/tersio';
 const PACKAGE_BIN = 'tersio';
@@ -148,8 +152,26 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/** Windows has no real `omp`, `npm`, or `pgrep`: `.cmd` shims throw EINVAL when spawned, so a bare name wraps through cmd.exe only when a `<name>.cmd` really sits on PATH. */
+export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
+  if (!IS_WINDOWS) return { cmd, args };
+  if (/\.(?:cmd|bat)$/i.test(cmd)) {
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+  }
+  if (hasCmdShim(cmd)) {
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+  }
+  return { cmd, args };
+}
+
+function hasCmdShim(cmd: string): boolean {
+  if (cmd.includes('/') || cmd.includes('\\')) return false;
+  return (process.env.PATH || '').split(path.delimiter).some((dir) => dir && existsSync(path.join(dir, `${cmd}.cmd`)));
+}
+
 async function execP(cmd: string, args: string[], opts: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-  return execFileP(cmd, args, {
+  const shim = shimCommand(cmd, args);
+  return execFileP(shim.cmd, shim.args, {
     timeout: opts.timeout || 120000,
     encoding: 'utf8',
     ...opts,
@@ -376,7 +398,7 @@ function relTime(ageMs: number): string {
   return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
 }
 export {
-  IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN,
+  IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,

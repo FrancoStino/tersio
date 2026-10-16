@@ -3,11 +3,15 @@ import { expect, test } from "vitest";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+// The filter spawns a shell for the `<` redirect, and Windows has no /bin/sh.
+const SHELL_INFO = filterShell();
 
 import rtkFilterExtension, {
   FILTER_BY_TOOL,
   MIN_FILTER_BYTES,
+  filterShell,
   filterThroughRtk,
   filterableText,
   rtkActive,
@@ -19,11 +23,12 @@ import { resetSharedComboState, setSharedComboMode } from "../../extensions/shar
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from "../../extensions/shared/types.ts";
 import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
-import { findFile, resolveRtkBinary, rtkPlatformSpec } from "../../extensions/shared/utils.ts";
+import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
-import { hasSqlite } from "../helpers/env.ts";
+import { fakeRtkBin, hasSqlite, withHome as inHome } from "../helpers/env.ts";
 
-process.env.HOME = new URL("../definitely-missing-home", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
+process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/rtk", import.meta.url));
 process.env.USERPROFILE = process.env.HOME;
 process.env.TERSIO_HOME = process.env.HOME;
 
@@ -32,9 +37,7 @@ process.env.TERSIO_HOME = process.env.HOME;
 /** A `rtk` file on PATH, so `resolveRtkBinary` finds a binary the stub exec never spawns. */
 function withFakeRtk(work: (dir: string) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(path.join(tmpdir(), "tersio-rtk-bin-"));
-  const bin = path.join(dir, "rtk");
-  writeFileSync(bin, "#!/bin/sh\nexit 0\n", "utf8");
-  chmodSync(bin, 0o755);
+  fakeRtkBin(dir);
   const previous = process.env.PATH;
   process.env.PATH = dir;
   return work(dir).finally(() => {
@@ -65,10 +68,47 @@ function harness(exec: FilterExec | undefined, entries: Entries = []) {
   rtkFilterExtension(api as unknown as ExtensionApi);
   const ctx = { hasUI: false, sessionManager: { getBranch: () => entries } } as ExtensionCtx;
   const has = (name: string): boolean => handlers.has(name);
-  return { fire: (event: ToolResultEvent) => handlers.get("tool_result")!(event, ctx), has };
+  return {
+    fire: (event: ToolResultEvent) => handlers.get("tool_result")!(event, ctx),
+    call: (event: { toolName?: string; input?: { command?: string } }) => handlers.get("tool_call")!(event, ctx),
+    has,
+  };
 }
 
 const grepEvent = (text: string): ToolResultEvent => ({ toolName: "grep", content: [{ type: "text", text }] });
+
+// Registered synchronously, so the first call of a fast session is covered: the rtk-init hook awaits a version probe first.
+test("a bash command is rewritten through rtk before it runs", async () => {
+  await withFakeRtk(async () => {
+    const seen: string[][] = [];
+    const h = harness(async (_cmd, args) => { seen.push(args); return { stdout: "rtk git status", stderr: "", code: 0 }; },
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const event = { toolName: "bash", input: { command: "git status" } };
+    await h.call(event);
+    expect(event.input.command).toBe("rtk git status");
+    expect(seen).toEqual([["rewrite", "git status"]]);
+  });
+});
+
+test("a command rtk leaves alone, and a mode-off session, keep the original", async () => {
+  await withFakeRtk(async () => {
+    const off = harness(async () => ({ stdout: "", stderr: "", code: 1 }), []);
+    const offEvent = { toolName: "bash", input: { command: "git status" } };
+    await off.call(offEvent);
+    expect(offEvent.input.command).toBe("git status");
+
+    const on = harness(async () => ({ stdout: "", stderr: "", code: 1 }),
+      [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
+    const onEvent = { toolName: "bash", input: { command: "journalctl -u nginx" } };
+    await on.call(onEvent);
+    expect(onEvent.input.command).toBe("journalctl -u nginx");
+
+    // An already-rewritten command must not gain a second prefix.
+    const twice = { toolName: "bash", input: { command: "rtk git status" } };
+    await on.call(twice);
+    expect(twice.input.command).toBe("rtk git status");
+  });
+});
 
 test("a grep result over the threshold is replaced by the rtk filter", async () => {
   await withFakeRtk(async () => {
@@ -82,13 +122,17 @@ test("a grep result over the threshold is replaced by the rtk filter", async () 
     const result = await h.fire(grepEvent(big())) as { content: Array<{ type: string; text: string }> };
 
     expect(result.content).toEqual([{ type: "text", text: "3 matches in 1F:\n  src/file.ts (3)\n" }]);
-    expect(calls[0].cmd, "an absolute shell, so a minimal PATH cannot break the spawn").toBe("/bin/sh");
-    expect(calls[0].args[0]).toBe("-c");
-    expect(calls[0].args[1]).toMatch(/pipe -f grep/);
+    // Windows has no /bin/sh, so the filter spawns cmd.exe there instead.
+    expect(calls[0].cmd, "an absolute shell, so a minimal PATH cannot break the spawn")
+      .toBe(SHELL_INFO.shell);
+    expect(calls[0].args.slice(0, SHELL_INFO.flags.length)).toEqual(SHELL_INFO.flags);
+    expect(calls[0].args[SHELL_INFO.flags.length]).toMatch(/pipe -f grep/);
+    expect(calls[0].args.at(-1)).toMatch(/< "/);
     // A hung filter must not stall the tool result.
     expect(calls[0].timeout).toBe(5000);
     // The payload file is removed, so the gathered text does not pile up in /tmp.
-    const redirected = calls[0].args[1].match(/< "([^"]+)"/);
+    const command = calls[0].args[SHELL_INFO.flags.length];
+    const redirected = command.match(/< "([^"]+)"/);
     expect(redirected, "the filter reads the payload from a file").not.toBeNull();
     expect(existsSync(redirected![1])).toBe(false);
   });
@@ -330,14 +374,12 @@ test.skipIf(!hasSqlite())("same command across repos folds into one row", () => 
 
 // Fake rtk binary: logs its argv beside it, exits with the given code; hermetic, never touches a real OMP dir.
 function fakeRtk(dir: string, code = 0): string {
-  const bin = path.join(dir, "rtk");
-  writeFileSync(bin, [
-    "#!/bin/sh",
-    `echo "$@" >> "${path.join(dir, "invocations.log")}"`,
-    `exit ${code}`,
-  ].join("\n"), "utf8");
-  chmodSync(bin, 0o755);
-  return bin;
+  // `echo %*>>"file"` is the batch idiom for appending the args, with no space before the redirect.
+  return fakeRtkBin(
+    dir,
+    [`echo "$@" >> "${path.join(dir, "invocations.log")}"`, `exit ${code}`],
+    `echo %*>> "${path.join(dir, "invocations.log")}"\nexit /b ${code}`,
+  );
 }
 
 function tempHome(): { dir: string; log: string } {
@@ -528,7 +570,7 @@ function withPath(value: string, work: () => Promise<void>): Promise<void> {
 function withRtkBinary(work: () => Promise<void>): Promise<void> {
   const binDir = path.join(process.env.HOME as string, ".bun", "bin");
   mkdirSync(binDir, { recursive: true });
-  writeFileSync(path.join(binDir, "rtk"), "#!/bin/sh\necho hi\n", { mode: 0o755 });
+  fakeRtkBin(binDir, ["echo hi"], "echo hi");
   return withPath("", work).finally(() => { rmSync(binDir, { recursive: true, force: true }); });
 }
 
@@ -628,7 +670,9 @@ test("a successful run returns combined output and no error", async () => {
     const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
     expect(r.isError).toBe(false);
     expect(text(r)).toBe("ok");
-    expect(seen).toEqual([["git", "status"]]);
+    // The exec is the shim the product builds, so the expectation comes from the same helper.
+    const bin = resolveRtkBinary() as string;
+    expect(seen).toEqual([shimCommand(bin, ["git", "status"]).args]);
   });
 });
 
@@ -642,8 +686,7 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
   await withPath("", async () => {
     const binDir = path.join(process.env.HOME as string, ".bun", "bin");
     mkdirSync(binDir, { recursive: true });
-    const fake = path.join(binDir, "rtk");
-    writeFileSync(fake, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    const fake = fakeRtkBin(binDir, ["echo hi"], "echo hi");
 
     const cmds: string[] = [];
     const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
@@ -652,13 +695,15 @@ test("the tool execs the resolved rtk path, not bare `rtk`", async () => {
     const r = await h.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, h.ctx);
 
     expect(r.isError).toBe(false);
-    expect(cmds).toEqual([fake]);
+    // A `.cmd` runs through the shell on Windows, so the exec name comes from the same helper.
+    expect(cmds).toEqual([shimCommand(fake, []).cmd]);
     rmSync(binDir, { recursive: true, force: true });
   });
 });
 
 test("rtk mode on with no installed binary reports it instead of guessing", async () => {
-  await withPath("", async () => {
+  // A fresh HOME, so a sibling test's managed `~/.bun/bin` cannot answer the resolver.
+  await inHome(() => withPath("", async () => {
     const cmds: string[] = [];
     const h = rtkToolHarness(async (cmd) => { cmds.push(cmd); return { stdout: "ok", stderr: "", code: 0, killed: false }; },
       [{ type: "custom", customType: "rtk-mode", data: { enabled: true } }]);
@@ -667,7 +712,7 @@ test("rtk mode on with no installed binary reports it instead of guessing", asyn
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/rtk binary is not installed/);
     expect(cmds).toEqual([]);
-  });
+  }));
 });
 
 
@@ -677,8 +722,7 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
   const binDir = path.join(process.env.HOME as string, ".bun", "bin");
   await withPath("", async () => {
     mkdirSync(binDir, { recursive: true });
-    const fake = path.join(binDir, "rtk");
-    writeFileSync(fake, "#!/bin/sh\necho hi\n", { mode: 0o755 });
+    const fake = fakeRtkBin(binDir, ["echo hi"], "echo hi");
     setSharedComboMode("rtk", "on");
     const cmds: string[] = [];
     // No session_start: this instance's own flag is still its start-up default.
@@ -687,7 +731,8 @@ test("rtk_run uses shared state when a late subagent's own flag is off", async (
     const r = await sub.tool.execute("1", { args: ["git", "status"] }, undefined, undefined, sub.ctx);
 
     expect(r.isError).toBe(false);
-    expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual([fake]);
+    // A `.cmd` runs through the shell on Windows, so the exec name comes from the same helper.
+    expect(cmds, "shared state turned rtk on, so the resolved path runs").toEqual([shimCommand(fake, []).cmd]);
     expect(r.details?.condensed).toBe(true);
     resetSharedComboState();
     rmSync(binDir, { recursive: true, force: true });

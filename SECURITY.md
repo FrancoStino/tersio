@@ -23,7 +23,7 @@ Tersio fetches two things from the network during install:
 
 | What | From | Verified by |
 |---|---|---|
-| `install.sh` | this repo's GitHub Release, `releases/latest/download/install.sh` | HTTPS to `github.com` |
+| `install.sh`, `install.ps1` | this repo's GitHub Release, `releases/latest/download/<file>` | HTTPS to `github.com` |
 | the `rtk` binary | the `rtk-ai/rtk` GitHub Release | SHA-256 against that release's `checksums.txt` |
 | the `ponytail` package | the npm registry | npm's integrity check on the published tarball |
 

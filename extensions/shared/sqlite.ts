@@ -1,9 +1,4 @@
-// One place that runs SQL against a database file. Bun and Node 22.5+ carry SQLite in process, so the
-// `sqlite3` binary is a fallback: hosts without it kept silently reading nothing. Reads return the sqlite3
-// CLI shape (one row per line, cells tab-joined, NULL an empty cell) because every caller parses that.
-// The write path leaves the journal mode alone: the schema sets WAL so a reader never blocks a writer,
-// and the pragma needs exclusive access, so with a reader holding the file it fails after the caller's
-// rows have already committed (see docs/ERRORS.md).
+// One place that runs SQL: Bun or Node 22.5+ in process, the `sqlite3` binary as the fallback, and rows in its CLI shape for every caller. The write path leaves the journal mode alone (see docs/ERRORS.md).
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';

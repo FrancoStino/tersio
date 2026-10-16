@@ -39,10 +39,17 @@ Use an agent daily and pay per token? This is for you. Use one a few times a wee
 
 All install paths in one table, with update and remove commands: [INSTALL.md](./INSTALL.md).
 
-**Default** (macOS/Linux/WSL) — one line. Installs the CLI via npm, then runs the main installer (scope + Combo preset menus) in the same pass:
+**Default** (macOS/Linux) — one line. Installs the CLI via npm, then runs the main installer (scope + Combo preset menus) in the same pass:
 
 ```bash
 curl -fsSL https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.sh | sh
+```
+
+**Windows** — the same pass through PowerShell. The piped form takes the defaults; the scriptblock form keeps the console, so it shows the menus and takes flags:
+
+```powershell
+irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex
+& ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1))) --npm
 ```
 
 Then run the CLI. Bare `tersio` opens a menu and asks which agent to install into:
@@ -74,13 +81,13 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 
 ### Requirements
 
-- [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — all three are supported; pick one with `tersio install --host <omp|pi|opencode>`
-- **Node.js 20.12+ with npm.** That is the requirement. The extensions load inside your host, the CLI runs under Node, and the package declares no Bun entry point
-- **Bun is optional.** The installer prefers it when it is on PATH and falls back to npm. `npm i -g` alone installs everything. Bun also supplies SQLite in process, which is its only effect on the code
-- SQLite comes from the runtime where it can: Bun, or Node 22.5+ through `node:sqlite`. An older Node needs the `sqlite3` binary on PATH, and every engine answers identically
-- macOS or Linux, native or WSL
-
-On Windows, use WSL. There is no native Windows path: the installer, the extensions, and the RTK wiring are tested on macOS and Linux only. WSL has its own home directory, so install from inside WSL — `command -v npm` must resolve to a Linux path, not `/mnt/c/`.
+| Need | Detail |
+|---|---|
+| Host | [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — `tersio install --host <omp\|pi\|opencode>` |
+| Node.js | 20.12+ with npm. The CLI runs under Node |
+| Bun | Optional. Preferred when on PATH, npm otherwise; also supplies SQLite in process |
+| SQLite | Bun, Node 22.5+ `node:sqlite`, or the `sqlite3` binary on PATH |
+| OS | macOS, Linux, or Windows, native (`install.ps1`). WSL works too, installed from inside it |
 
 ## 🖥️ CLI
 
@@ -159,9 +166,9 @@ An OMP install also registers the package in `~/.omp/plugins`, so it shows under
 
 **Ponytail or Combo command missing on OMP:** confirm `~/.omp/plugins/package.json` lists `@krtclcdy/tersio`, then run `tersio install`, restart OMP, and check `tersio doctor`. A damaged tree is repaired by `tersio doctor --fix extensions`.
 
-**RTK missing or not executable:** run `tersio install`, then `tersio doctor`. On Linux/macOS: `chmod +x ~/.bun/bin/rtk`.
+**RTK missing or not executable:** run `tersio install`, then `tersio doctor`. On Linux/macOS: `chmod +x ~/.bun/bin/rtk`. On Windows the binary is `rtk.exe`, and rtk publishes no `aarch64-pc-windows` build, so a Windows-on-ARM host has no rtk to install. The doctor's Platform row names this directly.
 
-**RTK savings and adoption:** the Gain numbers read rtk's own `history.db`, which the binary writes on every host, so pi and OpenCode runs are already in them. The adoption row counts executed Bash calls from all three stores: the omp and pi session transcripts, and OpenCode's v2 sqlite or pre-v2 JSON message tree. The eligible command list comes from `rtk rewrite` itself, cached per binary version. Native tool calls (`read`/`edit`/`eval`) stay out of RTK by design, and exact bytes bypass RTK.
+**RTK savings and adoption:** the Gain numbers read rtk's own `history.db` (`%LOCALAPPDATA%\rtk` on Windows), so pi and OpenCode runs are already in them. The adoption row counts executed Bash calls from the omp and pi transcripts and OpenCode's v2 sqlite or pre-v2 JSON tree. The eligible list comes from `rtk rewrite`, cached per binary version. Native tool calls (`read`/`edit`/`eval`) and exact bytes bypass RTK.
 
 **Checksum warning or failure:** the installer aborts on RTK checksum mismatch but warns and continues when checksum metadata is unavailable; `/tersio update rtk` aborts when metadata is missing.
 

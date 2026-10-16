@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
+import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, shimCommand, tersioDataPath } from './utils.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
 
@@ -105,6 +105,14 @@ export interface SessionTokens {
   recent: RecentRequest[];
 }
 
+export interface RtkHostAdoption {
+  bashCalls: number;
+  eligibleCalls: number;
+  rtkCalls: number;
+  missedCalls: number;
+  adoptionPct: number;
+}
+
 export interface RtkAdoption {
   sessions: number;
   bashCalls: number;
@@ -112,6 +120,8 @@ export interface RtkAdoption {
   rtkCalls: number;
   missedCalls: number;
   adoptionPct: number;
+  /** One entry per host that recorded bash calls, so a blended number cannot hide a host. */
+  byHost: Record<string, RtkHostAdoption>;
 }
 
 export interface RtkRecallDiagnostics {
@@ -708,6 +718,13 @@ function countBashCommands(commands: readonly string[], eligible: ReadonlySet<st
   }
 }
 
+interface PiToolCall {
+  type?: unknown;
+  name?: unknown;
+  id?: unknown;
+  arguments?: unknown;
+}
+
 function parseAdoptionFile(file: string, eligible: ReadonlySet<string>): { counts: BashCounts; sessions: number } {
   const counts: BashCounts = { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
   let text: string;
@@ -716,19 +733,44 @@ function parseAdoptionFile(file: string, eligible: ReadonlySet<string>): { count
   } catch {
     return { counts, sessions: 0 };
   }
+  // omp emits a custom row per tool start; pi records the same call inside the assistant message.
+  // A host that writes both shapes would double every call, so the custom ids gate the message pass.
   const commands: string[] = [];
+  const customIds = new Set<string>();
+  const messageCalls: Array<{ id: string | undefined; command: string }> = [];
   for (const line of text.split('\n')) {
-    if (!line.includes('tool_execution_start')) continue;
+    if (!line.includes('tool_execution_start') && !line.includes('"toolCall"')) continue;
     try {
       const row = JSON.parse(line) as {
-        type?: string;
-        customType?: string;
-        data?: { toolName?: unknown; args?: { command?: unknown } };
+        type?: unknown;
+        customType?: unknown;
+        data?: { toolCallId?: unknown; toolName?: unknown; args?: { command?: unknown } };
+        message?: { content?: unknown };
       };
-      if (row.type !== 'custom' || row.customType !== 'tool_execution_start' || row.data?.toolName !== 'bash') continue;
-      const command = row.data.args?.command;
-      if (typeof command === 'string') commands.push(command);
+      if (row.type === 'custom' && row.customType === 'tool_execution_start' && row.data?.toolName === 'bash') {
+        const command = row.data.args?.command;
+        if (typeof command !== 'string') continue;
+        if (typeof row.data.toolCallId === 'string') customIds.add(row.data.toolCallId);
+        commands.push(command);
+        continue;
+      }
+      const content = row.message?.content;
+      if (row.type !== 'message' || !Array.isArray(content)) continue;
+      for (const part of content) {
+        if (typeof part !== 'object' || part === null) continue;
+        const call: PiToolCall = part;
+        if (call.type !== 'toolCall' || call.name !== 'bash') continue;
+        const args = call.arguments;
+        if (typeof args !== 'object' || args === null || !('command' in args)) continue;
+        const command = args.command;
+        if (typeof command !== 'string') continue;
+        messageCalls.push({ id: typeof call.id === 'string' ? call.id : undefined, command });
+      }
     } catch { /* skip corrupt line */ }
+  }
+  for (const call of messageCalls) {
+    if (call.id !== undefined && customIds.has(call.id)) continue;
+    commands.push(call.command);
   }
   countBashCommands(commands, eligible, counts);
   return { counts, sessions: commands.length > 0 ? 1 : 0 };
@@ -736,6 +778,24 @@ function parseAdoptionFile(file: string, eligible: ReadonlySet<string>): { count
 
 export function clearRtkAdoptionCache(): void {
   adoptionFileCache.clear();
+}
+
+/** Rewrites the hook performed on hosts whose transcript records the pre-hook command, by host. */
+function countRtkAuditRows(): Record<string, number> {
+  const byHost: Record<string, number> = {};
+  let text: string;
+  try { text = fs.readFileSync(ledgerPath(), 'utf8'); } catch { return byHost; }
+  for (const line of text.split('\n')) {
+    if (!line.includes('rtk-audit')) continue;
+    try {
+      const row = JSON.parse(line) as { kind?: unknown; detail?: unknown };
+      if (row.kind !== 'rtk-audit' || typeof row.detail !== 'string') continue;
+      const host = row.detail.split(' ')[0];
+      if (!host) continue;
+      byHost[host] = (byHost[host] ?? 0) + 1;
+    } catch { /* skip corrupt line */ }
+  }
+  return byHost;
 }
 
 export function readRtkAdoption(): RtkAdoption {
@@ -753,6 +813,14 @@ export function readRtkAdoption(): RtkAdoption {
   let eligibleCalls = 0;
   let rtkCalls = 0;
   let sessions = 0;
+  const byHost: Record<string, BashCounts> = {};
+  const hostCounts = (host: string, counts: BashCounts): void => {
+    const into = byHost[host] ?? { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
+    into.bashCalls += counts.bashCalls;
+    into.eligibleCalls += counts.eligibleCalls;
+    into.rtkCalls += counts.rtkCalls;
+    byHost[host] = into;
+  };
   for (const file of files) {
     let stat: fs.Stats;
     try {
@@ -772,6 +840,7 @@ export function readRtkAdoption(): RtkAdoption {
     bashCalls += entry.counts.bashCalls;
     eligibleCalls += entry.counts.eligibleCalls;
     rtkCalls += entry.counts.rtkCalls;
+    hostCounts(hostOfSessionFile(file), entry.counts);
   }
   // OpenCode keeps its own store: a v2 sqlite db, or one JSON file per message before v2.
   const opencode: BashCounts = { bashCalls: 0, eligibleCalls: 0, rtkCalls: 0 };
@@ -795,8 +864,29 @@ export function readRtkAdoption(): RtkAdoption {
   eligibleCalls += opencode.eligibleCalls;
   rtkCalls += opencode.rtkCalls;
   sessions += opencodeSessions.size;
+  if (opencode.bashCalls > 0) hostCounts('opencode', opencode);
+  // The hook audit carries rewrites on pi and opencode, whose transcripts record the pre-hook command.
+  for (const [host, rows] of Object.entries(countRtkAuditRows())) {
+    rtkCalls += rows;
+    hostCounts(host, { bashCalls: 0, eligibleCalls: 0, rtkCalls: rows });
+  }
   const missedCalls = Math.max(0, eligibleCalls - rtkCalls);
-  return { sessions, bashCalls, eligibleCalls, rtkCalls, missedCalls, adoptionPct: eligibleCalls ? (rtkCalls / eligibleCalls) * 100 : 0 };
+  const host = (counts: BashCounts): RtkHostAdoption => ({
+    bashCalls: counts.bashCalls,
+    eligibleCalls: counts.eligibleCalls,
+    rtkCalls: counts.rtkCalls,
+    missedCalls: Math.max(0, counts.eligibleCalls - counts.rtkCalls),
+    adoptionPct: counts.eligibleCalls ? (counts.rtkCalls / counts.eligibleCalls) * 100 : 0,
+  });
+  return {
+    sessions,
+    bashCalls,
+    eligibleCalls,
+    rtkCalls,
+    missedCalls,
+    adoptionPct: eligibleCalls ? (rtkCalls / eligibleCalls) * 100 : 0,
+    byHost: Object.fromEntries(Object.entries(byHost).map(([name, counts]) => [name, host(counts)])),
+  };
 }
 export function processSessionText(accum: SessionAccum, state: { codexProvider: string | null; codexModel?: string | null }, text: string, host?: string, agent?: string): void {
   for (const line of text.split('\n')) {
@@ -829,15 +919,13 @@ export function processSessionText(accum: SessionAccum, state: { codexProvider: 
 export function readRtkRecallDiagnostics(binary: string | null = resolveRtkBinary()): RtkRecallDiagnostics {
   if (!binary) return { mode: 'unknown', entries: 0, available: false };
   try {
-    const configPath = process.env.RTK_CONFIG
-      || (process.platform === 'darwin'
-        ? path.join(homeDir(), 'Library', 'Application Support', 'rtk', 'config.toml')
-        : path.join(process.env.XDG_DATA_HOME || path.join(homeDir(), '.local', 'share'), 'rtk', 'config.toml'));
+    const configPath = process.env.RTK_CONFIG || path.join(rtkDirs().config, 'config.toml');
     let config = '';
     try { config = fs.readFileSync(configPath, 'utf8'); } catch { /* use RTK CLI fallback */ }
     const modeMatch = /^\s*mode\s*=\s*"(sqlite|tee|disabled)"/m.exec(config);
     const mode = (modeMatch?.[1] ?? 'unknown') as RtkRecallDiagnostics['mode'];
-    const output = execFileSync(binary, ['recall', '--list'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const shim = shimCommand(binary, ['recall', '--list']);
+    const output = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true });
     const entries = /\((\d+)\s+(?:entries?|stored)\)/i.exec(output)?.[1] ?? /^\s*(\d+)\s+entries?/im.exec(output)?.[1] ?? '0';
     return { mode, entries: Number(entries) || 0, available: true };
   } catch {

@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { cliEnv } from "../helpers/env.ts";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { cliEnv, fakeExecutable } from "../helpers/env.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -141,7 +141,8 @@ test("/ai-addons update ponytail without host exec still avoids npm", async () =
   expect(fakeCtx.shown.join("\n")).toMatch(/up to date|cannot fetch npm metadata/i);
 });
 
-const updateJs = path.join(root, "dist", "cli", "update.js").replace(/\\/g, "/");
+// A file:// URL, not a path: `import()` of `D:/...` reports protocol 'd:' on Windows.
+const updateJs = pathToFileURL(path.join(root, "dist", "cli", "update.js")).href;
 
 const PROBE = "import('" + updateJs + "').then(async (m) => {"
   + " const out = { cached: await m.checkForUpdate(), forced: await m.checkForUpdate(true) };"
@@ -154,9 +155,10 @@ function setup(fakeNpmBody: string, cache: unknown): { dir: string; env: Env } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-update-check-"));
   const bin = path.join(dir, "bin");
   mkdirSync(bin, { recursive: true });
-  const npm = path.join(bin, "npm");
-  writeFileSync(npm, fakeNpmBody, "utf8");
-  chmodSync(npm, 0o755);
+  // A shebang script on POSIX, a `.cmd` batch file on Windows, where the script cannot run.
+  // The batch body carries the same answer, so a registry probe reads the same on both.
+  const answered = /echo\s+9\.9\.9/.test(fakeNpmBody);
+  const npm = fakeExecutable(bin, "npm", fakeNpmBody, answered ? "echo 9.9.9" : "exit /b 1");
   const home = path.join(dir, "home");
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   if (cache !== null) {
