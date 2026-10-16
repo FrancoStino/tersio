@@ -1,7 +1,4 @@
-// Eligible command heads, taken from rtk's own contract rather than a hardcoded guess.
-// `rtk rewrite <probe>` prints a rewrite and exits 0 or 3 when rtk handles the command,
-// and exits 1 when no equivalent exists. Each probe below is a representative workload
-// command, because subcommand-scoped tools such as `gh` rewrite `gh pr list` but not `gh`.
+// Eligible heads come from rtk's own contract: `rtk rewrite <probe>` exits 0 or 3 when rtk handles the command, 1 when it has no equivalent.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -62,10 +59,7 @@ function rtkVersion(bin: string): string {
   }
 }
 
-/**
- * Heads rtk rewrites, cached per binary version so an upgrade re-derives once.
- * Without a binary, or on any read failure, the verified fallback stands.
- */
+/** Heads rtk rewrites, cached per binary version; without a binary, or on any read failure, the verified fallback stands. */
 export function eligibleHeads(bin: string | null): ReadonlySet<string> {
   if (!bin) return new Set(FALLBACK_ELIGIBLE_HEADS);
   const version = rtkVersion(bin);

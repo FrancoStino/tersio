@@ -350,9 +350,7 @@ function rmTree(dir: string): void {
   rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 
-/** The registered plugin at this version: the state a successful install leaves behind. A seeded rtk goes
- * with it, because an absent one makes every install download 18MB from GitHub, which the Windows runner
- * spends far longer on than the tree assertions these tests make. */
+/** The plugin state a successful install leaves, with a seeded rtk so no test downloads 18MB from GitHub. */
 function pluginPresent(home: string): void {
   const pkg = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
   mkdirSync(path.join(pkg, "extensions"), { recursive: true });

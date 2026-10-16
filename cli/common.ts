@@ -152,10 +152,7 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-/** Windows has no executable named `omp`, `npm`, or `pgrep`: they are `.cmd` shims, and spawning one
- * directly throws EINVAL since the CVE-2024-27980 fix. Route those through cmd.exe, as the npm calls
- * already do. A bare name wraps only when a `<name>.cmd` really sits on PATH, so a real `pgrep.exe`
- * from Git for Windows keeps running directly rather than behind a shell that would reinterpret `&`. */
+/** Windows has no real `omp`, `npm`, or `pgrep`: `.cmd` shims throw EINVAL when spawned, so a bare name wraps through cmd.exe only when a `<name>.cmd` really sits on PATH. */
 export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
   if (!IS_WINDOWS) return { cmd, args };
   if (/\.(?:cmd|bat)$/i.test(cmd)) {

@@ -108,9 +108,7 @@ function asPrice(v: unknown): ModelPrice | null {
 let liveCache: { path: string; mtime: number; size: number; prices: LivePrices } | null = null;
 
 export function loadLivePrices(): LivePrices | null {
-  // One stat per call beats one full parse: the recent-rows map prices thousands of rows.
-  // The key carries the size as well as the mtime, because Windows rounds the last-write time of
-  // rapid consecutive writes to one value: a hand edit or a test rewrite then reads as unchanged.
+  // One stat per call beats a full parse; the key carries size and mtime, because Windows rounds a rapid rewrite's mtime to one value.
   try {
     const file = pricesCachePath();
     const stat = fs.statSync(file);

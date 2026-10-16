@@ -118,9 +118,7 @@ function providerExpr(model: string): string {
   return `CASE WHEN instr(${model}, '/') = 0 THEN '' ELSE CASE ${named} ${cases} ELSE ${named} END END`;
 }
 
-/** SQL: the project a transcript belongs to, named by its session folder. A flat session tree uses its data dir.
- * The separator follows the stored path: omp and pi write `/`, a Windows run writes `\`, and a path
- * that mixes them (a Windows host storing forward slashes) slices on its session marker's own slash. */
+/** SQL: the project from a transcript's session folder; the separator follows the stored path, since a Windows run stores `\`. */
 function projectExpr(file: string): string {
   // Position of the session marker under either separator; 0 when the path has none.
   const posAt = `instr(${file}, '/sessions/')`;

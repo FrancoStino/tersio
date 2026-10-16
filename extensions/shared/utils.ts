@@ -26,17 +26,13 @@ export function homeDir(): string {
   return home && home.trim() !== '' ? home : os.homedir();
 }
 
-/** Windows has no executable for a `.cmd` or `.bat` file, and CreateProcess spawns neither one, so a
- * resolved path that lands on a shim has to run through the shell. The CLI's `execP` does the same.
- * A real `rtk.exe` and every POSIX binary pass through untouched. */
+/** Windows cannot run a `.cmd` or `.bat` directly, so a shim path goes through the shell; a real `.exe` or POSIX binary passes through. */
 export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
   if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };
   return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
 }
 
-/** rtk's own directories. Mirrors `user_dirs` in rtk's source: `config_dir()` for config.toml and
- * `data_local_dir()` for history.db, which differ on Windows (Roaming vs Local) and on Linux
- * (`~/.config` vs `~/.local/share`). A guess here silently empties the Gain charts. */
+/** rtk's own dirs: `config_dir()` for config.toml and `data_local_dir()` for history.db, which differ per platform; a guess here empties the Gain charts. */
 export function rtkDirs(): { data: string; config: string } {
   if (process.platform === 'darwin') {
     const base = path.join(homeDir(), 'Library', 'Application Support', 'rtk');

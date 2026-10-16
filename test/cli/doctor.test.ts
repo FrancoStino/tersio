@@ -490,9 +490,7 @@ function fakeOmp(dir: string, body: string): string {
   const bin = path.join(dir, "bin");
   mkdirSync(bin, { recursive: true });
   const lines = body.split("\n").map((line) => `# ${line}`).join("\n");
-  // The marker lives in the file text, which subagentMarkerStatus reads beside the version it runs,
-  // so both platform forms carry it. The explicit exit matters: `#` is not a batch comment, so without
-  // it cmd.exe exits non-zero and the probe throws.
+  // The marker lives in the file text, and the explicit exit matters: `#` is not a batch comment, so cmd.exe would exit non-zero and the probe would throw.
   fakeExecutable(bin, "omp", `# Fake omp for the subagent-marker check.\n${lines}\nexit 0`, `${lines}\nexit /b 0`);
   return bin;
 }
@@ -742,9 +740,7 @@ test("serviceRunning reads a URL answer as running", async () => {
   expect(serviceRunning("")).toBe(false);
 });
 
-// The manager reads stopped while the daemon still holds the port, so start and restart both exit 1.
-// `pgrep` names the live process, and Windows ships no pgrep: the probe reads stopped-and-dead there,
-// so the warning cannot be produced. Skipped rather than weakened.
+// The probe reads stopped-and-dead on Windows, which ships no pgrep, so the warning is unreachable there. Skipped rather than weakened.
 test.skipIf(isWindows())("doctor warns when a serve process outlives the service manager", () => {
   const home = missingHome();
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-oc-stale-"));

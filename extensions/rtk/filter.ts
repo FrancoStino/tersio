@@ -20,11 +20,8 @@ export const FILTER_BY_TOOL = new Map([
 export const MIN_FILTER_BYTES = 1200;
 const FILTER_TIMEOUT_MS = 5000;
 
-// A shell that understands `<`, resolved per platform: Windows has no /bin/sh, and the filter needs the redirect because `rtk pipe` reads stdin only.
-// Separate flags, not one packed element: Node quotes each argv element, and cmd.exe rejects `"/d /s /c"`.
-/** The shell for one pipe, and whether the whole command needs an extra quote pair around it.
- * `cmd.exe /s` strips the first and last quote of its command, so without the wrap a quoted binary
- * path and a quoted redirect path inside it lose that outer pair and cmd.exe reads them as literal. */
+// A shell that understands `<`, resolved per platform; separate flags, because Node quotes each argv element and cmd.exe rejects `"/d /s /c"`.
+/** The pipe's shell, and whether the whole command needs an extra quote pair: `cmd.exe /s` strips the outer one, so a quoted binary and redirect path must be wrapped. */
 export function filterShell(): { shell: string; flags: string[]; wrap: boolean } {
   return process.platform === 'win32'
     ? { shell: process.env.ComSpec || 'cmd.exe', flags: ['/d', '/s', '/c'], wrap: true }
