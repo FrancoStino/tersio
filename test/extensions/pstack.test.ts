@@ -19,6 +19,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 const tree = walk(PSTACK);
 const rel = (p: string): string => path.relative(PSTACK, p).replace(/\\/g, "/");
+const isProvenance = (l: string): boolean => /^\s*(?:\*\s*)?(?:Forked from|Source:)/.test(l);
 
 test("the tree ships a leaf per principle, a file per playbook, and every routed skill", () => {
   const principles = tree.filter((f) => /^principles\/.+\.md$/.test(rel(f)));
@@ -38,7 +39,6 @@ test("no Cursor-only surface survives anywhere in the tree", () => {
     // Cursor's control skills and helper scripts never ship in this tree, so naming them sends the model to a missing file.
     /control-ui/, /control-cli/, /agent-transcripts/, /scripts\/worktree-audit\.sh/, /scripts\/log\.sh/,
     /scripts\/watch-pr/, /scripts\/orch\//, /scripts\/check-plan\.mjs/];
-  const isProvenance = (l: string): boolean => /^\s*(?:\*\s*)?(?:Forked from|Source:)/.test(l);
   for (const f of tree) {
     for (const l of read(f).split("\n")) {
       if (isProvenance(l)) continue;
@@ -53,7 +53,6 @@ test("no port artifacts survive the Cursor-surface removal", () => {
   // The port stripped Cursor surface with a regex; these are the mangled shapes it left behind.
   const banned = [/skillsthe /, /\.\.\.the /, /\.\.the /, /the [\w-]+ skill`/, /`the [\w-]+ skill`/,
     /`the ask tool`/, /\/loop\b/, /\.cursor/, /\bCursor\b/, /cloud_base_branch/, /pstack-models\.mdc/, /\. \./];
-  const isProvenance = (l: string): boolean => /^\s*(?:\*\s*)?(?:Forked from|Source:)/.test(l);
   for (const f of tree) {
     const lines = read(f).split("\n");
     for (const l of lines) {
