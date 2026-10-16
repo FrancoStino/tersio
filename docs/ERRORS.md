@@ -41,10 +41,10 @@ The eleven entries below are editing and verification discipline. No test, lint 
 **Root cause:** The hook gates on `rtkActive`, which falls back to `readRtkDefault()`, false without a settings file. The test never stated its rtk state, so a sibling test had to set it first. Four test files also shared one `HOME`, so a worker could poison another's settings and usage ledger.
 **Prevention rule:** A test that reads session or settings state seeds it itself. Give each test file its own home.
 
-## 2026-10-16 — An edit whose old_string differed from the file in the comment opener
-**What happened:** The `ruleDir` insertion in `extensions/shared/utils.ts` used an `old_string` opening with `/**` on a line that opens with `//`. It matched anyway and left an unterminated block comment. `tsc` caught it at once.
-**Root cause:** The anchor came from a grep preview and the opener was typed from memory, so a token the fuzzy matcher tolerated disagreed with the file.
-**Prevention rule:** Read the exact target line before using it as an anchor. Never retype an anchor from a grep preview.
+## 2026-10-16 — Two edits whose old_string was retyped from a preview
+**What happened:** The `ruleDir` insertion in `extensions/shared/utils.ts` opened its anchor with `/**` where the file has `//`, which left an unterminated block comment; `tsc` caught it at once. Later, a comment collapse in `test/extensions/pstack.test.ts` retyped `\/watch-pr` as `/watch-pr`, silently turning two regexes into literals with invalid flags.
+**Root cause:** The anchor came from a grep or census preview, which trims whitespace and hides escapes, and it was typed from memory instead of read. The fuzzy matcher tolerated the difference, so the wrong text was written back.
+**Prevention rule:** Read the exact target lines before using them as an anchor, and never retype an anchor from a preview, because escapes are part of the text. Run `tsc --noEmit` and a comment-only diff audit after any edit that touches a comment, a regex, or a block boundary.
 
 ## 2026-10-15 — Windows test expectations written against the POSIX exec shape
 **What happened:** Four tests stayed red on the Windows runner across four consecutive CI rounds, one shape at a time. Each asserted a POSIX detail: the bare command and argv, a quote-free `echo`, and an LF line. The product spawns a `.cmd` shim through `cmd.exe`, so the exec name is the shell, the shell's own flags precede the args, `echo` keeps the quotes it was given, and a line ends with CRLF.
