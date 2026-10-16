@@ -19,10 +19,15 @@ The default one-liner installs the CLI and runs the setup menus (scope + Combo p
 curl -fsSL https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.sh | sh
 ```
 
-On Windows the same pass runs through PowerShell. The piped form installs and takes the defaults; run the script with its own arguments to get the menus:
+On Windows the same pass runs through PowerShell:
 
 ```powershell
 irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1 | iex
+```
+
+Passing flags needs the download wrapped in a scriptblock, because `iex` cannot take arguments:
+
+```powershell
 & ([scriptblock]::Create((irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1))) --npm
 ```
 
