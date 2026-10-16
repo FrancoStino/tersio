@@ -34,7 +34,17 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 ## The entries that stay
 
-The nine entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+The eleven entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+
+## 2026-10-16 — A test that inherited its precondition from a sibling test
+**What happened:** `test/extensions/session.test.ts > the bash hook rewrites a command through the resolved rtk binary` failed once in about seven full-suite runs, always passed inside its own file, and failed every time under `-t` in 7ms.
+**Root cause:** The hook gates on `rtkActive`, which falls back to `readRtkDefault()`, false without a settings file. The test never stated its rtk state, so a sibling test had to set it first. Four test files also shared one `HOME`, so a worker could poison another's settings and usage ledger.
+**Prevention rule:** A test that reads session or settings state seeds it itself. Give each test file its own home.
+
+## 2026-10-16 — An edit whose old_string differed from the file in the comment opener
+**What happened:** The `ruleDir` insertion in `extensions/shared/utils.ts` used an `old_string` opening with `/**` on a line that opens with `//`. It matched anyway and left an unterminated block comment. `tsc` caught it at once.
+**Root cause:** The anchor came from a grep preview and the opener was typed from memory, so a token the fuzzy matcher tolerated disagreed with the file.
+**Prevention rule:** Read the exact target line before using it as an anchor. Never retype an anchor from a grep preview.
 
 ## 2026-10-15 — Windows test expectations written against the POSIX exec shape
 **What happened:** Four tests stayed red on the Windows runner across four consecutive CI rounds, one shape at a time. Each asserted a POSIX detail: the bare command and argv, a quote-free `echo`, and an LF line. The product spawns a `.cmd` shim through `cmd.exe`, so the exec name is the shell, the shell's own flags precede the args, `echo` keeps the quotes it was given, and a line ends with CRLF.
