@@ -81,13 +81,13 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 
 ### Requirements
 
-- [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — all three are supported; pick one with `tersio install --host <omp|pi|opencode>`
-- **Node.js 20.12+ with npm.** That is the requirement. The extensions load inside your host, the CLI runs under Node, and the package declares no Bun entry point
-- **Bun is optional.** The installer prefers it when it is on PATH and falls back to npm. `npm i -g` alone installs everything. Bun also supplies SQLite in process, which is its only effect on the code
-- SQLite comes from the runtime where it can: Bun, or Node 22.5+ through `node:sqlite`. An older Node needs the `sqlite3` binary on PATH, and every engine answers identically
-- macOS, Linux, or Windows. Install from the environment where the host runs.
-- On Windows the install is native. Run `install.ps1` through PowerShell, as the getting-started section shows. WSL stays a supported option for a host that already runs there, but it is never required.
-- A host that runs inside WSL keeps its own home directory. Install from inside WSL when that is where the host runs, so `npm` resolves to a Linux path, not `/mnt/c/`.
+| Need | Detail |
+|---|---|
+| Host | [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — `tersio install --host <omp\|pi\|opencode>` |
+| Node.js | 20.12+ with npm. The CLI runs under Node |
+| Bun | Optional. Preferred when on PATH, npm otherwise; also supplies SQLite in process |
+| SQLite | Bun, Node 22.5+ `node:sqlite`, or the `sqlite3` binary on PATH |
+| OS | macOS, Linux, or Windows, native (`install.ps1`). WSL works too, installed from inside it |
 
 ## 🖥️ CLI
 
