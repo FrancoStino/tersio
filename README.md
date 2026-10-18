@@ -96,7 +96,6 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 | `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail) |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
-| `tersio reset` | Clear tersio statistics: usage ledger + a watermark that hides pre-reset rows from every derived view (Y/N confirm, `--dry-run`, `--yes`) — session transcripts and RTK history stay intact on disk |
 | `tersio reinstall` | Refresh one agent's install: pick it, reinstall, then verify (`--host` picks without asking) |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
@@ -158,7 +157,7 @@ omp merges the plugin manifest with the extension dir it discovers by default, s
 
 The installer writes `<file>.bak` before replacing an extension source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
 
-Settings -> **Data** covers the snapshots that can put this machine's data back. A restore takes a snapshot of the current state first, then copies the chosen one over the live files; it never deletes, and a delete never touches the live data. Each asks first and names what it moves. A file a snapshot does not hold is left alone.
+Settings -> **Data** covers the snapshots that can put this machine's data back. A restore takes a snapshot of the current state first, then copies the chosen one over the live files; it never deletes, and a delete never touches the live data. Each asks first and names what it moves. A file a snapshot does not hold is left alone. The same pane clears the statistics behind its own confirmation: it names the ledger and RTK rows a reset would take, then empties the ledger and hides what it summarised, while session transcripts, rtk history, and prices stay on disk.
 
 An OMP install also registers the package in `~/.omp/plugins`, so it shows under OMP **Settings → Plugins**. Active modes reassert after Ponytail's prompt block on every top-level turn, including after history compaction.
 

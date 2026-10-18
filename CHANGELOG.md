@@ -1,7 +1,10 @@
 ## Unreleased
 
+### Changed
+ - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
+
 ### Removed
- - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. Everything behind it stays: the ledger, the price list, `tersio reset`, and the in-session `/tersio usage` summary.
+ - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. The ledger, the price list, and the in-session `/tersio usage` summary stay.
 
 ## v2.25.9
 

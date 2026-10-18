@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reinstall, reset, settings, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reinstall, settings, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
@@ -10,7 +10,6 @@ import { runDoctor } from './cli/doctor.ts';
 import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
 import { runUpstream } from './cli/upstream.ts';
-import { runReset } from './cli/reset.ts';
 import { runSettings } from './cli/settings.ts';
 import { runDashboard } from './cli/dashboard.ts';
 
@@ -23,7 +22,6 @@ Commands:
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
-  reset        Clear tersio statistics (usage ledger)
   settings     View/change session-start defaults (combo, caveman, rtk, ponytail)
   uninstall    Remove the managed extensions
   version      Print the package version
@@ -95,11 +93,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (reset) {
-    await runReset();
-    closeRL();
-    return;
-  }
 
   if (settings) {
     await runSettings();

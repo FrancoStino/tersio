@@ -23,6 +23,7 @@ import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
+import { resetCounts, resetStatistics } from './reset.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
@@ -557,6 +558,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         backups: listDataBackups(),
         schedule: readBackupSchedule(),
         bytes: backupDiskBytes(),
+        reset: resetCounts(),
       }));
       return;
     }
@@ -579,6 +581,12 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           const ok = restoreDataBackup(name);
           res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          return;
+        }
+        if (action === 'reset') {
+          const done = resetStatistics();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...done }));
           return;
         }
         if (action === 'delete') {

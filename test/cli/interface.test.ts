@@ -710,7 +710,7 @@ for (const alias of [["help"], ["--help"], ["-h"]]) {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/^Usage:/);
-    for (const command of ["install", "update", "doctor", "uninstall", "dashboard", "reset", "settings", "version", "help"]) {
+    for (const command of ["install", "update", "doctor", "uninstall", "dashboard", "settings", "version", "help"]) {
       expect(result.stdout).toMatch(new RegExp(`^  ${command}\\s`, "m"));
     }
     expect(result.stderr).toBe("");
@@ -1004,121 +1004,6 @@ test("gain is no longer a public dashboard command", () => {
   expect(result.status).toBe(1);
   expect(result.stderr).toMatch(/Unknown command: gain/);
   expect(existsSync(path.join(os.tmpdir(), "tersio-obsolete-gain.html"))).toBe(false);
-});
-
-test("reset --dry-run keeps the seeded ledger", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-reset-"));
-  const ledger = path.join(dir, "usage.jsonl");
-  writeFileSync(ledger, '{"ts":1,"kind":"command","detail":"x"}\n{"ts":2,"kind":"toggle","detail":"y"}\n', "utf8");
-  const result = spawnSync(process.execPath, [installer, "reset", "--dry-run"], {
-    encoding: "utf8",
-    cwd: root,
-    input: "n\n",
-    env: {
-      ...process.env,
-      TERSIO_USAGE_FILE: ledger,
-      TERSIO_RESET_FILE: path.join(dir, "reset.json"),
-      TERSIO_SESSIONS_DIR: path.join(dir, "no-sessions"),
-      TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-      TERSIO_USAGE_DB: path.join(dir, "no-usage.db"),
-    },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Will clear: 2 usage ledger rows/);
-  expect(result.stdout).toMatch(/\[dry-run\] nothing written/);
-  expect(existsSync(ledger)).toBe(true);
-});
-
-test("reset --yes clears the seeded ledger and writes the watermark", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-reset-"));
-  const ledger = path.join(dir, "usage.jsonl");
-  const marker = path.join(dir, "reset.json");
-  writeFileSync(ledger, '{"ts":1,"kind":"command","detail":"x"}\n', "utf8");
-  const result = spawnSync(process.execPath, [installer, "reset", "--yes"], {
-    encoding: "utf8",
-    cwd: root,
-    env: {
-      ...process.env,
-      TERSIO_USAGE_FILE: ledger,
-      TERSIO_RESET_FILE: marker,
-      TERSIO_SESSIONS_DIR: path.join(dir, "no-sessions"),
-      TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-      TERSIO_USAGE_DB: path.join(dir, "no-usage.db"),
-    },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/\[ok\] reset — removed 1 usage rows; statistics view starts at /);
-  expect(existsSync(ledger)).toBe(false);
-  expect(existsSync(marker)).toBe(true);
-});
-
-test("reset asks Y/N and aborts without writing on N", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-reset-"));
-  const ledger = path.join(dir, "usage.jsonl");
-  const marker = path.join(dir, "reset.json");
-  writeFileSync(ledger, '{"ts":1,"kind":"command","detail":"x"}\n', "utf8");
-  const result = spawnSync(process.execPath, [installer, "reset"], {
-    encoding: "utf8",
-    cwd: root,
-    input: "n\n",
-    env: {
-      ...process.env,
-      TERSIO_USAGE_FILE: ledger,
-      TERSIO_RESET_FILE: marker,
-      TERSIO_SESSIONS_DIR: path.join(dir, "no-sessions"),
-      TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-      TERSIO_USAGE_DB: path.join(dir, "no-usage.db"),
-    },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Proceed\? \[y\/N\]/);
-  expect(result.stdout).toMatch(/Aborted\./);
-  expect(existsSync(ledger), "ledger kept on abort").toBe(true);
-  expect(existsSync(marker), "no watermark written on abort").toBe(false);
-});
-
-test("reset accepts lowercase y and writes the watermark", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-reset-"));
-  const ledger = path.join(dir, "usage.jsonl");
-  const marker = path.join(dir, "reset.json");
-  writeFileSync(ledger, '{"ts":1,"kind":"command","detail":"x"}\n', "utf8");
-  const result = spawnSync(process.execPath, [installer, "reset"], {
-    encoding: "utf8",
-    cwd: root,
-    input: "y\n",
-    env: {
-      ...process.env,
-      TERSIO_USAGE_FILE: ledger,
-      TERSIO_RESET_FILE: marker,
-      TERSIO_SESSIONS_DIR: path.join(dir, "no-sessions"),
-      TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-      TERSIO_USAGE_DB: path.join(dir, "no-usage.db"),
-    },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/\[ok\] reset — removed 1 usage rows/);
-  expect(existsSync(ledger)).toBe(false);
-  expect(existsSync(marker)).toBe(true);
-});
-
-test("reset --yes on empty stores prints nothing-to-reset without prompting", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-reset-"));
-  const ledger = path.join(dir, "usage.jsonl");
-  const result = spawnSync(process.execPath, [installer, "reset", "--yes"], {
-    encoding: "utf8",
-    cwd: root,
-    env: {
-      ...process.env,
-      TERSIO_USAGE_FILE: ledger,
-      TERSIO_RESET_FILE: path.join(dir, "reset.json"),
-      TERSIO_SESSIONS_DIR: path.join(dir, "no-sessions"),
-      TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-      TERSIO_USAGE_DB: path.join(dir, "no-usage.db"),
-    },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Nothing to reset — no statistics recorded/);
-  expect(existsSync(ledger)).toBe(false);
 });
 
 test("doctor prints record store paths", () => {

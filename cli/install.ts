@@ -20,7 +20,6 @@ import { printWelcome } from './banner.ts';
 import { checkForUpdate, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
 import { runDoctor } from './doctor.ts';
-import { runReset } from './reset.ts';
 import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
@@ -578,7 +577,6 @@ async function runCommandMenu(): Promise<void> {
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'settings', label: 'Settings', hint: 'default combo mode, currency, diagnosis schedule' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
-    { value: 'reset', label: 'Reset statistics', hint: 'clear statistics; transcripts and RTK history stay' },
     { value: 'uninstall', label: 'Uninstall', hint: 'remove tersio' },
   ], 'install');
   if (choice.status !== 'selected') {
@@ -632,10 +630,6 @@ async function runCommandMenu(): Promise<void> {
       break;
     case 'dashboard':
       await runDashboard({ port: dashboardPort, open: true, exportFile: dashboardExport, currency });
-      closeRL();
-      break;
-    case 'reset':
-      await runReset();
       closeRL();
       break;
     case 'uninstall':

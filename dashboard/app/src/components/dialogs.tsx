@@ -1,5 +1,6 @@
 // Settings dialog: theme, accent, currency, doctor.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -205,12 +206,16 @@ function DataPane() {
   const [asking, setAsking] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The reset confirm. The counts come from the data payload, so the dialog names them. */
+  const [resetting, setResetting] = useState(false);
+  const [counts, setCounts] = useState<{ rows: number; rtk: number } | null>(null);
 
   const load = useCallback(() => {
     fetch("/api/data")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { backups?: DataBackupRow[]; schedule?: string; keep?: number; dir?: string } | null) => {
+      .then((d: { backups?: DataBackupRow[]; schedule?: string; keep?: number; dir?: string; reset?: { rows: number; rtk: number } } | null) => {
         setBackups(d?.backups ?? []);
+        setCounts(d?.reset ?? null);
         if (d?.schedule) setSchedule(d.schedule);
         if (typeof d?.keep === "number") setKeep(d.keep);
         if (d?.dir) setDir(d.dir);
@@ -303,6 +308,24 @@ function DataPane() {
       .catch(() => toast("Delete failed", "The dashboard server did not answer.", "circle-alert"));
   };
 
+  const doReset = (): void => {
+    // The action closes its own dialog, the way the snapshot confirms do.
+    setResetting(false);
+    void fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset" }),
+    })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; rows?: number; db?: number; error?: string }) => {
+        if (d?.ok) {
+          toast("Statistics cleared", `${d.rows ?? 0} usage rows${(d.db ?? 0) > 0 ? " and usage.db" : ""}. Reload to see the reset view.`, "check");
+          load();
+        } else toast("Reset failed", d?.error ?? "The server did not answer.", "circle-alert");
+      })
+      .catch(() => toast("Reset failed", "The dashboard server did not answer.", "circle-alert"));
+  };
+
   const target = (backups ?? []).find((b) => b.name === asking) ?? null;
   const doomed = (backups ?? []).find((b) => b.name === confirming) ?? null;
   /** The footer works on the picked row, unless a restore confirm owns the screen. */
@@ -363,7 +386,7 @@ function DataPane() {
         icon="layers"
         description="Newest first. One file each. A restore copies its contents over the live data."
         footer={
-          asking ? null : (
+          (
             <>
               <span className="mono min-w-0 flex-1 truncate text-[11px] text-dim">
                 {chosen ? dataStamp(chosen.mtime) : "Pick a snapshot to restore or delete it."}
@@ -431,67 +454,92 @@ function DataPane() {
         )}
       </Card>
 
-      {asking && target && (
-        <div className="rounded-[10px] border border-warn-border bg-warn-soft px-3.5 py-2.5" role="alertdialog" aria-label="Confirm restore">
-          <p className="m-0 text-[13px] font-semibold">Restore {dataStamp(target.mtime)}?</p>
-          <p className="mt-1 mb-0 text-xs text-dim">
-            Everything in it is copied over the live data: {target.members.map((f) => f.label).join(", ")}. A file
-            the snapshot lacks is left alone. The dashboard needs a reload afterwards.
-          </p>
-          <div className="mt-2.5 flex items-center gap-2">
-            <Button
-              size="sm"
-              className="mono h-8 gap-1.5 rounded-xl"
-              disabled={busy}
-              onClick={() => restore(target.name)}
-              aria-label="Restore this snapshot"
-            >
-              <Icon name="database" className="size-3.5" />
-              Restore
-            </Button>
-            <button
-              type="button"
-              className="mono rounded-xl px-2.5 py-1.5 text-xs text-dim hover:bg-track"
-              onClick={() => setAsking(null)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {confirming && doomed && (
-        <div
-          className="rounded-[10px] border border-danger-border bg-danger-soft px-3.5 py-2.5"
-          role="alertdialog"
-          aria-label="Confirm delete"
-        >
-          <p className="m-0 text-[13px] font-semibold">Delete {dataStamp(doomed.mtime)}?</p>
-          <p className="mt-1 mb-0 text-xs text-dim">
-            One file goes with it — {doomed.members.map((f) => f.label).join(", ")}. The live data stays as it is.
-            A snapshot the backup schedule never keeps again has to be taken by hand.
-          </p>
-          <div className="mt-2.5 flex items-center gap-2">
+      <Card
+        title="Reset statistics"
+        icon="rotate-ccw"
+        description="Clears the ledger and every figure the pages derive from it."
+        footer={
+          <>
+            <span className="mono min-w-0 flex-1 truncate text-[11px] text-dim">
+              {counts && (counts.rows > 0 || counts.rtk > 0)
+                ? `${counts.rows} ledger rows · ${counts.rtk} RTK rows`
+                : "Nothing to clear yet."}
+            </span>
             <Button
               size="sm"
               variant="destructive"
               className="mono h-8 gap-1.5 rounded-xl"
-              onClick={() => remove(doomed.name)}
-              aria-label="Delete this snapshot"
+              onClick={() => setResetting(true)}
+              aria-label="Reset statistics"
             >
-              <Icon name="trash" className="size-3.5" />
-              Delete
+              <Icon name="rotate-ccw" className="size-3.5" />
+              Reset
             </Button>
-            <button
-              type="button"
-              className="mono rounded-xl px-2.5 py-1.5 text-xs text-dim hover:bg-track"
-              onClick={() => setConfirming(null)}
-            >
-              Keep it
-            </button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+      >
+        <p className="m-0 text-xs text-dim">
+          Nothing leaves the disk: session transcripts, rtk history, snapshots, and prices stay. The ledger is
+          emptied and its rows stop counting, so every page that derives from them starts empty.
+        </p>
+      </Card>
+
+      <AlertDialog open={asking !== null} onOpenChange={(open) => { if (!open) setAsking(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore this snapshot?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {target
+                ? `Everything in ${dataStamp(target.mtime)} is copied over the live data: ${target.members.map((f) => f.label).join(", ")}. A file the snapshot lacks is left alone, and the dashboard needs a reload afterwards.`
+                : "That snapshot is no longer in the list."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={busy || !target} onClick={() => target && restore(target.name)}>
+              Restore
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirming !== null} onOpenChange={(open) => { if (!open) setConfirming(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this snapshot?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {doomed
+                ? `One file goes with it — ${doomed.members.map((f) => f.label).join(", ")}. The live data stays as it is, and the backup schedule only keeps ${keep} snapshots, so this one has to be taken by hand next time.`
+                : "That snapshot is no longer in the list."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => doomed && remove(doomed.name)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={resetting} onOpenChange={setResetting}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Tersio statistics?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {counts
+                ? `${counts.rows} usage ledger rows and ${counts.rtk} RTK metered rows stop counting, and every page that derives from them starts empty.`
+                : "Every page that derives from the ledger starts empty."} Session transcripts, rtk history, snapshots, and prices stay on disk.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={doReset}>
+              Reset statistics
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

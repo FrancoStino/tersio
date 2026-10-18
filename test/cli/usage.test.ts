@@ -23,6 +23,7 @@ import {
   newSessionAccum,
   priceFor,
   readRtkAdoption,
+  readResetWatermark,
   readUsage,
   usdCost,
 } from "../../extensions/shared/usage-ledger.ts";
@@ -48,6 +49,7 @@ import {
   readSnapshotMember,
   restoreDataBackup,
 } from "../../extensions/shared/snapshots.ts";
+import { resetCounts, resetStatistics } from "../../cli/reset.ts";
 import { FX_SNAPSHOT_RATES, convertUsd, formatCurrency } from "../../cli/currency.ts";
 import { offsetFrom } from "../../cli/dashboard.ts";
 import { FX_SNAPSHOT } from "../../dashboard/app/src/lib/format.ts";
@@ -87,6 +89,31 @@ function sandbox(): { dir: string; cleanup: () => void } {
     },
   };
 }
+
+test("a reset clears the ledger and writes the watermark the views read", () => {
+  const box = sandbox();
+  const prevFile = process.env.TERSIO_USAGE_FILE;
+  const prevReset = process.env.TERSIO_RESET_FILE;
+  try {
+    const ledger = path.join(box.dir, "usage.jsonl");
+    const marker = path.join(box.dir, "reset.json");
+    process.env.TERSIO_USAGE_FILE = ledger;
+    process.env.TERSIO_RESET_FILE = marker;
+    writeFileSync(ledger, '{"ts":1,"kind":"command","detail":"x"}\n{"ts":2,"kind":"toggle","detail":"y"}\n', "utf8");
+
+    expect(resetCounts().rows).toBe(2);
+    const done = resetStatistics();
+
+    expect(done.rows).toBe(2);
+    expect(existsSync(ledger), "the ledger is emptied, not left behind").toBe(false);
+    expect(readResetWatermark(), "the watermark is what the views read").toBe(done.ts);
+    expect(resetCounts().rows).toBe(0);
+  } finally {
+    if (prevFile === undefined) delete process.env.TERSIO_USAGE_FILE; else process.env.TERSIO_USAGE_FILE = prevFile;
+    if (prevReset === undefined) delete process.env.TERSIO_RESET_FILE; else process.env.TERSIO_RESET_FILE = prevReset;
+    box.cleanup();
+  }
+});
 
 function seedSnapshot(name: string, body: string): string {
   mkdirSync(backupDir(), { recursive: true });
