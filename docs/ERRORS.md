@@ -337,3 +337,9 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** Rewriting the release notes replaced the `## Unreleased` block with the new text plus `lines[44:]`, while the `## v2.25.8` heading sat at index 43. That single line was dropped and pushed, so the v2.25.8 entries read as part of v2.25.9 until the user asked where v2.25.8 had gone.
 **Root cause:** The assertion checked `lines[43] == '## v2.25.8'` and the slice then started at 44. The check proved where the boundary was; the slice did not use that index.
 **Prevention rule:** When a script cuts a file at a checked index, reuse that same index in the slice, and after writing, grep the result for the structure that must survive: `rtk grep -n '^## v' CHANGELOG.md` costs one command and would have caught this before the commit.
+
+## 2026-10-19 — A CLI smoke run hit the real HOME and installed
+
+**What happened:** While removing `tersio usage`, a smoke run of `node dist/tersio.js usage` fell through to the bare-run installer and installed Tersio into the operator's real `~/.omp`, because the command had been removed from the dispatch but not yet from the `COMMANDS` guard list.
+**Root cause:** The smoke used the ambient HOME, and an unknown command shares one fall-through path with the bare run, so a half-removed command installs instead of failing.
+**Prevention rule:** Point HOME at a temp dir for every CLI smoke, the way `cliEnv` does in the tests. Remove a command from `COMMANDS` and from its dispatch in the same pass, and check the unknown path exits 1 before running anything else.
