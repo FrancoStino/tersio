@@ -540,7 +540,7 @@ function screenAt(rows: number): string[] {
     cwd: root,
     encoding: "utf8",
     timeout: 30000,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: { ...process.env, TERM: "xterm-256color", TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-screen-")) },
   });
   expect(result.status, result.stderr).toBe(0);
   const lines = JSON.parse(result.stdout) as string[];
@@ -559,7 +559,7 @@ function screenAtCi(rows: number): string[] {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: { ...process.env, TERM: "xterm-256color", CI: "true", PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
+      env: { ...process.env, TERM: "xterm-256color", CI: "true", TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-screen-")), PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
     });
     expect(result.status, result.stderr).toBe(0);
     return JSON.parse(result.stdout) as string[];
@@ -578,7 +578,7 @@ function screenAtUpdate(rows: number): string[] {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: { ...process.env, TERM: "xterm-256color", PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
+      env: { ...process.env, TERM: "xterm-256color", TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-screen-")), PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
     });
     expect(result.status, result.stderr).toBe(0);
     return JSON.parse(result.stdout) as string[];
@@ -630,7 +630,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
   test("the combo is a header line, not a menu option", () => {
     const lines = screenAt(30);
     const titleAt = lines.findIndex((l) => l.includes("what next?"));
-    const comboAt = lines.findIndex((l) => l.includes("combo "));
+    const comboAt = lines.findIndex((l) => l.includes("COMBO "));
     const firstOptionAt = lines.findIndex((l) => l.includes("Install add-ons"));
 
     expect(titleAt, "title present").toBeGreaterThan(-1);
@@ -695,6 +695,7 @@ function cliRun(...args: string[]) {
     cwd: root,
     encoding: "utf8",
     timeout: 10000,
+    env: { ...process.env, TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-cli-")) },
   });
 }
 
