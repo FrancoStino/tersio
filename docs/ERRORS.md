@@ -34,7 +34,43 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 ## The entries that stay
 
-The eleven entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+The entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
+
+## 2026-10-18 — An additive column was skipped because the early return came first
+**What happened:** `ensureSchema` returned as soon as a store matched the current `PARSER_VERSION`, so `tc` was never added to this machine's store. The sync reported success and wrote no tool facts for 17,516 rows, and the fix looked broken when it was only unreached.
+**Root cause:** The additive path sat after two early returns written when one additive column existed. Adding a third column did not revisit the control flow that guards it.
+**Prevention rule:** When you add a column, read the whole schema path, including every branch that returns before the migration. A store already at the current version still needs the new column.
+
+## 2026-10-18 — The marker for a backfill was written by a different backfill
+**What happened:** `tool_facts` never landed in `meta`, so every `tersio usage` run re-read all 566 transcripts. The marker write was copied from `ttft_backfill`'s block, which only runs when `changed.length > 0`.
+**Root cause:** Two backfills shared one trigger and one write site. Adding the second marker to the first one's condition made it look wired when it was not.
+**Prevention rule:** A backfill marker is written in the same statement group that fills its column. Verify the marker after one run, not only the column count.
+
+## 2026-10-18 — A stale server survived `pkill` and served the old build twice
+**What happened:** After the `tc` fix, the API still returned the old span `entryId`, and the tool drawer still opened the parent message. `pkill -f "tersio.js dashboard"` matched nothing, because the running process was `tersio dashboard` (a bin shim), not the node script path. Two restarts read the stale process.
+**Root cause:** The kill pattern named the command line I typed, not the command line the process has. A port that answers is not evidence of which build answers.
+**Prevention rule:** Find the listener by port (`lsof -nP -iTCP:<port> -sTCP:LISTEN`), kill that pid, and confirm the port is free before starting a new server. Verify a build-sensitive API field after every restart, not only the page.
+
+## 2026-10-18 — The UI was read from a server running the old build
+**What happened:** The Tools page still read zero after the fix. The dashboard process had started before the build, so it served the old module. A fresh server showed the real figures.
+**Root cause:** The page and the code under test were not the same build. The test suite passed against the new code while the browser read the old one.
+**Prevention rule:** After a build, restart the long-running server before reading its UI. A port that answers is not evidence that it answers from the new code.
+
+## 2026-10-17 — A guard was removed to prove a test, and the test proved nothing
+**What happened:** The new prune test passed with the guard removed, then failed with the guard restored. Both runs were meaningless. The sabotage changed `describe()`'s caller, not the check under test: a corrupted body still satisfied `describe()`, because a listing reads the header alone. The property the test claimed to pin was never implemented.
+**Root cause:** The falsification patch was written from an assumption about where the guard lived. It ran, the test changed color, and the color change was read as evidence.
+**Prevention rule:** Read the guard in the source before you remove it, and state in one line which behavior the removal changes. A sabotage that leaves behavior identical proves nothing, and a test that fails with the guard restored is a bug report, not a falsification.
+**Also:** the temporary patch went through a `perl` one-liner instead of the edit tool. Use the edit tool for every file change, temporary ones included, so the diff stays reviewable.
+
+## 2026-10-17 — A snapshot read as unreadable because the listing compared two different sizes
+**What happened:** The first run of the new `.snap` tests failed with `one file on disk: expected false to be true`, and the file was gone from disk. `createDataBackup()` reported success, then `listDataBackups()` returned nothing, and `pruneBackups()` had deleted every fresh snapshot as debris.
+**Root cause:** `describe()` accepted a file only when `file.size === headerBytes + bodyBytes`, and `bodyBytes` is the gunzip output length. The on-disk size counts the *packed* body, so the comparison failed for every snapshot. The header carried only one size, so no field held the number the check needed.
+**Prevention rule:** When a check compares a stored file against a number in its own header, store the number the check reads: `packedBytes` is the body length as written. Any listing test must assert the file still exists after a write, not only that the write returned an object.
+
+## 2026-10-17 — A test fixture computed its source list before configuring it
+**What happened:** `sandboxSources()` called `dataSources()` first and then pointed the env vars at the sandbox. `dataSources()` deduplicates by path and merges labels, so the unsandboxed ledger and the agent stats store collapsed into one label, the label lookup missed, and the helper wrote no ledger file at all. Four tests then failed with a missing `Usage ledger` member.
+**Root cause:** The fixture derived its list of destinations from the state it was about to change. The dedup made the earlier call return a different shape than the later one.
+**Prevention rule:** A fixture sets the environment first, then reads the code under test. Never key a fixture on a label the code may merge or rename; write to the resolved path instead.
 
 ## 2026-10-16 — A test that inherited its precondition from a sibling test
 **What happened:** `test/extensions/session.test.ts > the bash hook rewrites a command through the resolved rtk binary` failed once in about seven full-suite runs, always passed inside its own file, and failed every time under `-t` in 7ms.

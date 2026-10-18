@@ -25,8 +25,8 @@ Tersio installs into Oh My Pi, pi, or OpenCode, and cuts those costs:
 | Mode | What it does for you |
 |---|---|
 | 🪨 **Caveman** | Shorter replies. Answer first, filler gone, and code, commands, paths, and errors stay exact. |
-| ⚡ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
-| 🦥 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
+| 🗜️ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
+| 🧠 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
 | 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. |
 | 🧩 **Combo** | One command sets all of the above, at three strengths. |
 | 📊 **Dashboard** | What you spent, per model and per day. |
@@ -109,7 +109,7 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 Mode switches live on their own commands; bare `/tersio` prints status. Every mode command, and every session start, prints the status line:
 
 ```
-🧩 combo MAX: 🪨caveman=ULTRA ⚡rtk=ON 🦥ponytail=ULTRA 🥔pstack=ON
+🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON
 ```
 
 It is display-only — it never enters the model context, so it costs the session nothing.
@@ -138,10 +138,12 @@ Shared, and identical for every host:
 | Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, and the display currency |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
+| Session state | `~/.tersio/state.json` — reset watermark, update check, rtk heads, and the doctor report |
+| Upstream scorecard | `~/.tersio/upstream/` — `scorecard.json`, `scorecard.md`, and the cached trees |
 | `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
 | Model prices | `~/.tersio/prices.json` caches LiteLLM's feed; `~/.tersio/prices.local.json` is yours, keyed by model id or a `*` gateway prefix, and it wins over the feed. `tersio usage` prints an `Unpriced` line naming the keys to add. |
 | Price sources | The host's own reported cost first, then `prices.local.json`, then the LiteLLM cache, then a default table the report labels a guess. A recorded zero is a real zero. A model counts as host-priced only when every message carried a cost. |
-| Data snapshots | `~/.tersio/backups/` — one directory per snapshot with a `manifest.json`; six are kept |
+| Data snapshots | `~/.tersio/backups/` — one `.snap` file per snapshot, checked against its own hash, six kept |
 
 Per host, written by `tersio install --host <omp|pi|opencode>`:
 
@@ -157,7 +159,7 @@ omp merges the plugin manifest with the extension dir it discovers by default, s
 
 The installer writes `<file>.bak` before replacing an extension source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
 
-Settings -> **Data** covers the snapshots that can put this machine's data back. A restore never deletes and a delete never touches the live data; each asks first and names the files it moves. Files a snapshot does not hold are left alone.
+Settings -> **Data** covers the snapshots that can put this machine's data back. A restore takes a snapshot of the current state first, then copies the chosen one over the live files; it never deletes, and a delete never touches the live data. Each asks first and names what it moves. A file a snapshot does not hold is left alone.
 
 An OMP install also registers the package in `~/.omp/plugins`, so it shows under OMP **Settings → Plugins**. Active modes reassert after Ponytail's prompt block on every top-level turn, including after history compaction.
 
