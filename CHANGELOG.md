@@ -1,41 +1,28 @@
-## Unreleased
+## v2.25.9
 
 ### Added
- - `tersio upstream` prints a scorecard for all four sources of truth: how many files match their pin, what drifted upstream, and how each installed host's tree compares. `--json` for machines, `--offline` for the last result, `--check` for automation, and `--strict` for that gate plus drift past the ceiling.
- - `tersio upstream` also writes `~/.tersio/upstream/scorecard.md`: tables, a text bar per source and host, and Mermaid charts. `--md <file>` writes it elsewhere. The command stays out of `tersio help`, because it is an engineering check.
- - `/tersio upstream` prints the same scorecard inside a session.
- - The scorecard names every gap and groups it by whose move it was: `ours to fix`, `upstream moved`, or `unmeasured`. A failed read says which failure it was, a 404 on the pin included, and that one fails a plain `--check` rather than passing as unmeasured. The hosts table gains an `Unloaded` column for an entry a host's manifest never names, and each drift row carries a compare URL for the pin. The terminal folds a group at 12 names, and the Markdown report keeps all of them.
+ - `tersio upstream` scores the four modes Tersio ports against their upstream projects: what still matches, what moved, and how each installed agent compares. It also writes a Markdown report to `~/.tersio/upstream/`. The command stays out of `help`, because it is an engineering check.
+ - The dashboard has an About pane: your version, the build in memory, Node, your platform, the RTK binary, the update controls, and the credits each mode came from.
+ - Updates arrive as a notice with `Update now`, `Remind me later`, and `Skip this version`, and the check can run on a cadence you pick: off, daily, weekly, or monthly. `Check now` answers in well under a second.
 
 ### Changed
- - The Tools page reads rtk's own savings: a `Saved by RTK` tile, a table folded by leading verb with a `Show every command` toggle, and a footer naming adoption. Measured here: 62.6M B saved of 88.2M B taken in (71%), across 21,468 commands folded to 36 verbs.
- - The By tool and model table filters through two Select pickers, one per column, instead of a free-text box. A picker lists the values the table holds, so a typo cannot hide every row.
- - Settings shows a country flag beside each display currency, from the same table the CLI reads.
- - An all-time Share usage card draws the GitHub contribution graph: 53 weeks of columns, month labels, weekday labels, and the less/more legend.
- - A page change replays a staggered rise on each block, 45ms apart, so a route swap reads as a jump. The motion drops under `prefers-reduced-motion`.
- - Every upstream artifact lives in `~/.tersio/upstream/`: `scorecard.json`, `scorecard.md`, and the cached trees.
- - A data snapshot is one `.snap` file instead of a directory of copies. The file is verified against its own hash before it counts, so a half write never enters the list.
- - The dashboard's Snapshots pane reads `1K · 1 file` per row, and the tooltip names what each snapshot holds.
- - A chart legend reads each series' total for the range after its label, and a folded group names how many series it holds: `Other (126) 6,687`. The legend sums to the tile above it.
- - Every timeline lane carries a glyph for the kind it holds: a message square for Input, sparkles for Model, a wrench for Tools, and gears for Background. Model keeps the vendor mark.
- - The span drawer reads the reference's own field set: one flat key list, `Duration`, `Start`, `Track`, then `Tokens`, `Cost`, `TTFT`, `Model`, `Input / output / cached`, `Provider`, and `Stop reason` on a model span. A tool or turn span shows only the three timing rows. Raw entry, Message, and Span payloads fold below.
- - The request drawer drops its Agent section, its `Priced` row, and its `Timestamp` row. `API` reads the class from the journal message, so `openai-completions` shows as `OpenAI` instead of an empty stored column.
- - A tool span's transcript row shows the call's arguments, not its result text, so the row reads as what the tool was told to do.
- - A bridged idle gap in the timeline is a share of the activity around it, not a fixed width, so Compress idle now changes the shape. On this machine's 26-hour session, the largest gap reads 1.5% of the axis compressed and 81% uncompressed.
- - Transcript kind badges share one width, so the labels line up down the list.
- - Four loose state files fold into `~/.tersio/state.json`: the reset watermark, the update check, the rtk heads, and the doctor report. `agents.json` and `prices-modelsdev.json` are gone; both had no reader left.
- - The pstack port moves to upstream `a968159`, so its drift reads zero, and Ponytail moves to 5.3.2. The one change since `09d06eb` renames the skill in its frontmatter, which the fork does not carry.
- - `docs/ARCHITECTURE.md` shows the mode order: caveman owns the voice, pstack the approach, rtk the tooling, and ponytail the size.
- - The status line reads `🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON`, with the same glyphs as the architecture diagram.
+ - Ponytail ships inside Tersio now instead of as a second package, so a host lists one plugin instead of two. An install or `tersio doctor --fix ponytail` clears what an older install left, and the doctor and the scorecard compare every agent against the bundled copy.
+ - The Tools page shows what RTK saved you: a tile, a table folded by leading verb with a `Show every command` toggle, and adoption named in the footer. Measured here: 62.6M B saved of 88.2M B taken in (71%), across 21,468 commands.
+ - The By tool and model table filters with two pickers, one per column, so a typo cannot hide every row.
+ - Settings shows a country flag beside each currency.
+ - The Share usage card draws the GitHub contribution graph: 53 weeks, month and weekday labels, and the less/more legend. A page change animates in, 45ms apart per block, and holds still under reduced motion.
+ - Charts read easier: a legend names each series' total after its label and how many series a folded group holds, every timeline lane carries a glyph for its kind, and transcript badges share one width.
+ - The graphs and drawers follow your data more closely: the span drawer lists one flat field set, the request drawer drops its three least useful rows and reads `OpenAI` instead of an empty class, a tool span shows what the tool was told to do, and a bridged idle gap keeps its share of the axis. On this machine the largest gap reads 1.5% of the axis compressed and 81% uncompressed.
+ - Snapshots are one file each, checked against their own hash before they count, and the pane reads `1K · 1 file` per row with a tooltip naming what it holds.
+ - Four small state files fold into `~/.tersio/state.json`, and two files with no reader left are gone.
+ - pstack moves to upstream `a968159` and Ponytail to 5.3.2. `docs/ARCHITECTURE.md` shows the order the modes run in, and the status line reads `🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON`.
 
 ### Fixed
- - A read of rtk's history could report zero savings for a database full of rows. `readRtkGain` swallowed every failure, and the in-process SQLite path had no fallback for a WAL database whose `-shm` file is missing. It now reports `measured: false` with the reason, and retries the read on a private copy.
- - The Tools page reads real result text, call arguments, and error counts. The store kept tool names only, so every size and every error read zero. Measured on this machine: 711.1K result chars and 29 failed calls in 24 hours, where both read 0 before.
- - A data snapshot could miss every row still sitting in a database's write-ahead log. The packer reads the committed state through `VACUUM INTO` now, so the snapshot matches the live database. Measured on the live agent store: a plain file copy held 7,194 rows where the database held 7,207.
- - A restore refuses a snapshot whose body fails its hash, and the live files stay as they are.
- - A data snapshot past the keep limit could be dropped instead of the oldest one, because the listing compared the packed file against its unpacked size.
- - A snapshot whose body failed its hash still counted against the keep limit, so the newest damaged file could push out a snapshot that restores. Prune reads every body now: 18 ms for six snapshots of 3.2 MB each.
+ - Savings and scorecard numbers could read zero on a busy database, and a snapshot could miss rows still in flight or keep a damaged one. All three read the committed state now: on this machine a plain copy held 7,194 rows where the database held 7,207, and the prune pass reads six snapshots in 18 ms.
+ - The Tools page shows real result sizes, call arguments, and error counts instead of zeros. Measured here: 711.1K result characters and 29 failed calls in 24 hours, where both read 0.
+ - Settings left every mode row at its old level after you picked a Combo preset: each row updated only itself, while a preset writes all four. The dialog shows what was saved now.
+ - A restore refuses a snapshot whose body fails its hash, and the live files stay untouched.
 
-## v2.25.8
 
 ### Added
  - Windows runs Tersio natively, installed through PowerShell. WSL stays an option, never a requirement.
