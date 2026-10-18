@@ -105,31 +105,31 @@ async function caveman(entries: SessionEntry[], arg: string): Promise<string[]> 
 test("bare /caveman and /caveman on enable full", async () => {
   for (const arg of ["", "on"]) {
     const notifications = await caveman([], arg);
-    expect(notifications.at(-1)).toMatch(/🧩 combo CUSTOM: 🪨caveman=FULL/);
+    expect(notifications.at(-1)).toMatch(/🧩 COMBO CUSTOM: 🪨 caveman=FULL/);
   }
 });
 
 test("each mode reports itself in the shared status line", async () => {
   for (const mode of ["lite", "ultra", "megacave-lite", "megacave-full", "megacave-ultra"]) {
     const notifications = await caveman([], mode);
-    expect(notifications.at(-1)).toMatch(new RegExp(`🪨caveman=${mode.toUpperCase()} `));
+    expect(notifications.at(-1)).toMatch(new RegExp(`🪨 caveman=${mode.toUpperCase()} `));
   }
   for (const legacy of ["wenyan", "wenyan-full"]) {
     const notifications = await caveman([], legacy);
-    expect(notifications.at(-1)).toMatch(/🪨caveman=MEGACAVE-FULL /);
+    expect(notifications.at(-1)).toMatch(/🪨 caveman=MEGACAVE-FULL /);
   }
 });
 
 test("turning caveman off collapses the status to the off line", async () => {
   const notifications = await caveman([], "off");
-  expect(notifications.at(-1)).toBe("🧩 combo OFF");
+  expect(notifications.at(-1)).toBe("🧩 COMBO OFF");
 });
 
 test("status reports the current mode, unknown args show usage", async () => {
   resetSharedComboState();
   const { pi, ctx } = harness();
   await pi.commands.get("caveman")!("ultra", ctx);
-  expect(ctx.notifications.at(-1)).toMatch(/🪨caveman=ULTRA/);
+  expect(ctx.notifications.at(-1)).toMatch(/🪨 caveman=ULTRA/);
   await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.notifications.at(-1)).toBe("Caveman mode: ultra");
   await pi.commands.get("caveman")!("bogus", ctx);
@@ -142,7 +142,7 @@ test("natural-language off commands switch the mode off", async () => {
     const { pi, ctx } = harness();
     await pi.commands.get("caveman")!("full", ctx);
     await pi.handlers.get("input")!({ text, source: "user" }, ctx);
-    expect(ctx.notifications).toContain("🧩 combo OFF");
+    expect(ctx.notifications).toContain("🧩 COMBO OFF");
     await pi.commands.get("caveman")!("status", ctx);
     expect(ctx.notifications.at(-1)).toBe("Caveman mode: off");
   }
@@ -153,7 +153,7 @@ test("input from extensions never toggles the mode", async () => {
   const { pi, ctx } = harness();
   await pi.commands.get("caveman")!("full", ctx);
   await pi.handlers.get("input")!({ text: "stop caveman", source: "extension" }, ctx);
-  expect(ctx.notifications.at(-1)).toMatch(/🪨caveman=FULL/);
+  expect(ctx.notifications.at(-1)).toMatch(/🪨 caveman=FULL/);
   await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.notifications.at(-1)).toBe("Caveman mode: full");
 });
@@ -163,12 +163,12 @@ test("session_start restores the persisted mode, fresh sessions use the default"
   const restored = harness([{ type: "custom", customType: "caveman-mode", data: { mode: "wenyan" } }]);
   await restored.pi.handlers.get("session_start")!({}, restored.ctx);
   // A session entry written under the old name restores onto the canonical one.
-  expect(restored.ctx.notifications.at(-1)).toMatch(/🪨caveman=MEGACAVE-FULL/);
+  expect(restored.ctx.notifications.at(-1)).toMatch(/🪨 caveman=MEGACAVE-FULL/);
 
   resetSharedComboState();
   const fresh = harness();
   await fresh.pi.handlers.get("session_start")!({}, fresh.ctx);
-  expect(fresh.ctx.notifications.at(-1)).toBe("🧩 combo OFF");
+  expect(fresh.ctx.notifications.at(-1)).toBe("🧩 COMBO OFF");
 });
 
 test("legacy plugin default normalizes to megacave-full and injects rules", async () => {
@@ -341,7 +341,7 @@ test("the footer carries one line, and a status request answers with the mode", 
   const { pi, ctx } = harness([]);
   await pi.commands.get("caveman")!("ultra", ctx);
   expect(ctx.statuses.get("caveman")).toBeUndefined();
-  expect(ctx.statuses.get("tersio")).toMatch(/🧩 combo CUSTOM: 🪨caveman=ULTRA/);
+  expect(ctx.statuses.get("tersio")).toMatch(/🧩 COMBO CUSTOM: 🪨 caveman=ULTRA/);
 
   await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.statuses.get("caveman")).toBeUndefined();
@@ -349,7 +349,7 @@ test("the footer carries one line, and a status request answers with the mode", 
 
   await pi.commands.get("caveman")!("off", ctx);
   expect(ctx.statuses.get("caveman")).toBeUndefined();
-  expect(ctx.statuses.get("tersio")).toBe("🧩 combo OFF");
+  expect(ctx.statuses.get("tersio")).toBe("🧩 COMBO OFF");
 
   await pi.commands.get("caveman")!("status", ctx);
   expect(ctx.notifications.at(-1)).toBe("Caveman mode: off");
@@ -608,7 +608,7 @@ test("/pstack on reaches the prompt body and the footer names the mode", async (
 
   await pi.commands.get("pstack")!("on", ctx);
 
-  expect(statuses.at(-1)).toBe("🧩 combo CUSTOM: 🪨caveman=OFF ⚡rtk=OFF 🦥ponytail=OFF 🥔pstack=ON");
+  expect(statuses.at(-1)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=OFF | 🗜️ rtk=OFF | 🧠 ponytail=OFF | 🥔 pstack=ON");
   expect(await pstackInject(pi, ctx)).toContain(BODY);
 });
 
@@ -621,7 +621,7 @@ test("/pstack off clears the footer and stops injecting", async () => {
   await pi.commands.get("pstack")!("on", ctx);
   await pi.commands.get("pstack")!("off", ctx);
 
-  expect(statuses.at(-1)).toBe("🧩 combo OFF");
+  expect(statuses.at(-1)).toBe("🧩 COMBO OFF");
   expect(await pstackInject(pi, ctx)).not.toContain(BODY);
 });
 
@@ -658,7 +658,7 @@ test("a combo preset turns pstack on, so the level matches its modes", async () 
   await combo.commands.get("combo")!("balanced", ctx);
 
   expect(getSharedComboState().pstack).toBe("on");
-  expect(statuses.at(-1)).toBe("🧩 combo BALANCED: 🪨caveman=FULL ⚡rtk=ON 🦥ponytail=FULL 🥔pstack=ON");
+  expect(statuses.at(-1)).toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=ON");
 });
 
 test("deriveLevel maps every preset back to its level, including balanced", () => {

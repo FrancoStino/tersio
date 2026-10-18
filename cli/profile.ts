@@ -170,7 +170,7 @@ export type { Profile };
 export function formatCliStatus(profile: Profile): string {
   const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault, pstackDefault } = profile;
   if (comboDefault === 'off' && cavemanDefault === 'off' && !rtkDefault && ponytailDefault === 'off' && pstackDefault === 'off') {
-    return '🧩 combo OFF';
+    return '🧩 COMBO OFF';
   }
   const preset = COMBO_PRESET_MODES[comboDefault];
   const isPreset = preset !== undefined
@@ -180,5 +180,5 @@ export function formatCliStatus(profile: Profile): string {
     && preset.pstack === pstackDefault;
   const level = isPreset ? comboDefault.toUpperCase() : 'CUSTOM';
   const rtk = rtkDefault ? 'ON' : 'OFF';
-  return `🧩 combo ${level}: 🪨caveman=${cavemanDefault.toUpperCase()} ⚡rtk=${rtk} 🦥ponytail=${ponytailDefault.toUpperCase()} 🥔pstack=${pstackDefault.toUpperCase()}`;
+  return `🧩 COMBO ${level}: 🪨 caveman=${cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk} | 🧠 ponytail=${ponytailDefault.toUpperCase()} | 🥔 pstack=${pstackDefault.toUpperCase()}`;
 }

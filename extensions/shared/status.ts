@@ -13,9 +13,9 @@ export interface StatusState {
 /** OFF collapses every mode into one word; a preset or a mix names itself. */
 export function formatStatus(state: StatusState): string {
   const { level, caveman, rtk, ponytail, pstack } = state;
-  if (level === 'off' && caveman === 'off' && rtk === 'off' && ponytail === 'off' && pstack === 'off') return '🧩 combo OFF';
+  if (level === 'off' && caveman === 'off' && rtk === 'off' && ponytail === 'off' && pstack === 'off') return '🧩 COMBO OFF';
   const label = level === 'custom' ? 'CUSTOM' : level.toUpperCase();
-  return `🧩 combo ${label}: 🪨caveman=${caveman.toUpperCase()} ⚡rtk=${rtk.toUpperCase()} 🦥ponytail=${ponytail.toUpperCase()} 🥔pstack=${pstack.toUpperCase()}`;
+  return `🧩 COMBO ${label}: 🪨 caveman=${caveman.toUpperCase()} | 🗜️ rtk=${rtk.toUpperCase()} | 🧠 ponytail=${ponytail.toUpperCase()} | 🥔 pstack=${pstack.toUpperCase()}`;
 }
 
 // The string upstream's skill tells the model to relay for `/caveman status`; `off` is a mode, so it reads as one.
