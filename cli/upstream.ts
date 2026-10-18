@@ -31,7 +31,8 @@ const PSTACK_PATH = 'pstack/skills/poteto-mode/';
 
 /** Pins are deliberate: bump one only after reviewing the upstream diff it names. */
 const CAVEMAN_PIN = 'd262ab3882952a59312ff3537cd86d894523c5ab';
-const PSTACK_PIN = '09d06eb4b97a1020ab31e84030e38baf1099c7dc';
+// a968159 is the newest commit that touched a body we track; its one change renames the skill in frontmatter, which the fork drops.
+const PSTACK_PIN = 'a968159326d1fc6b7d483491ec5c457986a20af2';
 
 /** Every upstream artifact in one folder, so the data home stays readable. */
 export function upstreamDir(): string {
@@ -780,8 +781,9 @@ export async function runUpstream(): Promise<void> {
   await migrateLayout();
   const offline = args.includes('--offline');
   const json = args.includes('--json');
-  const check = args.includes('--check');
   const strict = args.includes('--strict');
+  // Strict is check plus drift, so it arms the gate on its own; a report alone never fails.
+  const check = args.includes('--check') || strict;
   const cacheFile = path.join(upstreamDir(), 'scorecard.json');
   let card: Scorecard | null = null;
   if (offline) card = parseJsonObject<Scorecard>(await readTextIfExists(cacheFile));
@@ -809,6 +811,6 @@ export async function runUpstream(): Promise<void> {
     await fs.writeFile(mdFile, scorecardMarkdown(card), 'utf8').catch(() => {});
     console.log(`  Report: ${mdFile}`);
   }
-  // A plain run only reports; --check is what turns a gap of ours, or drift past the ceiling, into a failure.
+  // A plain run only reports; --check, or --strict, turns a gap of ours, or drift past the ceiling, into a failure.
   if (check && gateFails(card, strict)) process.exitCode = 1;
 }

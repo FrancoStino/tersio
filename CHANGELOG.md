@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - `tersio upstream` prints a scorecard for all four sources of truth: how many files match their pin, what drifted upstream, and how each installed host's tree compares. `--json` for machines, `--offline` for the last result, `--check` and `--strict` for automation.
+ - `tersio upstream` prints a scorecard for all four sources of truth: how many files match their pin, what drifted upstream, and how each installed host's tree compares. `--json` for machines, `--offline` for the last result, `--check` for automation, and `--strict` for that gate plus drift past the ceiling.
  - `tersio upstream` also writes `~/.tersio/upstream/scorecard.md`: tables, a text bar per source and host, and Mermaid charts. `--md <file>` writes it elsewhere. The command stays out of `tersio help`, because it is an engineering check.
  - `/tersio upstream` prints the same scorecard inside a session.
  - The scorecard names every gap and groups it by whose move it was: `ours to fix`, `upstream moved`, or `unmeasured`. A failed read says which failure it was, a 404 on the pin included, and that one fails a plain `--check` rather than passing as unmeasured. The hosts table gains an `Unloaded` column for an entry a host's manifest never names, and each drift row carries a compare URL for the pin. The terminal folds a group at 12 names, and the Markdown report keeps all of them.
@@ -23,7 +23,7 @@
  - A bridged idle gap in the timeline is a share of the activity around it, not a fixed width, so Compress idle now changes the shape. On this machine's 26-hour session, the largest gap reads 1.5% of the axis compressed and 81% uncompressed.
  - Transcript kind badges share one width, so the labels line up down the list.
  - Four loose state files fold into `~/.tersio/state.json`: the reset watermark, the update check, the rtk heads, and the doctor report. `agents.json` and `prices-modelsdev.json` are gone; both had no reader left.
- - The pstack port moves to upstream `09d06eb`, so its drift reads zero, and Ponytail moves to 5.3.2.
+ - The pstack port moves to upstream `a968159`, so its drift reads zero, and Ponytail moves to 5.3.2. The one change since `09d06eb` renames the skill in its frontmatter, which the fork does not carry.
  - `docs/ARCHITECTURE.md` shows the mode order: caveman owns the voice, pstack the approach, rtk the tooling, and ponytail the size.
  - The status line reads `🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON`, with the same glyphs as the architecture diagram.
 

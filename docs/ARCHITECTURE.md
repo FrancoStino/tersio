@@ -150,7 +150,7 @@ Every mode Tersio ships is a port. `cli/upstream.ts` holds one pin per source an
 | Source | Pin | What is compared |
 |---|---|---|
 | Caveman | `JuliusBrussee/caveman` commit `d262ab3` | Three bodies byte for byte, after the one adapted line; three local forks by presence |
-| pstack | `cursor/plugins` commit `09d06eb` | Every shipped body by presence; every body is a fork with Cursor's surface removed |
+| pstack | `cursor/plugins` commit `a968159` | Every shipped body by presence; every body is a fork with Cursor's surface removed |
 | Ponytail | the installed npm package | Each host's bundled copy against the package it was copied from |
 | RTK | `rtk-ai/rtk` release feed | The binary's `--version` against the latest release tag |
 
@@ -174,7 +174,7 @@ flowchart LR
 - **A declared fork matches by presence.** pstack's 91 bodies all had Cursor's surface stripped, so no byte comparison exists; the scorecard proves each is shipped and non-empty, and reports upstream drift separately.
 - **Accuracy covers the installed hosts too.** A host's tree is compared to this build's own definition, so a stale or missing file lowers the score even when every source matches.
 - **A host's manifest is checked as well as its files.** The `Unloaded` column counts entries this build loads that the host's own manifest never names, because a file can sit in the tree and still never run. The manifest is read only where the host keeps one.
-- **Drift is not a failure.** A plain run only reports. `--check` fails on any gap of ours, and `--strict` adds drift past the ceiling, plus an unmeasured drift, so a rate-limited run never passes silently.
+- **Drift is not a failure.** A plain run only reports. `--check` fails on any gap of ours, and `--strict` implies it, then adds drift past the ceiling plus an unmeasured drift, so a rate-limited run never passes silently.
 - **The command is hidden, and it writes a report.** `tersio upstream` is not listed in `tersio help`, because it is an engineering check, not a user command. It writes `~/.tersio/upstream/scorecard.json` for machines and `~/.tersio/upstream/scorecard.md` for a reader: tables, a text bar per source and host, and an `xychart-beta` Mermaid graph. `--md <file>` writes the report elsewhere.
 - **No scheduled job.** The scorecard runs when someone runs it. A weekly CI job was tried and removed: it needs a token, it goes red on reviewed drift, and the same answer is one local command away.
 
