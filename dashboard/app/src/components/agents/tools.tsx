@@ -8,7 +8,6 @@ import {
   Legend,
   Page,
   PageHeader,
-  SearchInput,
   Segmented,
   Sparkline,
   Stat,
@@ -16,7 +15,8 @@ import {
   TimeChart,
 } from "@/components/charts";
 import type { Column, SeriesSpec } from "@/components/charts";
-import type { AgentStats, AgentToolRow } from "@/lib/data";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { AgentStats, AgentToolRow, RtkVerbRow } from "@/lib/data";
 import { AGENT_RANGE_LABEL } from "@/lib/data";
 import { PALETTE, fmt, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
 
@@ -34,6 +34,9 @@ const ATTRIBUTION_NOTE =
   "Tokens and API-equivalent cost of each invoking turn, split evenly across that turn's tool calls";
 
 const OTHER_COLOR = "var(--dim)";
+
+/** The sentinel both pickers use for "no filter", so a real tool named `all` could never collide. */
+const ALL = "\u0000all";
 
 /** The bucket reads as a word, so a chart description can name it. */
 function bucketWord(bucketMs: number): string {
@@ -120,12 +123,13 @@ function buildView(agent: AgentStats): ToolsView {
     (a, b) => b[1].reduce((s, v) => s + v, 0) - a[1].reduce((s, v) => s + v, 0),
   );
   const plotted = ranked.slice(0, TOP_TOOLS);
+  const sum = (values: Array<number | null>): number => values.reduce<number>((total, v) => total + (v ?? 0), 0);
   const callSeries = plotted.map(([tool, dense], i) => ({
-    spec: { key: `t${i}`, label: tool, color: PALETTE[i % PALETTE.length] },
+    spec: { key: `t${i}`, label: tool, color: PALETTE[i % PALETTE.length], value: sum(dense) },
     values: dense.map((v) => (v > 0 ? v : null)),
   }));
   const errorSeries = plotted.map(([tool], i) => ({
-    spec: { key: `t${i}`, label: tool, color: PALETTE[i % PALETTE.length] },
+    spec: { key: `t${i}`, label: tool, color: PALETTE[i % PALETTE.length], value: sum(errorsByTool.get(tool) ?? []) },
     values: (errorsByTool.get(tool) ?? []).map((v) => (v > 0 ? v : null)),
   }));
   if (ranked.length > TOP_TOOLS) {
@@ -139,8 +143,9 @@ function buildView(agent: AgentStats): ToolsView {
       rest[i] = Math.max(0, totalCalls[i] - plottedSum);
       restErrors[i] = Math.max(0, totalErrors[i] - plottedErrors);
     }
-    callSeries.push({ spec: { key: "other", label: "Other", color: OTHER_COLOR }, values: rest.map((v) => (v > 0 ? v : null)) });
-    errorSeries.push({ spec: { key: "other", label: "Other", color: OTHER_COLOR }, values: restErrors.map((v) => (v > 0 ? v : null)) });
+    const folded = ranked.length - TOP_TOOLS;
+    callSeries.push({ spec: { key: "other", label: `Other (${folded})`, color: OTHER_COLOR, value: sum(rest) }, values: rest.map((v) => (v > 0 ? v : null)) });
+    errorSeries.push({ spec: { key: "other", label: `Other (${folded})`, color: OTHER_COLOR, value: sum(restErrors) }, values: restErrors.map((v) => (v > 0 ? v : null)) });
   }
 
   return {
@@ -160,7 +165,9 @@ function buildView(agent: AgentStats): ToolsView {
 export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: number) => string }) {
   const [metric, setMetric] = useState<CallMetric>("calls");
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
-  const [filter, setFilter] = useState("");
+  const [toolPick, setToolPick] = useState<string>(ALL);
+  const [modelPick, setModelPick] = useState<string>(ALL);
+  const [rtkShowAll, setRtkShowAll] = useState(false);
   const view = useMemo(() => buildView(agent), [agent]);
   const word = bucketWord(agent.bucketMs);
 
@@ -380,10 +387,87 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
     ];
   }, [view, money, agent.toolsByModel]);
 
-  const needle = filter.trim().toLowerCase();
-  const modelRows = needle
-    ? agent.toolsByModel.filter((row) => row.tool.toLowerCase().includes(needle) || row.model.toLowerCase().includes(needle))
-    : agent.toolsByModel;
+  // Two pickers, one per column: the table names what it can show, so a typo cannot hide every row.
+  const toolOptions = useMemo(
+    () => [...new Set(agent.toolsByModel.map((row) => row.tool))].toSorted((a, b) => a.localeCompare(b)),
+    [agent.toolsByModel],
+  );
+  const modelOptions = useMemo(
+    () => [...new Set(agent.toolsByModel.map((row) => row.model))].toSorted((a, b) => a.localeCompare(b)),
+    [agent.toolsByModel],
+  );
+  const modelRows = agent.toolsByModel.filter(
+    (row) => (toolPick === ALL ? true : row.tool === toolPick) && (modelPick === ALL ? true : row.model === modelPick),
+  );
+  // The trigger reads its label from this map, so the sentinel shows as "All tools", not its raw value.
+  const toolItems = useMemo(
+    () => Object.fromEntries([[ALL, "All tools"] as const, ...toolOptions.map((tool) => [tool, tool] as const)]),
+    [toolOptions],
+  );
+  const modelItems = useMemo(
+    () => Object.fromEntries([[ALL, "All models"] as const, ...modelOptions.map((model) => [model, model] as const)]),
+    [modelOptions],
+  );
+  // rtk's own numbers. A read that failed draws "not measured"; it never draws a zero.
+  const rtk = agent.rtk;
+  const rtkRows = useMemo(() => {
+    const rows = [...rtk.byVerb].toSorted((a, b) => b.saved - a.saved);
+    // The tail is folded only when the reader asks for it, so the default view is the commands that matter.
+    if (!rtkShowAll) return rows.filter((row) => row.saved > 0);
+    return rows;
+  }, [rtk.byVerb, rtkShowAll]);
+  // The sparkline reads each verb's bytes kept, biggest first, so the shape shows the top-heaviness.
+  const rtkSpark = useMemo(() => rtk.byVerb.filter((row) => row.saved > 0).map((row) => row.saved), [rtk.byVerb]);
+  const rtkColumns = useMemo<Array<Column<RtkVerbRow>>>(() => {
+    const maxSaved = Math.max(1, ...rtkRows.map((row) => row.saved));
+    return [
+      {
+        key: "command",
+        header: "Command",
+        sort: (row) => row.command,
+        render: (row) => (
+          <span className="mono flex min-w-0 items-center gap-2">
+            <span className="truncate" title={row.command}>{row.command}</span>
+            {row.variants && row.variants > 1 ? (
+              <span className="shrink-0 text-[10px] text-dim" title={`${fmt(row.variants)} distinct commands folded here`}>
+                {fmt(row.variants)}
+              </span>
+            ) : null}
+          </span>
+        ),
+      },
+      {
+        key: "count",
+        header: "Runs",
+        align: "right",
+        sort: (row) => row.count,
+        render: (row) => <span className="tabular-nums">{fmt(row.count)}</span>,
+      },
+      {
+        key: "saved",
+        header: "Saved",
+        title: "Bytes rtk kept out of the transcript, from rtk's own history",
+        align: "right",
+        sort: (row) => row.saved,
+        render: (row) => (
+          <span className="flex flex-col items-end gap-1">
+            <span className={`tabular-nums ${row.saved < 0 ? "text-danger" : ""}`}>
+              {row.saved < 0 ? `+${fmtShort(Math.abs(row.saved))} B` : `${fmtShort(row.saved)} B`}
+            </span>
+            <CellBar value={Math.abs(row.saved)} max={maxSaved} color={row.saved < 0 ? "var(--danger)" : "var(--accent)"} />
+          </span>
+        ),
+      },
+      {
+        key: "pct",
+        header: "Saved %",
+        title: "Saved bytes over the bytes the verb took in",
+        align: "right",
+        sort: (row) => row.avgPct,
+        render: (row) => <span className={`tabular-nums ${row.avgPct < 0 ? "text-danger" : "text-dim"}`}>{pct(row.avgPct / 100, 0)}</span>,
+      },
+    ];
+  }, [rtkRows]);
 
   return (
     <Page>
@@ -393,7 +477,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
       />
 
       <div className="flex flex-col gap-3">
-        <StatGrid cols={5}>
+        <StatGrid cols={6}>
           <Stat
             label="Tool calls"
             value={fmt(view.totals.calls)}
@@ -423,6 +507,17 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
             title={`${ATTRIBUTION_NOTE}; API-equivalent estimate`}
             value={money(view.totals.cost)}
             hint={view.totals.unpriced > 0 ? `${fmt(Math.round(view.totals.unpriced))} unpriced requests` : "API-equivalent"}
+          />
+          <Stat
+            label="Saved by RTK"
+            title="Bytes rtk kept out of context, from its own history"
+            value={rtk.measured ? `${fmtShort(rtk.saved)} B` : "not measured"}
+            hint={
+              rtk.measured
+                ? `${pct(rtk.avgPct / 100, 1)} of the ${fmtShort(rtk.input)} B those commands took in`
+                : "rtk's history could not be read"
+            }
+            spark={rtkSpark}
           />
         </StatGrid>
         <StatGrid cols={4}>
@@ -481,6 +576,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
               items={active.map((series) => series.spec)}
               active={new Set(shown.map((series) => series.spec.key))}
               onToggle={toggle}
+              valueFmt={fmt}
             />
           </div>
         )}
@@ -503,13 +599,34 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
         description="Which models call which tools, and how often those calls fail"
         flush
         actions={
-          <SearchInput
-            value={filter}
-            onChange={setFilter}
-            placeholder="Filter by tool or model"
-            label="Filter by tool or model"
-            className="w-[220px]"
-          />
+          <div className="flex items-center gap-2">
+            <Select value={toolPick} items={toolItems} onValueChange={(next) => setToolPick(next ?? ALL)}>
+              <SelectTrigger size="sm" aria-label="Filter by tool" className="w-[150px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={ALL}>All tools</SelectItem>
+                  {toolOptions.map((tool) => (
+                    <SelectItem key={tool} value={tool}>{tool}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Select value={modelPick} items={modelItems} onValueChange={(next) => setModelPick(next ?? ALL)}>
+              <SelectTrigger size="sm" aria-label="Filter by model" className="w-[230px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={ALL}>All models</SelectItem>
+                  {modelOptions.map((model) => (
+                    <SelectItem key={model} value={model}>{model}</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
         }
       >
         <PagedTable
@@ -521,6 +638,60 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
           empty={<p className="p-4 text-xs text-dim">No matching tool calls in this range.</p>}
           ariaLabel="Tools by model"
         />
+      </Card>
+
+      <Card
+        title="Saved by rtk" icon="zap"
+        description={
+          rtk.measured
+            ? `Bytes rtk kept out of context in ${AGENT_RANGE_LABEL[agent.range]}, from rtk's own history. Commands are folded by their leading verb.`
+            : "rtk's history could not be read, so nothing here is measured."
+        }
+        flush
+        actions={
+          <label className="mono flex cursor-pointer items-center gap-1.5 text-[11px] text-dim">
+            <input
+              type="checkbox"
+              checked={rtkShowAll}
+              onChange={(event) => setRtkShowAll(event.target.checked)}
+              className="size-3 accent-[var(--accent)]"
+            />
+            Show every command
+          </label>
+        }
+      >
+        {rtk.measured ? (
+          <>
+            <PagedTable
+              columns={rtkColumns}
+              rows={rtkRows}
+              rowKey={(row) => row.command}
+              initialSort={{ key: "saved", dir: "desc" }}
+              perPage={20}
+              empty={
+                <p className="p-4 text-xs text-dim">
+                  rtk ran {fmt(rtk.commands)} commands in this range and kept no bytes.
+                </p>
+              }
+              ariaLabel="Saved by rtk, folded by verb"
+            />
+            <div className="mono flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-3.5 py-2 text-[11px] text-dim">
+              <span>
+                rtk ran <span className="text-ink">{fmt(rtk.rtkCalls)}</span> of {fmt(rtk.eligibleCalls)} eligible bash calls
+                ({pct(rtk.adoptionPct / 100, 0)})
+              </span>
+              {rtk.missedCalls > 0 && <span>{fmt(rtk.missedCalls)} left on the plain shell</span>}
+              <span className="ml-auto">
+                {fmtShort(rtk.saved)} B saved of {fmtShort(rtk.input)} B taken in
+              </span>
+            </div>
+          </>
+        ) : (
+          <p className="p-4 text-xs text-dim">
+            rtk's history could not be read, so its savings are not measured.
+            {rtk.failure ? ` (${rtk.failure})` : ""}
+          </p>
+        )}
       </Card>
     </Page>
   );

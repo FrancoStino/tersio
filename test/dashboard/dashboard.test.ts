@@ -393,6 +393,18 @@ test("the grid caps at 53 weeks and ends on the day the server ran", () => {
   expect(cells[cells.length - 1]!.ts).toBe(NOW);
 });
 
+test("an all-time window draws the whole year even when its newest day is the only one with data", () => {
+  // The card reads this grid as a contribution log, so a year of quiet cells is the point, not a gap.
+  const cells = graphOf(stats("all", DAY, [[NOW, 10]], { generatedAt: NOW }));
+  expect(graphWeeks(cells)).toBe(53);
+  // A year of columns: the first opens on a Sunday, so the grid holds one partial week plus 52 full ones.
+  expect(cells.length).toBeGreaterThan(360);
+  expect(cells.length).toBeLessThanOrEqual(53 * 7);
+  expect(cells.filter((c) => c.tokens > 0)).toHaveLength(1);
+  // A bounded window still opens on its own cutoff, so a quiet range keeps drawing nothing.
+  expect(graphOf(stats("24h", DAY, [], { cutoff: NOW }))).toEqual([]);
+});
+
 test("no buckets draws no graph", () => {
   expect(graphOf(stats("90d", DAY, [], { cutoff: NOW - 90 * DAY }))).toEqual([]);
 });

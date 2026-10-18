@@ -64,6 +64,10 @@ export function SessionTrace({
   }, [allSpans, search]);
   const matchIds = useMemo(() => (search.trim() ? new Set(matches.map((span) => span.id)) : null), [matches, search]);
   const selected = useMemo(() => allSpans.find((span) => span.id === selection) ?? null, [allSpans, selection]);
+  const selectedTrack = useMemo(
+    () => rows.find((row) => row.span.id === selection)?.track.label ?? "Session",
+    [rows, selection],
+  );
 
   const centerOn = useCallback(
     (span: AgentTraceSpan) => {
@@ -156,14 +160,14 @@ export function SessionTrace({
           className="mono cursor-pointer rounded-lg border border-line px-2.5 py-1.5 text-xs text-dim hover:bg-track hover:text-ink"
           title="Reload the trace"
         >
-          <Icon name="refresh" className="size-3.5" />
+          <Icon name="refresh-cw" className="size-3.5" />
         </button>
       </div>
 
       {loading && <TraceSkeleton />}
       {!loading && !trace && (
         <EmptyState
-          icon="file-question"
+          icon="file-question-mark"
           title="This transcript is gone"
           desc="The file is no longer on disk, or it holds no readable journal lines."
         />
@@ -279,7 +283,7 @@ export function SessionTrace({
             flush
           >
             {rows.length === 0 ? (
-              <EmptyState icon="file-question" title="No spans" desc="This session holds no message entries." />
+              <EmptyState icon="file-question-mark" title="No spans" desc="This session holds no message entries." />
             ) : (
               <TranscriptList
                 rows={rows}
@@ -300,6 +304,7 @@ export function SessionTrace({
       <SpanDrawer
         sessionFile={sessionFile}
         span={selected}
+        track={selectedTrack}
         money={money}
         onClose={() => setSelection(null)}
       />

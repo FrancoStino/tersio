@@ -242,5 +242,6 @@ export function MeterCell({
 
 /** The page shell: header, then blocks stacked with one gap rhythm. */
 export function Page({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-5 sm:px-6">{children}</div>;
+  // The class replays its staggered jump whenever this shell mounts, which a route change does.
+  return <div className="page-jump mx-auto flex w-full max-w-[1400px] flex-col gap-4 px-4 py-5 sm:px-6">{children}</div>;
 }

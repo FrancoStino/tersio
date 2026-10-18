@@ -12,6 +12,8 @@ export interface SeriesSpec {
   color: string;
   /** A second scale on the right edge, for a unit the left axis does not share. */
   axis?: "left" | "right";
+  /** The series total for the range, shown after the label. Omitted when the caller has none. */
+  value?: number;
 }
 
 const AXIS = { stroke: "var(--line)", tickLine: false, axisLine: false } as const;
@@ -168,11 +170,14 @@ export function Legend({
   items,
   active,
   onToggle,
+  valueFmt,
   className,
 }: {
   items: SeriesSpec[];
   active?: Set<string>;
   onToggle?: (key: string) => void;
+  /** Formats each series total. A series with no `value` shows none. */
+  valueFmt?: (value: number) => string;
   className?: string;
 }) {
   if (items.length === 0) return null;
@@ -184,6 +189,11 @@ export function Legend({
           <>
             <span className="size-2 shrink-0 rounded-[2px]" style={{ background: on ? s.color : "var(--track)" }} />
             <span className={on ? "" : "line-through"}>{s.label}</span>
+            {s.value !== undefined && (
+              <span className={cn("tabular-nums", on ? "text-ink" : "text-dim")}>
+                {valueFmt ? valueFmt(s.value) : s.value}
+              </span>
+            )}
           </>
         );
         return (

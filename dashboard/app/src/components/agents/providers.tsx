@@ -106,6 +106,12 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
       });
       return row;
     });
+    // The legend reads each provider's total for the range, in the metric the chart plots.
+    for (const [i, s] of spec.entries()) {
+      let total = 0;
+      for (const point of top[i].points) total += metric === "cost" ? point.costUsd : metric === "requests" ? point.requests : point.tokens;
+      s.value = total;
+    }
     return { spec, rows };
   }, [agent.seriesByProvider, metric]);
 
@@ -215,7 +221,7 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
                 ariaLabel="Tokens, cost, or requests per bucket, stacked by provider"
                 summary={`The ${metric} burned per bucket across the ${burn.spec.length} busiest providers in range.`}
               />
-              <Legend items={burn.spec} active={new Set(shown.map((s) => s.key))} onToggle={toggle} />
+              <Legend items={burn.spec} active={new Set(shown.map((s) => s.key))} onToggle={toggle} valueFmt={burnFmt} />
             </div>
           </QueryView>
         </Card>
@@ -456,7 +462,7 @@ function PeakHoursCard({ hourly, providers, colors }: { hourly: AgentProviderHou
       for (const name of shown) row[name] = perHour[name][hour];
       return row;
     });
-    return { rows, output, requests, peak, hasData };
+    return { rows, output, requests, peak, hasData, perHour };
   }, [hourly, shown]);
 
   const spec = useMemo<SeriesSpec[]>(
@@ -465,8 +471,9 @@ function PeakHoursCard({ hourly, providers, colors }: { hourly: AgentProviderHou
         key: name,
         label: name,
         color: colors.get(name) ?? providerColor(name),
+        value: hours.perHour[name]?.reduce((total, v) => total + v, 0) ?? 0,
       })),
-    [shown, colors],
+    [shown, colors, hours.perHour],
   );
 
   return (
@@ -496,7 +503,7 @@ function PeakHoursCard({ hourly, providers, colors }: { hourly: AgentProviderHou
         ariaLabel="Tokens by local hour of day"
         summary="Token volume per local hour of day, so the daily burn peak is visible at a glance."
       />
-      {spec.length > 1 && <Legend items={spec} className="mt-3" />}
+      {spec.length > 1 && <Legend items={spec} className="mt-3" valueFmt={fmtShort} />}
       <p className="mono mt-2 text-[11px] text-dim">
         {hours.hasData
           ? `Peak hour: ${fmt(shown.reduce((acc, name) => acc + hours.rows[hours.peak][name], 0))} tokens, ${fmt(hours.output[hours.peak])} output across ${fmt(hours.requests[hours.peak])} requests.`

@@ -66,8 +66,8 @@ export interface ModeState {
 /** One glyph and one short name per mode, in the order the combo names them; pstack trails the three. */
 const MODE_GLYPHS = [
   { key: "caveman", glyph: "🪨", label: "caveman", level: (m: ModeState) => (m.cavemanDefault ?? "off").toUpperCase() },
-  { key: "rtk", glyph: "⚡", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
-  { key: "ponytail", glyph: "🦥", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
+  { key: "rtk", glyph: "🗜️", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
+  { key: "ponytail", glyph: "🧠", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
   { key: "pstack", glyph: "🥔", label: "pstack", level: (m: ModeState) => (m.pstackDefault ?? "off").toUpperCase() },
 ] as const;
 
@@ -75,7 +75,7 @@ const MODE_GLYPHS = [
 export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen: () => void }) {
   const level = modes?.comboDefault ?? "off";
   const on = level !== "off";
-  const label = on ? `combo ${level.toUpperCase()}` : "combo off";
+  const label = on ? `COMBO ${level.toUpperCase()}` : "COMBO OFF";
   const boxRef = useRef<HTMLSpanElement>(null);
   const trackRef = useRef<HTMLSpanElement>(null);
   const [scroll, setScroll] = useState(false);
@@ -95,11 +95,14 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
   }, [modes]);
   const row = (key: string): ReactNode => (
     <span key={key} className="flex shrink-0 items-center">
-      {MODE_GLYPHS.map((m) => (
-        <span key={m.key} className="mr-1.5 inline-flex items-center gap-0.5">
-          <span className="text-[12px]">{m.glyph}</span>
-          <span className="text-dim">{m.label}=</span>
-          <span className={on ? "font-semibold text-ink" : "text-dim"}>{modes ? m.level(modes) : "OFF"}</span>
+      {MODE_GLYPHS.map((m, i) => (
+        <span key={m.key} className="inline-flex items-center">
+          {i > 0 && <span className="mr-1.5 text-dim">|</span>}
+          <span className="mr-1.5 inline-flex items-center gap-0.5">
+            <span className="text-[12px]">{m.glyph}</span>
+            <span className="text-dim">{m.label}=</span>
+            <span className={on ? "font-semibold text-ink" : "text-dim"}>{modes ? m.level(modes) : "OFF"}</span>
+          </span>
         </span>
       ))}
     </span>

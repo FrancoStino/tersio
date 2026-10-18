@@ -25,6 +25,13 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** A span's held time in seconds: two decimals under a second, one above it, the trace viewer's own shape. */
+export function fmtSecs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return "–";
+  const secs = ms / 1000;
+  return `${secs.toFixed(secs < 1 ? 2 : 1)}s`;
+}
+
 /** An elapsed span in the units it needs: `23h 6m`, `5m 12s`, `840ms`. */
 export function fmtElapsed(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";

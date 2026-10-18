@@ -1,5 +1,5 @@
 // Every page of the agent-stats dashboard, one hash route each.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { isFileExport, useFx, useAgentData } from "@/lib/data";
 import type { AgentRequestRow, AgentView } from "@/lib/data";
@@ -230,7 +230,8 @@ function Dashboard() {
         onSettings={() => setSettingsOpen(true)}
         onShare={() => setShareOpen(true)}
       >
-        {page()}
+        {/* A route change remounts the page, so the jump animation replays on every navigation. */}
+        <Fragment key={`${section}:${session ?? ""}:${range}`}>{page()}</Fragment>
       </Shell>
       {request && (
         <AgentRequestDrawer

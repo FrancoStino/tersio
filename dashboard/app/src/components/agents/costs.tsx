@@ -133,8 +133,9 @@ function buildView(agent: AgentStats): CostsView {
     (a, b) => b[1].reduce((s, v) => s + v, 0) - a[1].reduce((s, v) => s + v, 0),
   );
   const plotted = ranked.slice(0, MODEL_LIMIT);
+  const sum = (values: Array<number | null>): number => values.reduce<number>((total, v) => total + (v ?? 0), 0);
   const modelSeries = plotted.map(([model, dense], i) => ({
-    spec: { key: `m${i}`, label: model, color: PALETTE[i % PALETTE.length] },
+    spec: { key: `m${i}`, label: model, color: PALETTE[i % PALETTE.length], value: sum(dense) },
     values: dense.map((v) => (v > 0 ? v : null)),
   }));
   if (ranked.length > MODEL_LIMIT) {
@@ -144,7 +145,7 @@ function buildView(agent: AgentStats): CostsView {
       for (const series of modelSeries) plottedSum += series.values[i] ?? 0;
       rest[i] = Math.max(0, dailyCost[i] - plottedSum);
     }
-    modelSeries.push({ spec: { key: "other", label: "Other", color: OTHER_COLOR }, values: rest.map((v) => (v > 0 ? v : null)) });
+    modelSeries.push({ spec: { key: "other", label: `Other (${ranked.length - MODEL_LIMIT})`, color: OTHER_COLOR, value: sum(rest) }, values: rest.map((v) => (v > 0 ? v : null)) });
   }
 
   const days = new Set(agent.series.map((bucket) => Math.floor(bucket.ts / DAY_MS)));
@@ -155,7 +156,7 @@ function buildView(agent: AgentStats): CostsView {
     colors,
     buckets,
     dailyCost,
-    totalSeries: { key: "cost", label: "Estimate", color: "var(--accent)" },
+    totalSeries: { key: "cost", label: "Estimate", color: "var(--accent)", value: overall.costUsd },
     totalValues: dailyCost.map((v) => (v > 0 ? v : null)),
     modelSeries,
     totalCost: overall.costUsd,
@@ -336,6 +337,7 @@ export function CostsPage({ agent, money }: { agent: AgentStats; money: (v: numb
               items={specs}
               active={new Set(shown.map((series) => series.spec.key))}
               onToggle={toggle}
+              valueFmt={money}
             />
           </div>
         )}

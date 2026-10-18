@@ -109,8 +109,9 @@ function buildView(agent: AgentStats): ModelsView {
     (a, b) => b[1].reduce((s, v) => s + v, 0) - a[1].reduce((s, v) => s + v, 0),
   );
   const plotted = ranked.slice(0, SHARE_LIMIT);
+  const sum = (values: Array<number | null>): number => values.reduce<number>((total, v) => total + (v ?? 0), 0);
   const series: ModelSeries[] = plotted.map(([model, dense], i) => ({
-    spec: { key: `m${i}`, label: model, color: PALETTE[i % PALETTE.length] },
+    spec: { key: `m${i}`, label: model, color: PALETTE[i % PALETTE.length], value: sum(dense) },
     requests: dense.map((v) => (v > 0 ? v : null)),
     share: dense.map((v, index) => (v > 0 && requestTotals[index] > 0 ? v / requestTotals[index] : null)),
   }));
@@ -123,7 +124,7 @@ function buildView(agent: AgentStats): ModelsView {
       rest[i] = Math.max(0, requestTotals[i] - plottedSum);
     }
     series.push({
-      spec: { key: "other", label: "Other", color: OTHER_COLOR },
+      spec: { key: "other", label: `Other (${ranked.length - SHARE_LIMIT})`, color: OTHER_COLOR, value: sum(rest) },
       requests: rest.map((v) => (v > 0 ? v : null)),
       share: rest.map((v, index) => (v > 0 && requestTotals[index] > 0 ? v / requestTotals[index] : null)),
     });
@@ -449,6 +450,7 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
               items={view.series.map((series) => series.spec)}
               active={new Set(shown.map((series) => series.spec.key))}
               onToggle={toggle}
+              valueFmt={fmtShort}
             />
           </div>
         )}

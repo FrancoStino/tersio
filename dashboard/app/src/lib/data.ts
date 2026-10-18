@@ -441,12 +441,40 @@ export interface AgentStats {
   tools: AgentToolRow[];
   toolsByModel: AgentToolRow[];
   toolSeries: Array<{ ts: number; tool: string; calls: number; errors: number }>;
+  /** What rtk kept out of context in this range, and how much of the bash work it took. */
+  rtk: AgentRtk;
   usageSeries: AgentWindowSeries[];
   windowInsights: AgentWindowInsight[];
   providerHourly: AgentProviderHour[];
   requestStats: AgentRequestStats;
   /** Raw failure rows inside the range, newest first: the Errors page's list. */
   errors: AgentRequestRow[];
+}
+
+/** One folded rtk verb: `rtk read`, `rtk grep`, with the bytes it kept and how many full commands it hides. */
+export interface RtkVerbRow {
+  command: string;
+  count: number;
+  saved: number;
+  avgPct: number;
+  avgMs: number;
+  variants?: number;
+}
+
+/** rtk's own savings and adoption. `measured: false` means "not measured", never "saved nothing". */
+export interface AgentRtk {
+  measured: boolean;
+  failure: string;
+  commands: number;
+  input: number;
+  saved: number;
+  avgPct: number;
+  byVerb: RtkVerbRow[];
+  bashCalls: number;
+  eligibleCalls: number;
+  rtkCalls: number;
+  missedCalls: number;
+  adoptionPct: number;
 }
 
 export type AgentView =

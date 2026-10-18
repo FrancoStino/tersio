@@ -168,7 +168,7 @@ export function OverviewPage({
           />
         </Card>
 
-        <Card title="Token mix" icon="pie-chart" description="Where conversation tokens went">
+        <Card title="Token mix" icon="chart-pie" description="Where conversation tokens went">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2.5">
               <ShareBar

@@ -16,8 +16,11 @@ export interface TraceScale {
 const ACTIVITY_PAD_MS = 2000;
 /** Gaps longer than this are bridged. */
 const GAP_THRESHOLD_MS = 30_000;
-/** Virtual width of a bridged gap. */
-const GAP_BRIDGE_U = 8000;
+/** A bridged gap's width as a fraction of the activity it separates, so a pause reads but never dominates. */
+const BRIDGE_FRACTION = 0.012;
+/** Floor and ceiling in virtual units: a short session still shows its gaps, one huge pause cannot eat the axis. */
+const BRIDGE_MIN_U = 1500;
+const BRIDGE_MAX_U = 250_000;
 
 /** A piecewise-linear map over matched breakpoints: t ascending, u non-decreasing. */
 function piecewise(tPoints: number[], uPoints: number[]): TraceScale {
@@ -84,10 +87,14 @@ function compressedTime(tracks: AgentTraceTrack[], compressIdle: boolean): Trace
     if (last && start - last[1] < GAP_THRESHOLD_MS * 2) last[1] = Math.max(last[1], end);
     else merged.push([start, end]);
   }
+  // Activity width first: a bridge is a share of it, so a pause stays visible in a long session.
+  let activity = 0;
+  for (let i = 1; i < merged.length; i += 1) activity += Math.max(0, merged[i][0] - ACTIVITY_PAD_MS - merged[i - 1][1]);
+  const bridge = Math.min(BRIDGE_MAX_U, Math.max(BRIDGE_MIN_U, activity * BRIDGE_FRACTION));
   for (const [start, end] of merged) {
     const gap = start - tPoints[tPoints.length - 1];
     if (gap > GAP_THRESHOLD_MS && tPoints.length > 1) {
-      u += GAP_BRIDGE_U;
+      u += bridge;
       tPoints.push(start - ACTIVITY_PAD_MS);
       uPoints.push(u);
     }

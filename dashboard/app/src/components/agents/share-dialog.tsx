@@ -47,13 +47,16 @@ function cardOf(agent: AgentStats): Card {
     costUsd: agent.overall.costUsd,
     cacheRate: agent.overall.cacheRate,
     errorRate: agent.overall.errorRate,
+    // All time always earns the calendar: the whole year, the way a contribution log reads.
     kind: quiet
       ? "empty"
-      : weeks <= STRIP_MAX_WEEKS && strip.bars.length > 0
-        ? "strip"
-        : weeks <= BAND_MAX_WEEKS && bands.length > 0
-          ? "bands"
-          : "calendar",
+      : agent.cutoff === 0
+        ? "calendar"
+        : weeks <= STRIP_MAX_WEEKS && strip.bars.length > 0
+          ? "strip"
+          : weeks <= BAND_MAX_WEEKS && bands.length > 0
+            ? "bands"
+            : "calendar",
     strip,
     graph,
     weeks,

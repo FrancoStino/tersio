@@ -4,9 +4,32 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { displayModel, fmt, fmtMs, hostOfSession, statusColor, statusLabel, tokensPerSecond, whenClock, whenShort, whenStamp } from "@/lib/format";
 import type { AgentRequestRow } from "@/lib/data";
 import { useAgentRequestEntry } from "@/lib/data";
-import { ProviderMark, VendorMark } from "@/components/brand";
+import { VendorMark } from "@/components/brand";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
+
+/** The API family a wire name belongs to, named the way the request itself reports it. */
+function apiClassOf(api: string): string {
+  const name = api.trim();
+  if (!name) return "not recorded";
+  // The class is the family before the first dash: `openai-completions` is the OpenAI completions API.
+  const family = name.split("-")[0];
+  const known: Record<string, string> = {
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    google: "Google",
+    gemini: "Google",
+    mistral: "Mistral",
+    xai: "xAI",
+    groq: "Groq",
+    bedrock: "Bedrock",
+    vertex: "Vertex",
+    azure: "Azure",
+    ollama: "Ollama",
+    openrouter: "OpenRouter",
+  };
+  return known[family] ?? name;
+}
 
 function SectionLabel({ icon, children }: { icon?: string; children: React.ReactNode }) {
   return (
@@ -153,6 +176,9 @@ export function AgentRequestDrawer({
   const state = row.stopReason === "error" ? "error" : row.stopReason;
   const tint = statusColor(state);
   const host = hostOfSession(row.sessionFile);
+  // The journal carries the request's own API on the message; the stats row has no such column.
+  const api = String((entry.output as { api?: unknown } | null)?.api ?? "");
+  const apiClass = apiClassOf(api);
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -163,7 +189,7 @@ export function AgentRequestDrawer({
             <SheetTitle className="font-display pr-8 text-lg tracking-tight">{displayModel(row.model)}</SheetTitle>
           </div>
           <SheetDescription className="mono text-xs text-dim">
-            {whenStamp(row.ts)} · {row.provider}, {row.api || "unknown api"}
+            {whenStamp(row.ts)} · {row.provider}, {apiClass}
           </SheetDescription>
           <div className="mono mt-1 flex flex-wrap items-center gap-1.5">
             <Chip tint={tint}>
@@ -229,39 +255,11 @@ export function AgentRequestDrawer({
           </section>
 
           <section className="grid gap-2.5 rounded-xl border border-line px-3.5 pt-3 pb-2">
-            <SectionLabel icon="bot">Agent</SectionLabel>
-            <DetailRow label="Session host">
-              <span className="inline-flex items-center gap-2">
-                <AgentLogo host={host.host} className="size-3.5" />
-                {host.label}
-              </span>
-            </DetailRow>
-            <DetailRow label="Agent type">
-              <span className="inline-flex items-center gap-2">
-                <Icon name="bot" className="size-3.5 text-dim" />
-                {row.agentType || "unknown agent"}
-              </span>
-            </DetailRow>
-            <DetailRow label="Model">{row.model}</DetailRow>
-            <DetailRow label="Thinking">{entry.agent.thinkingLevel ?? "not recorded"}</DetailRow>
-            <DetailRow label="Mode">{entry.agent.mode ?? "not recorded"}</DetailRow>
-            <DetailRow label="Fallback">{entry.agent.fallback === null ? "not recorded" : entry.agent.fallback ? "yes, resolved as a fallback" : "no"}</DetailRow>
-            <DetailRow label="Provider">
-              <span className="inline-flex items-center gap-2">
-                <ProviderMark provider={row.provider} tiny />
-                <span>{row.provider || "unknown provider"}</span>
-              </span>
-            </DetailRow>
-          </section>
-
-          <section className="grid gap-2.5 rounded-xl border border-line px-3.5 pt-3 pb-2">
-            <SectionLabel icon="fingerprint">Identity</SectionLabel>
-            <DetailRow label="Timestamp">{new Date(row.ts).toISOString()}</DetailRow>
+            <SectionLabel icon="scan-face">Identity</SectionLabel>
             <DetailRow label="Entry id">{row.entryId || "unknown entry"}</DetailRow>
             <DetailRow label="Stop reason">{row.stopReason || "unknown stop"}</DetailRow>
-            <DetailRow label="API">{row.api || "unknown api"}</DetailRow>
+            <DetailRow label="API">{apiClass}</DetailRow>
             <DetailRow label="Project">{row.project || "unknown project"}</DetailRow>
-            <DetailRow label="Priced">{row.unpriced ? "no catalog price, subscription route" : "rate card"}</DetailRow>
             <DetailRow label="Session">
               <span className="text-[11px] text-dim">{row.sessionFile}</span>
             </DetailRow>

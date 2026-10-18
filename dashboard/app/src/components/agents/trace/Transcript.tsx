@@ -5,7 +5,7 @@ import { VendorMark } from "@/components/brand";
 import { Icon } from "@/components/icon";
 import { toolIcon } from "@/components/common";
 import type { AgentTraceSpan, AgentTraceSpanKind, AgentTraceTrack } from "@/lib/data";
-import { fmtMs, stampLocal } from "@/lib/format";
+import { fmtSecs, stampLocal } from "@/lib/format";
 import { formatOffset } from "./scale";
 import { useTraceTheme } from "./theme";
 
@@ -79,7 +79,7 @@ export const TranscriptList = memo(function TranscriptList({
         <div style={{ position: "absolute", top: first * ROW_H, left: 0, right: 0 }}>
           {shown.map((row) => {
             const span = row.span;
-            const held = span.end > span.start ? fmtMs(span.end - span.start) : "";
+            const held = fmtSecs(span.end - span.start);
             const color = theme.category[span.kind as AgentTraceSpanKind];
             const dim = needle.length > 0 && !matchIds?.has(span.id);
             return (
@@ -93,11 +93,11 @@ export const TranscriptList = memo(function TranscriptList({
                 style={{ height: ROW_H }}
               >
                 <span
-                  className="shrink-0 rounded-full border px-1.5 text-[10px]"
+                  className="mono w-[46px] shrink-0 rounded-full border px-1 py-0.5 text-center text-[9px] leading-none uppercase"
                   style={{ borderColor: color, color }}
                   title={span.kind}
                 >
-                  {span.kind}
+                  {span.kind === "background" ? "bg" : span.kind}
                 </span>
                 {span.kind === "model" && span.model ? (
                   <VendorMark model={span.model} tiny />

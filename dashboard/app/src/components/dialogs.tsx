@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTheme, useResolvedTheme } from "@/components/theme-provider";
 import { ACCENTS, ACCENT_IDS, accentSwatch, type AccentId } from "@/lib/accent";
-import { FX_SNAPSHOT, relAge } from "@/lib/format";
+import { FLAGS, FX_SNAPSHOT, relAge } from "@/lib/format";
 import {
   fetchDoctor,
   fetchHealth,
@@ -159,12 +159,12 @@ interface DataFile {
   bytes: number;
 }
 
-/** One snapshot: a directory this build wrote, or the lone ledger file older builds wrote. */
+/** One snapshot: a `.snap` this build wrote, or the lone ledger file older builds wrote. */
 interface DataBackupRow {
   name: string;
   mtime: number;
   bytes: number;
-  files: DataFile[];
+  members: DataFile[];
 }
 
 const SCHEDULE_OPTIONS: ReadonlyArray<{ id: string; label: string; hint: string }> = [
@@ -252,9 +252,9 @@ function DataPane() {
       body: JSON.stringify({ action: "create" }),
     })
       .then((r) => r.json())
-      .then((d: { ok?: boolean; name?: string; files?: number; error?: string }) => {
+      .then((d: { ok?: boolean; name?: string; error?: string }) => {
         if (d?.ok) {
-          toast("Snapshot taken", `${d.files ?? 0} file${d.files === 1 ? "" : "s"} in ${d.name}.`, "check");
+          toast("Snapshot taken", `One file: ${d.name}.`, "check");
           if (d.name) setPicked(d.name);
           load();
         } else toast("Backup failed", d?.error ?? "The server did not answer.", "circle-alert");
@@ -358,7 +358,7 @@ function DataPane() {
       <Card
         title="Snapshots"
         icon="layers"
-        description="Newest first. A restore copies its files over the live data."
+        description="Newest first. One file each. A restore copies its contents over the live data."
         footer={
           asking ? null : (
             <>
@@ -412,11 +412,11 @@ function DataPane() {
                     onClick={() => setPicked(on ? null : b.name)}
                   >
                     <div className="min-w-0 flex-1">
-                      <HoverTip content={`${b.name} — ${b.files.map((f) => f.label).join(", ")}`}>
+                      <HoverTip content={`${b.name} — ${b.members.map((f) => f.label).join(", ")}`}>
                         <p className="mono m-0 truncate text-xs text-ink">{dataStamp(b.mtime)}</p>
                       </HoverTip>
                       <p className="mono mt-0.5 mb-0 text-[11px] text-dim">
-                        {dataSize(b.bytes)} · {b.files.length} file{b.files.length === 1 ? "" : "s"}
+                        {dataSize(b.bytes)} · 1 file
                       </p>
                     </div>
                     {on && <Icon name="check" className="mr-1.5 size-3.5 shrink-0 text-accent" />}
@@ -432,8 +432,8 @@ function DataPane() {
         <div className="rounded-[10px] border border-warn-border bg-warn-soft px-3.5 py-2.5" role="alertdialog" aria-label="Confirm restore">
           <p className="m-0 text-[13px] font-semibold">Restore {dataStamp(target.mtime)}?</p>
           <p className="mt-1 mb-0 text-xs text-dim">
-            Every file in it is copied over the live data: {target.files.map((f) => f.label).join(", ")}. A file the
-            snapshot lacks is left alone. The dashboard needs a reload afterwards.
+            Everything in it is copied over the live data: {target.members.map((f) => f.label).join(", ")}. A file
+            the snapshot lacks is left alone. The dashboard needs a reload afterwards.
           </p>
           <div className="mt-2.5 flex items-center gap-2">
             <Button
@@ -441,10 +441,10 @@ function DataPane() {
               className="mono h-8 gap-1.5 rounded-xl"
               disabled={busy}
               onClick={() => restore(target.name)}
-              aria-label={`Restore ${target.files.length} file${target.files.length === 1 ? "" : "s"}`}
+              aria-label="Restore this snapshot"
             >
               <Icon name="database" className="size-3.5" />
-              Restore {target.files.length} file{target.files.length === 1 ? "" : "s"}
+              Restore
             </Button>
             <button
               type="button"
@@ -465,9 +465,8 @@ function DataPane() {
         >
           <p className="m-0 text-[13px] font-semibold">Delete {dataStamp(doomed.mtime)}?</p>
           <p className="mt-1 mb-0 text-xs text-dim">
-            {doomed.files.length} file{doomed.files.length === 1 ? "" : "s"} go with it —{" "}
-            {doomed.files.map((f) => f.label).join(", ")}. The live data stays as it is. A snapshot the
-            backup schedule never keeps again has to be taken by hand.
+            One file goes with it — {doomed.members.map((f) => f.label).join(", ")}. The live data stays as it is.
+            A snapshot the backup schedule never keeps again has to be taken by hand.
           </p>
           <div className="mt-2.5 flex items-center gap-2">
             <Button
@@ -475,10 +474,10 @@ function DataPane() {
               variant="destructive"
               className="mono h-8 gap-1.5 rounded-xl"
               onClick={() => remove(doomed.name)}
-              aria-label={`Delete ${doomed.files.length} file${doomed.files.length === 1 ? "" : "s"}`}
+              aria-label="Delete this snapshot"
             >
               <Icon name="trash" className="size-3.5" />
-              Delete {doomed.files.length} file{doomed.files.length === 1 ? "" : "s"}
+              Delete
             </Button>
             <button
               type="button"
@@ -884,7 +883,12 @@ function CurrencyPicker({ cur, onPick, id }: { cur: string; onPick: (code: strin
         <SelectContent>
           <SelectGroup>
             {Object.keys(FX_SNAPSHOT).map((code) => (
-              <SelectItem key={code} value={code}>{code}</SelectItem>
+              <SelectItem key={code} value={code}>
+                <span className="flex items-center gap-2">
+                  <span aria-hidden="true">{FLAGS[code] ?? ""}</span>
+                  {code}
+                </span>
+              </SelectItem>
             ))}
           </SelectGroup>
         </SelectContent>

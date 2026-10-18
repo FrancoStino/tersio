@@ -1,7 +1,8 @@
 // The trace timeline: minimap, ruler, flamegraph on a canvas; a DOM gutter names the lanes, so it draws no words.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ProviderMark, VendorMark } from "@/components/brand";
+import { VendorMark } from "@/components/brand";
+import { Icon } from "@/components/icon";
 import type { AgentTraceMarker, AgentTraceSpan, AgentTraceSpanKind, AgentTraceTrack } from "@/lib/data";
 import { buildTicks, formatOffset, lanesOf, type AxisMode, type TraceScale } from "./scale";
 import { useTraceTheme } from "./theme";
@@ -31,13 +32,24 @@ const MINIMAP_H = 44;
 /** Smallest window the viewport can hold, in virtual units. */
 const MIN_WINDOW_U = 10;
 
-/** One lane row in the gutter, with the brand mark for what it holds. */
+/** The glyph each lane carries: the kind it holds, not the brand that produced it. */
+const LANE_ICON: Record<string, string> = {
+  turn: "message-square",
+  model: "sparkles",
+  tool: "wrench",
+  background: "settings",
+};
+
+/** One lane row in the gutter, with a glyph for the kind it holds. */
 function LaneRow({ track, lane }: { track: AgentTraceTrack; lane: { kind: string; label: string } }) {
   const first = track.spans.find((span) => span.kind === lane.kind);
   return (
     <div className="flex min-w-0 items-center gap-1.5 px-2 text-[11px] text-dim" style={{ height: LANE_H }}>
-      {lane.kind === "model" && first?.model ? <VendorMark model={first.model} tiny /> : null}
-      {lane.kind === "tool" && first?.provider ? <ProviderMark provider={first.provider} tiny /> : null}
+      {lane.kind === "model" && first?.model ? (
+        <VendorMark model={first.model} tiny />
+      ) : (
+        <Icon name={LANE_ICON[lane.kind] ?? "dot"} className="size-3 shrink-0" />
+      )}
       <span className="truncate">{lane.label}</span>
     </div>
   );
