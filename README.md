@@ -115,7 +115,7 @@ It is display-only — it never enters the model context, so it costs the sessio
 | Command | Purpose |
 |---|---|
 | `/combo off\|medium\|balanced\|max\|status` | One preset for all four modes (start here): medium = caveman lite · rtk on · ponytail lite · pstack on, balanced = full/full/on/on, max = ultra/ultra/on/on, and off disables every mode; per-mode tweaks drop to `custom`. |
-| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies with upstream-aligned Caveman levels. `full`, `ultra`, and `megacave-full` load upstream's own bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own bodies for registers upstream defines but no longer ships, and each one names its upstream row in the file. The legacy `wenyan` spellings still resolve: `wenyan` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-full` → `megacave-full`, `wenyan-ultra` → `megacave-ultra`. |
+| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies at six levels. `full`, `ultra`, and `megacave-full` ship upstream's bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own, for registers upstream defines but no longer ships, and each names its upstream row. Legacy `wenyan` spellings still resolve: `wenyan`/`wenyan-full` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-ultra` → `megacave-ultra`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes. Review runs separately through `/ponytail-review`. |
 | `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). The medium, balanced, and max presets turn it on; `normal mode` clears it. |
@@ -147,19 +147,22 @@ Per host, written by `tersio install --host <omp|pi|opencode>`:
 
 | Host | Extensions | Ponytail |
 |---|---|---|
-| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — the plugin manifest (`omp.extensions`) owns every mode extension, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring, which `config.yml` registers by path | vendored at `extensions/ponytail/` inside the plugin, so **Settings → Plugins** lists one row |
+| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — loaded from the plugin manifest, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring | vendored at `extensions/ponytail/`, so **Settings → Plugins** lists one row |
 | pi | `~/.pi/agent/extensions/{caveman,pstack,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `~/.pi/agent/ponytail/`, a local package written from Tersio's vendored copy |
 | OpenCode | `~/.config/opencode/plugins/tersio/` — registered in `opencode.json` plugins, so there is nothing else to register | bundled with Tersio; no separate package |
 
-All three hosts carry the same `shared/` modules and the same mode extensions from the same sources.
+Tersio is agent-neutral: every host loads the same six extensions and the same `shared/` modules from the same sources. Only the paths and the registration differ, and the installer owns those. OMP is one host of three, not the target.
 
-omp merges the plugin manifest with the extension dir it discovers by default, so Tersio installs its extensions in one place per host. An install removes the copies an older build left in `~/.omp/agent/extensions/`, because a second copy of the same file would load twice and one of them cannot resolve its own rule bodies.
+Per host, in more words:
 
-The installer writes `<file>.bak` before replacing an extension source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
+- **OMP.** The plugin manifest and the extension dir OMP discovers by default merge, so Tersio keeps one copy of each file and clears what an older build left in `~/.omp/agent/extensions/`. A second copy would load twice, and one of the two cannot resolve its own rule bodies. The install also registers the package in `~/.omp/plugins`, so it shows under **Settings → Plugins**.
+- **pi and OpenCode.** Nothing to register beyond what their own install command does, so the table above is the whole story.
 
-Settings -> **Data** covers the snapshots that can put this machine's data back. A restore takes a snapshot of the current state first, then copies the chosen one over the live files; it never deletes, and a delete never touches the live data. Each asks first and names what it moves. A file a snapshot does not hold is left alone. The same pane clears the statistics behind its own confirmation: it names the ledger and RTK rows a reset would take, then empties the ledger and hides what it summarised, while session transcripts, rtk history, and prices stay on disk.
+The installer writes `<file>.bak` before it replaces a source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
 
-An OMP install also registers the package in `~/.omp/plugins`, so it shows under OMP **Settings → Plugins**. Active modes reassert after Ponytail's prompt block on every top-level turn, including after history compaction.
+Settings -> **Data** holds the snapshots and the reset. A restore snapshots the current state first, then copies the chosen one over the live files; it never deletes, and a delete never touches the live data. Both ask first and name what they move, and a file a snapshot does not hold is left alone. The same pane clears the statistics behind a confirmation that names the ledger and RTK rows it would take, then empties the ledger and hides what it summarised. Session transcripts, rtk history, and prices stay on disk.
+
+Active modes reassert after Ponytail's prompt block on every top-level turn, including after history compaction.
 
 ## 🛠️ Troubleshooting
 
