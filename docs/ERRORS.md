@@ -317,3 +317,12 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **Root cause:** The harness started `omp -p` with a `TERSIO_HOME` pointing at per-mode settings, which reads as isolation, but the extension code comes from the plugin directory and no setting redirects it. A separate probe had measured the prompt block with the build swapped in, so the cost came from the tree while the behaviour came from the package, and the two agreed on nothing.
 
 **Prevention rule:** Record which build the host loads before a sweep, and assert it matches the tree under test; a per-mode settings home isolates settings, not code. When a run's failure text quotes behaviour the tree no longer has, stop and check the loaded build before scoring it.
+
+## 2026-10-19 — A partial commit took the working tree, so the half held back shipped
+
+**What happened:** A push meant to exclude the upstream scorecard left `tersio.ts`, `cli/common.ts`, and two new files out, and shipped `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `README.md`, and the `upstream` script in `package.json` instead. The index blobs had been rewritten by hand to strip those sections, and `git write-tree` matched `HEAD^{tree}` right after the commits, so the check read as clean while every pushed commit carried the text meant to be dropped. `test/repo-integrity.test.ts` then failed on `tersio.ts -> ./cli/upstream.ts`, the one file whose import had been kept.
+
+**Root cause:** `git commit <pathspec>` commits the working tree content of the named paths, not the index. Every path passed on those command lines therefore ignored the stripped blobs, and git wrote the index back from the working tree, so the tree comparison afterwards agreed by construction. Only the files left unstaged kept the stripped index version.
+
+**Prevention rule:** Stage with `git add`, then commit with no pathspec. Before a partial push, read back the committed content with `git show HEAD:<path>`; `git show :<path>` and a tree comparison both pass while the index and the commit hold different text.
+
