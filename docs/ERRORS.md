@@ -331,3 +331,9 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** Moving Ponytail into `extensions/ponytail/` broke `extensions/combo` and `extensions/updater`: both looked for it at `path.join(EXTENSION_DIR, 'ponytail', ...)`, and each of those files defines `EXTENSION_DIR` as its *own* directory, so the path named `extensions/combo/ponytail/` and the instruction load fell back to the built-in text. Five extension tests failed.
 **Root cause:** The constant is named as if it were the extensions directory, but it is per file. The neighbouring line in the same function already used `path.join(EXTENSION_DIR, '..', 'ponytail-bundle', ...)` correctly, and the replacement copied the intent instead of that shape.
 **Prevention rule:** Read the definition of a directory constant in the file you are editing before joining a new path from it. When a moved file must be found from an extension, mirror the join an existing line in that function already gets right.
+
+## 2026-10-19 — A block rewrite dropped the heading above its own seam
+
+**What happened:** Rewriting the release notes replaced the `## Unreleased` block with the new text plus `lines[44:]`, while the `## v2.25.8` heading sat at index 43. That single line was dropped and pushed, so the v2.25.8 entries read as part of v2.25.9 until the user asked where v2.25.8 had gone.
+**Root cause:** The assertion checked `lines[43] == '## v2.25.8'` and the slice then started at 44. The check proved where the boundary was; the slice did not use that index.
+**Prevention rule:** When a script cuts a file at a checked index, reuse that same index in the slice, and after writing, grep the result for the structure that must survive: `rtk grep -n '^## v' CHANGELOG.md` costs one command and would have caught this before the commit.
