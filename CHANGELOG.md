@@ -23,6 +23,7 @@
  - Settings left every mode row at its old level after you picked a Combo preset: each row updated only itself, while a preset writes all four. The dialog shows what was saved now.
  - A restore refuses a snapshot whose body fails its hash, and the live files stay untouched.
 
+## v2.25.8
 
 ### Added
  - Windows runs Tersio natively, installed through PowerShell. WSL stays an option, never a requirement.
