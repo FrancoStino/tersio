@@ -489,6 +489,11 @@ export const AGENT_VIEWS: readonly AgentView[] = [
 /** One snapshot per window and view, so returning to a page is instant. */
 const agentCache = new Map<string, AgentStats>();
 
+/** Ask every mounted reader for a fresh read, the way a page change does. */
+export function requestReload(): void {
+  window.dispatchEvent(new Event("tersio:reload"));
+}
+
 /** The agent aggregate for one page; each view asks only for the parts it renders, keeping the payload small. */
 export function useAgentData(range: AgentRange, view: AgentView, offset = 0): {
   agent: AgentStats | null;

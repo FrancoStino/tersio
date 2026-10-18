@@ -343,3 +343,9 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** While removing `tersio usage`, a smoke run of `node dist/tersio.js usage` fell through to the bare-run installer and installed Tersio into the operator's real `~/.omp`, because the command had been removed from the dispatch but not yet from the `COMMANDS` guard list.
 **Root cause:** The smoke used the ambient HOME, and an unknown command shares one fall-through path with the bare run, so a half-removed command installs instead of failing.
 **Prevention rule:** Point HOME at a temp dir for every CLI smoke, the way `cliEnv` does in the tests. Remove a command from `COMMANDS` and from its dispatch in the same pass, and check the unknown path exits 1 before running anything else.
+
+## 2026-10-19 — A second host-icon path was built beside the existing one
+
+**What happened:** The Sources page drew each agent from the provider mark catalog in `lib/marks`, with new `omp` and `pi` entries pointing at GitHub avatars. `can1357.png` is a photo of a person, and the pale `pi` mark vanished on the dark theme, so the user had to name the fix: the marks Settings already draws. `components/agent-logos.tsx` had carried `OmpLogo` (a masked inline PNG) and `PiLogo` (the pi.dev SVG) the whole time, and the added catalog entries became dead weight the moment the page used them.
+**Root cause:** The page's first draft reached for the catalog the Providers page uses, because host rows look like vendor rows. Searching by shape (`MarkGlyph`) found that catalog, never the sibling file that already answered the question.
+**Prevention rule:** Before drawing an agent mark in the dashboard, read `dashboard/app/src/components/agent-logos.tsx`; it owns the three hosts' marks and the settings list draws from it. An avatar served by a person or org page is not a brand mark.

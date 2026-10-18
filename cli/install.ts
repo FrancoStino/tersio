@@ -571,7 +571,6 @@ async function runCommandMenu(): Promise<void> {
   updatePromptDone = true;
   const choice = await askInteractiveChoice(`Tersio — what next?\n${formatCliStatus(storedProfileSync())}`, [
     { value: 'install', label: 'Install plugin', hint: 'user scope + combo defaults' },
-    { value: 'reinstall', label: 'Reinstall', hint: 're-install Tersio for the ai agents, then verify' },
     { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
@@ -584,9 +583,6 @@ async function runCommandMenu(): Promise<void> {
   switch (choice.value) {
     case 'install':
       await runInstall();
-      break;
-    case 'reinstall':
-      await runReinstall();
       break;
     case 'update': {
       // Version check already ran above, so report it and offer the refresh here — no second "update" quiz.
@@ -635,51 +631,6 @@ async function runCommandMenu(): Promise<void> {
 
 // Which host this run targets. --host pins it; scripts and --yes keep the default of Oh My Pi.
 let targetHost: HostId = 'omp';
-// A reinstall re-runs the npm fast path and the Ponytail probe instead of reusing what is on disk.
-let forceReinstall = false;
-
-/** Reinstall one agent: pick it from what is installed now, then run the full install with a refresh. */
-async function runReinstall(): Promise<void> {
-  let pinned: HostId | undefined;
-  try {
-    pinned = parseHostArg(args);
-  } catch (e) {
-    console.error(`[fail] ${(e as Error).message}`);
-    process.exit(1);
-  }
-  const installed = detectHosts().filter((host) => host.installed);
-  let host: HostId;
-  if (pinned) host = pinned;
-  else if (installed.length === 0) {
-    console.log('  Nothing to reinstall — no agent has Tersio installed.\n  Run `tersio install`, or pick it from the menu.');
-    closeRL();
-    return;
-  } else if (installed.length === 1 || !tty() || yes || dryRun) {
-    host = installed[0].id;
-  } else {
-    const options = installed.map((entry) => ({
-      value: entry.id,
-      label: hostLabel(entry),
-      hint: hostHint(entry),
-    }));
-    const picked = await askInteractiveChoice('Reinstall Tersio into which agent?', options, installed[0].id);
-    if (picked.status !== 'selected') {
-      closeRL();
-      process.exit(130);
-    }
-    host = picked.value as HostId;
-  }
-
-  forceReinstall = true;
-  printWelcome();
-  console.log(`Reinstall — Tersio v${PACKAGE_VERSION} into ${hostLabel(hostEntry(host))}`);
-  console.log(`  ${resolvedHostPath(host)}`);
-  await runInstall(host);
-  if (!dryRun) {
-    const summary = await runDoctor();
-    if (summary.missing + summary.warn === 0) console.log(`\n  Reinstall verified — ${hostLabel(hostEntry(host))} is healthy.`);
-  }
-}
 
 // Hosts the menu advertises but cannot install yet; listed disabled so the roadmap stays visible.
 const SOON_HOSTS = [
@@ -873,7 +824,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   const userExtDir = path.join(userDir, 'extensions');
 
   // apply-update refreshes every add-on like a reinstall.
-  const installOptions: InstallOptions = { dryRun, verbose, yes, reinstall: applyUpdate || forceReinstall, quiet };
+  const installOptions: InstallOptions = { dryRun, verbose, yes, reinstall: applyUpdate, quiet };
 
   // Point of no return: disk writes start here; pipes stay unattended.
   if (!yes && !dryRun && !applyUpdate && tty()) {
@@ -966,4 +917,4 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
 
   closeRL();
 }
-export { runInstall, runReinstall, verifyRtkArchive };
+export { runInstall, verifyRtkArchive };

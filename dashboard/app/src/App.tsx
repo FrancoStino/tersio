@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { isFileExport, useFx, useAgentData } from "@/lib/data";
 import type { AgentRequestRow, AgentView } from "@/lib/data";
+import { useDevMode } from "@/lib/dev-mode";
 import { useHashRoute } from "@/lib/route";
 import { useUpdate } from "@/lib/update-watch";
 import { EmptyState } from "@/components/common";
@@ -22,6 +23,7 @@ import { ErrorsPage } from "./components/agents/errors";
 import { TracesPage } from "./components/agents/traces";
 import { ToolsPage } from "./components/agents/tools";
 import { ProjectsPage } from "./components/agents/projects";
+import { SourcesPage } from "./components/agents/sources";
 import { SettingsDialog } from "@/components/dialogs";
 import { ShareDialog } from "@/components/agents/share-dialog";
 import { ToasterProvider } from "@/components/toaster";
@@ -130,9 +132,13 @@ function Dashboard() {
   useDataThemeAttr();
   useReveal();
   const { fx, money, applyCurrency } = useFx();
-  const { section, range, session, setSection, setRange, setSession } = useHashRoute();
+  const { section: route, range, session, setSection, setRange, setSession } = useHashRoute();
+  // Sources is a developer surface: the About switch hides it, and a bookmarked route lands on Overview.
+  const dev = useDevMode();
+  const section = route === "sources" && !dev ? "overview" : route;
   // The smallest view still answers "is there an agent database".
-  const view: AgentView = section;
+  // Sources is not an agent view: the scorecard has its own store, and the hook keeps the shell uniform.
+  const view: AgentView = section === "sources" ? "all" : section;
   // Only the request log pages through the range; every other view wants the newest rows.
   const [requestOffset, setRequestOffset] = useState(0);
   const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
@@ -217,6 +223,8 @@ function Dashboard() {
         return <ToolsPage agent={agent} money={money} />;
       case "projects":
         return <ProjectsPage agent={agent} money={money} />;
+      case "sources":
+        return <SourcesPage />;
       default:
         return null;
     }

@@ -10,6 +10,7 @@ import { textTable } from './common.ts';
 import { adaptCavemanFull } from '../extensions/updater/index.ts';
 import {
   RTK_RELEASE_API,
+  RTK_REPO,
   fetchJson,
   httpsGet,
   normalizeRtkVersion,
@@ -25,6 +26,7 @@ const RAW = 'https://raw.githubusercontent.com';
 const PONYTAIL_NPM = 'https://registry.npmjs.org/@dietrichgebert/ponytail/latest';
 
 const CAVEMAN_REPO = 'JuliusBrussee/caveman';
+const PONYTAIL_REPO = 'DietrichGebert/ponytail';
 const PSTACK_REPO = 'cursor/plugins';
 const PSTACK_PATH = 'pstack/skills/poteto-mode/';
 
@@ -143,8 +145,8 @@ export interface SourceRow {
   measured: boolean;
   status: SourceStatus;
   kind: SourceKind;
-  /** Where to read the diff the drift names, when the pin is a commit. */
-  compare: string;
+  /** Where to read this pin upstream: a compare view for a commit, the release page for a version. */
+  link: string;
   /** Our tracked bodies that are absent or differ, by local path, with the reason. */
   gaps: string[];
   /** Upstream paths that moved since the pin. */
@@ -179,6 +181,31 @@ export interface Scorecard {
   [key: string]: unknown;
 }
 
+/** The last scorecard, or null when none has been written yet. */
+export async function cachedScorecard(): Promise<Scorecard | null> {
+  return parseJsonObject<Scorecard>(await readTextIfExists(path.join(upstreamDir(), 'scorecard.json')));
+}
+
+/** Run the live check, cache both artifacts, and hand the card back. */
+export async function refreshScorecard(withinMs = 90_000): Promise<Scorecard> {
+  // The feed has no read timeout of its own, so a stalled connection would hang the caller. Bound it.
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const card = await Promise.race([
+      collect(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`the check timed out after ${Math.round(withinMs / 1000)}s`)), withinMs);
+      }),
+    ]);
+    await fs.mkdir(upstreamDir(), { recursive: true }).catch(() => {});
+    await fs.writeFile(path.join(upstreamDir(), 'scorecard.json'), `${JSON.stringify(card, null, 2)}\n`, 'utf8').catch(() => {});
+    await fs.writeFile(path.join(upstreamDir(), 'scorecard.md'), scorecardMarkdown(card), 'utf8').catch(() => {});
+    return card;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** A git blob id, so a local file compares to a tree entry without fetching the body. */
 export function gitBlobSha(text: string): string {
   const bytes = Buffer.from(text, 'utf8');
@@ -188,6 +215,11 @@ export function gitBlobSha(text: string): string {
 /** Where to read the diff between a pin and the current upstream, so a drift row is one click from its cause. */
 function compareUrl(repo: string, pin: string): string {
   return `https://github.com/${repo}/compare/${pin}...HEAD`;
+}
+
+/** The release page a version pin names: both upstream repos tag every release `v<version>`. */
+function releaseUrl(repo: string, version: string): string {
+  return `https://github.com/${repo}/releases/tag/v${version}`;
 }
 
 /** A commit's tree is immutable, so it is cached forever; HEAD is cached for six hours, since GitHub rate-limits unauthenticated reads. */
@@ -350,7 +382,7 @@ async function checkCaveman(): Promise<SourceRow> {
     measured: failure === null,
     status: failure ? failure.status : 'ok',
     kind: 'bytes',
-    compare: compareUrl(CAVEMAN_REPO, CAVEMAN_PIN),
+    link: compareUrl(CAVEMAN_REPO, CAVEMAN_PIN),
     gaps,
     moved: drift.changed,
     appeared: drift.added,
@@ -386,7 +418,7 @@ async function checkPstack(): Promise<SourceRow> {
     measured: failure === null,
     status: failure ? failure.status : 'ok',
     kind: 'presence',
-    compare: compareUrl(PSTACK_REPO, PSTACK_PIN),
+    link: compareUrl(PSTACK_REPO, PSTACK_PIN),
     gaps,
     moved: drift.changed,
     appeared: drift.added,
@@ -438,7 +470,7 @@ async function checkPonytail(hosts: HostRow[]): Promise<SourceRow> {
     measured: failure === null,
     status: failure ? failure.status : 'ok',
     kind: 'bytes',
-    compare: '',
+    link: bundled ? releaseUrl(PONYTAIL_REPO, bundled) : '',
     gaps,
     moved: [],
     appeared: [],
@@ -479,7 +511,7 @@ async function checkRtk(): Promise<SourceRow> {
     measured: failure === null,
     status: failure ? failure.status : 'ok',
     kind: 'version',
-    compare: '',
+    link: local ? releaseUrl(RTK_REPO, local) : '',
     gaps: local === null ? ['the rtk binary is not on PATH'] : [],
     moved: [],
     appeared: [],
@@ -588,7 +620,7 @@ async function rowOrFailure(label: string, probe: () => Promise<SourceRow>): Pro
   } catch (e) {
     return {
       source: label, pin: '—', upstream: 'unreachable', tracked: 0, matched: 0, drift: 0, added: 0, removed: 0,
-      ceiling: 0, measured: false, status: classifyFetch(e, label).status, kind: 'bytes', compare: '',
+      ceiling: 0, measured: false, status: classifyFetch(e, label).status, kind: 'bytes', link: '',
       gaps: [classifyFetch(e, label).reason], moved: [], appeared: [], gone: [], note: classifyFetch(e, label).reason,
     };
   }
@@ -717,7 +749,7 @@ export function scorecardMarkdown(card: Scorecard): string {
       for (const [owner, items] of grouped(group)) {
         for (const gap of items) lines.push(`- **${owner}** ${gap.text}`);
         const row = card.sources.find((r) => r.source === owner);
-        if (kind === 'drift' && row?.compare) lines.push(`  Review the diff: ${row.compare}`);
+        if (kind === 'drift' && row?.link) lines.push(`  Review the diff: ${row.link}`);
       }
       lines.push('');
     }
@@ -758,7 +790,7 @@ function printScorecard(card: Scorecard, cached: boolean, strict: boolean): void
     for (const [owner, items] of grouped(group)) {
       for (const text of folded(items.map((g) => g.text))) console.log(`    ${owner.padEnd(9)} ${text}`);
       const row = card.sources.find((r) => r.source === owner);
-      if (kind === 'drift' && row?.compare) console.log(`    ${''.padEnd(9)} review: ${row.compare}`);
+      if (kind === 'drift' && row?.link) console.log(`    ${''.padEnd(9)} review: ${row.link}`);
     }
   }
   const ceiling = card.sources.reduce((sum, r) => sum + r.ceiling, 0);

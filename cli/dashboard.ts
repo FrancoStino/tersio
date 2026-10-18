@@ -24,6 +24,7 @@ import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
+import { cachedScorecard, refreshScorecard } from './upstream.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
@@ -549,6 +550,22 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   }
   requireDashboardBundle();
   const server = http.createServer(async (req, res) => {
+    if (req.url === '/api/upstream' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ card: await cachedScorecard() }));
+      return;
+    }
+    if (req.url === '/api/upstream/check' && req.method === 'POST') {
+      try {
+        const card = await refreshScorecard();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, card }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'check failed' }));
+      }
+      return;
+    }
     if (req.url === '/api/data' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({

@@ -12,6 +12,7 @@ import { SocialLinks } from "@/components/brand";
 import { useTheme } from "@/components/theme-provider";
 import { AGENT_RANGES, isFileExport } from "@/lib/data";
 import type { AgentRange } from "@/lib/data";
+import { useDevMode } from "@/lib/dev-mode";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { NAV, NAV_ITEMS } from "./nav";
 import type { SectionId } from "./nav";
@@ -163,6 +164,7 @@ export function useShortcuts({
   onRange: (range: AgentRange) => void;
   onSection: (section: SectionId) => void;
 }): void {
+  const dev = useDevMode();
   useEffect(() => {
     if (isFileExport()) return;
     let armed = 0;
@@ -174,7 +176,7 @@ export function useShortcuts({
       const key = event.key.toLowerCase();
       if (armed && Date.now() - armed < 1200) {
         armed = 0;
-        const item = NAV_ITEMS.find((candidate) => candidate.hotkey === key);
+        const item = NAV_ITEMS.find((candidate) => candidate.hotkey === key && (dev || !candidate.devOnly));
         if (item) {
           event.preventDefault();
           onSection(item.id);
@@ -193,7 +195,7 @@ export function useShortcuts({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onRange, onSection]);
+  }, [dev, onRange, onSection]);
 }
 
 function SidebarAction({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
@@ -221,6 +223,8 @@ export function AppSidebar({
   agentAvailable: boolean;
   onSettings: () => void;
 }) {
+  // A hidden developer page must not keep its slot in the rail, and the hotkey map follows it.
+  const dev = useDevMode();
   // z-50 keeps the rail header above the inset's sticky one, so the trigger stays clickable where the two overlap.
   return (
     <Sidebar collapsible="icon" className="z-50 border-r border-line bg-panel text-ink">
@@ -243,7 +247,7 @@ export function AppSidebar({
       </SidebarHeader>
       <SidebarContent>
         {NAV.map((group) => {
-          const items = group.items.filter((item) => agentAvailable || !item.agentOnly);
+          const items = group.items.filter((item) => (agentAvailable || !item.agentOnly) && (dev || !item.devOnly));
           if (items.length === 0) return null;
           return (
             <SidebarGroup key={group.heading}>

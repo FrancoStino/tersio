@@ -9,7 +9,8 @@ export type SectionId =
   | "errors"
   | "traces"
   | "tools"
-  | "projects";
+  | "projects"
+  | "sources";
 
 export interface NavItem {
   id: SectionId;
@@ -19,6 +20,8 @@ export interface NavItem {
   hotkey: string;
   /** True when the section only has content with an agent stats database. */
   agentOnly: boolean;
+  /** True when the section is a developer surface: Settings > About gates it. */
+  devOnly?: boolean;
 }
 
 export interface NavGroup {
@@ -50,6 +53,14 @@ export const NAV: readonly NavGroup[] = [
     items: [
       { id: "tools", label: "Tools", icon: "wrench", hotkey: "l", agentOnly: false },
       { id: "projects", label: "Projects", icon: "folder-git-2", hotkey: "j", agentOnly: true },
+    ],
+  },
+  {
+    // The developer surfaces sit last and read as their own category; the rail drops the heading
+    // with the last item, so an operator who never flips the About switch never sees it.
+    heading: "Developer",
+    items: [
+      { id: "sources", label: "Sources", icon: "git-branch", hotkey: "s", agentOnly: false, devOnly: true },
     ],
   },
 ];

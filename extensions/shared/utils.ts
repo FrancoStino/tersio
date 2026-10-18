@@ -50,7 +50,9 @@ export function rtkDirs(): { data: string; config: string } {
   return { data: path.join(xdgData, 'rtk'), config: path.join(xdgConfig, 'rtk') };
 }
 
-export const RTK_RELEASE_API = 'https://api.github.com/repos/rtk-ai/rtk/releases/latest';
+/** The RTK project, named once: the release feed and the release page both read it. */
+export const RTK_REPO = 'rtk-ai/rtk';
+export const RTK_RELEASE_API = `https://api.github.com/repos/${RTK_REPO}/releases/latest`;
 export const CAVEMAN_REMOTE_ULTRA = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/ultracave/SKILL.md';
 export const CAVEMAN_REMOTE_MEGACAVE = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/megacave/SKILL.md';
 export const CAVEMAN_REMOTE_FULL = 'https://raw.githubusercontent.com/JuliusBrussee/caveman/main/skills/caveman/SKILL.md';

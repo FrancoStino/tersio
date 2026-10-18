@@ -63,6 +63,11 @@ const LAYOUT: Record<SectionId, readonly Block[]> = {
     { cards: [{ body: "table", rows: 8 }] },
     { cards: [{ body: "table", rows: 8 }] },
   ],
+  sources: [
+    { strip: 4 },
+    { cards: [{ body: "table", rows: 5 }] },
+    { cards: [{ body: "table", rows: 3 }] },
+  ],
   projects: [
     { strip: 5 },
     { grid: "md:grid-cols-2", cards: [{ body: "bars", rows: 5 }, { body: "bars", rows: 5 }] },

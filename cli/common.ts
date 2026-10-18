@@ -71,13 +71,12 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, version: true, help: true };
 const args = process.argv.slice(2);
 const commandArg = args.find((arg) => !arg.startsWith('-'));
 const command = commandArg?.toLowerCase() || null;
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
-const reinstall = command === 'reinstall';
 const update = command === 'update';
 const showVersion = command === 'version' || args.includes('--version') || args.includes('-v');
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
@@ -390,7 +389,7 @@ export {
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand,
-  install, reinstall, update, showVersion, showHelp, applyUpdate, args,
+  install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,

@@ -4,6 +4,8 @@
  - `tersio upstream` scores the four modes Tersio ports against their upstream projects: what still matches, what moved, and how each installed agent compares. It also writes a Markdown report to `~/.tersio/upstream/`. The command stays out of `help`, because it is an engineering check.
  - The dashboard has an About pane: your version, the build in memory, Node, your platform, the RTK binary, the update controls, and the credits each mode came from.
  - Updates arrive as a notice with `Update now`, `Remind me later`, and `Skip this version`, and the check can run on a cadence you pick: off, daily, weekly, or monthly. `Check now` answers in well under a second.
+ - Settings > About holds a `Developer tools` switch, and the dashboard's Sources page sits behind it: the scorecard as a radar over the four ports, a stacked bar per agent, and two dense tables. The rail keeps that page in a `Developer` category of its own, the item and the `g s` jump appear with the switch, and the route falls back to Overview while it is off.
+ - The connection list and the Sources table name Claude Code and Codex as `Coming soon`, each with its own mark. Tersio installs into neither yet, so those rows carry no numbers.
 
 ### Changed
  - Ponytail ships inside Tersio now instead of as a second package, so a host lists one plugin instead of two. An install or `tersio doctor --fix ponytail` clears what an older install left, and the doctor and the scorecard compare every agent against the bundled copy.
@@ -16,9 +18,11 @@
  - Snapshots are one file each, checked against their own hash before they count, and the pane reads `1K · 1 file` per row with a tooltip naming what it holds.
  - Four small state files fold into `~/.tersio/state.json`, and two files with no reader left are gone.
  - pstack moves to upstream `a968159` and Ponytail to 5.3.2. `docs/ARCHITECTURE.md` shows the order the modes run in, and the status line reads `🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON`.
+ - Every Sources pin opens its upstream: a compare view for the two commit pins, and the release page for RTK and Ponytail, whose version pins carried no link. The page draws each agent with the same marks Settings uses, so Oh My Pi, pi, and OpenCode read as they do in the connection list.
  - The picker names its two plugin rows plainly: `Install plugin` and `Uninstall plugin`, where they read `Install add-ons` and `Uninstall`.
  - `tersio settings` is gone, and the session-start defaults, the display currency, and the diagnosis schedule are set in the dashboard, which already carried all three. The installer still takes `--combo-default`, `--caveman-default`, `--rtk-default`, `--ponytail-default`, and `--pstack-default`, so a scripted install keeps working. The `--diag-schedule` and `--subagent-marker` flags go with the command.
  - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
+ - `docs/BENCHMARK_GUIDE.md` opens with a ten-minute quick run on your own repo, and the full protocol behind it is tighter: one results table per surface kind, six command rows, and the same fixed prompts, quality gates, and metrics.
 
 ### Fixed
  - Savings and scorecard numbers could read zero on a busy database, and a snapshot could miss rows still in flight or keep a damaged one. All three read the committed state now: on this machine a plain copy held 7,194 rows where the database held 7,207, and the prune pass reads six snapshots in 18 ms.
@@ -27,6 +31,7 @@
  - A restore refuses a snapshot whose body fails its hash, and the live files stay untouched.
 
 ### Removed
+ - `tersio reinstall` is gone. `tersio install --host <agent>` re-runs an install, and `tersio doctor` verifies one, so the command only wrapped those two with a menu the installer already shows.
  - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. The ledger, the price list, and the in-session `/tersio usage` summary stay.
 
 ## v2.25.8

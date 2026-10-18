@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { setDevMode, useDevMode } from "@/lib/dev-mode";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,6 +21,7 @@ import {
   isFileExport,
   postDoctorFix,
   postDoctorSchedule,
+  requestReload,
   snapshotVersion,
 } from "@/lib/data";
 import type { DoctorReport, HealthReport, UpdateSchedule } from "@/lib/data";
@@ -29,7 +31,8 @@ import { cn } from "cn";
 import { HoverTip } from "./common";
 import { SocialLinks } from "./brand";
 import { Icon } from "./icon";
-import { OmpLogo, OpencodeLogo, PiLogo } from "./agent-logos";
+import { AgentLogo } from "./agent-logos";
+import { UPCOMING_AGENTS } from "@/lib/agents";
 import { Card } from "./charts/stats";
 
 type Pane = "general" | "connection" | "data" | "diagnosis" | "about";
@@ -43,11 +46,13 @@ interface AgentRowProps {
   docs: string;
   available: boolean;
   unavailable: boolean;
+  /** True for an agent Tersio does not install into yet: the row names the plan, not a status. */
+  soon?: boolean;
   logo: ReactNode;
 }
 
-function AgentRow({ name, version, binPath, dirPath, bin, docs, available, unavailable, logo }: AgentRowProps) {
-  const status = unavailable ? "Unavailable" : available ? "Available" : "Not detected on PATH";
+function AgentRow({ name, version, binPath, dirPath, bin, docs, available, unavailable, soon, logo }: AgentRowProps) {
+  const status = soon ? "Coming soon" : unavailable ? "Unavailable" : available ? "Available" : "Not detected on PATH";
   return (
     <a
       href={docs}
@@ -67,7 +72,9 @@ function AgentRow({ name, version, binPath, dirPath, bin, docs, available, unava
         </div>
         <div className="mt-0.5 min-w-0 text-xs text-dim">
           {/* PATH binary as secondary, config directory first when known. */}
-          {dirPath ? (
+          {soon ? (
+            <span>Support is planned: Tersio does not install here yet.</span>
+          ) : dirPath ? (
             <HoverTip content={dirPath}>
               <span className="mono block truncate">{dirPath}</span>
             </HoverTip>
@@ -114,9 +121,22 @@ function HealthPane() {
   const unavailable = health === null;
   // Absent hosts still show their binary name and lookup path.
   const agents: AgentRowProps[] = [
-    { name: "Oh My Pi", version: health?.omp ?? null, binPath: health?.ompPath ?? null, dirPath: health?.ompDir ?? null, bin: "omp", docs: "https://omp.sh", available: !!health?.omp, unavailable, logo: <OmpLogo className="size-5" /> },
-    { name: "Pi", version: health?.pi ?? null, binPath: health?.piPath ?? null, dirPath: health?.piDir ?? null, bin: "pi", docs: "https://pi.dev", available: !!health?.pi, unavailable, logo: <PiLogo className="size-5" /> },
-    { name: "OpenCode", version: health?.opencode ?? null, binPath: health?.opencodePath ?? null, dirPath: health?.opencodeDir ?? null, bin: "opencode", docs: "https://opencode.ai", available: !!health?.opencode, unavailable, logo: <OpencodeLogo className="size-5" /> },
+    { name: "Oh My Pi", version: health?.omp ?? null, binPath: health?.ompPath ?? null, dirPath: health?.ompDir ?? null, bin: "omp", docs: "https://omp.sh", available: !!health?.omp, unavailable, logo: <AgentLogo host="omp" className="size-5" /> },
+    { name: "Pi", version: health?.pi ?? null, binPath: health?.piPath ?? null, dirPath: health?.piDir ?? null, bin: "pi", docs: "https://pi.dev", available: !!health?.pi, unavailable, logo: <AgentLogo host="pi" className="size-5" /> },
+    { name: "OpenCode", version: health?.opencode ?? null, binPath: health?.opencodePath ?? null, dirPath: health?.opencodeDir ?? null, bin: "opencode", docs: "https://opencode.ai", available: !!health?.opencode, unavailable, logo: <AgentLogo host="opencode" className="size-5" /> },
+    // The unwired agents close the list, so the rows above stay the ones you can install into today.
+    ...UPCOMING_AGENTS.map((agent) => ({
+      name: agent.name,
+      version: null,
+      binPath: null,
+      dirPath: null,
+      bin: agent.bin,
+      docs: agent.docs,
+      available: false,
+      unavailable: false,
+      soon: true,
+      logo: <AgentLogo host={agent.id} className="size-5" />,
+    })),
   ];
 
   return (
@@ -265,6 +285,7 @@ function DataPane() {
           toast("Snapshot taken", `One file: ${d.name}.`, "check");
           if (d.name) setPicked(d.name);
           load();
+          requestReload();
         } else toast("Backup failed", d?.error ?? "The server did not answer.", "circle-alert");
       })
       .catch(() => toast("Backup failed", "The dashboard server did not answer.", "circle-alert"))
@@ -282,8 +303,9 @@ function DataPane() {
       .then((r) => r.json())
       .then((d: { ok?: boolean; error?: string }) => {
         if (d?.ok) {
-          toast("Snapshot restored", "Reload the dashboard to see the restored data.", "check");
+          toast("Snapshot restored", "The pages read the restored data.", "check");
           load();
+          requestReload();
         } else toast("Restore failed", d?.error ?? "Unknown snapshot", "circle-alert");
       })
       .catch(() => toast("Restore failed", "The dashboard server did not answer.", "circle-alert"))
@@ -303,6 +325,7 @@ function DataPane() {
         if (d?.ok) {
           toast("Snapshot deleted", "Removed from disk. The live data is unchanged.", "check");
           load();
+          requestReload();
         } else toast("Delete failed", d?.error ?? "Unknown snapshot", "circle-alert");
       })
       .catch(() => toast("Delete failed", "The dashboard server did not answer.", "circle-alert"));
@@ -319,8 +342,9 @@ function DataPane() {
       .then((r) => r.json())
       .then((d: { ok?: boolean; rows?: number; db?: number; error?: string }) => {
         if (d?.ok) {
-          toast("Statistics cleared", `${d.rows ?? 0} usage rows${(d.db ?? 0) > 0 ? " and usage.db" : ""}. Reload to see the reset view.`, "check");
+          toast("Statistics cleared", `${d.rows ?? 0} usage rows${(d.db ?? 0) > 0 ? " and usage.db" : ""}.`, "check");
           load();
+          requestReload();
         } else toast("Reset failed", d?.error ?? "The server did not answer.", "circle-alert");
       })
       .catch(() => toast("Reset failed", "The dashboard server did not answer.", "circle-alert"));
@@ -1037,6 +1061,7 @@ const CREDITS: ReadonlyArray<{ label: string; hint: string; href: string; glyph:
 /** Two settings and the moment's action: how often the dashboard asks, and whether it installs alone. */
 function AboutPane({ update }: { update: UpdateFeed }) {
   const toast = useToast();
+  const dev = useDevMode();
   const view = update.view;
   const checking = view?.status === "checking";
   const installing = view?.status === "applying";
@@ -1133,6 +1158,18 @@ function AboutPane({ update }: { update: UpdateFeed }) {
             </pre>
           </ScrollArea>
         )}
+      </div>
+
+      <div className="divide-y divide-line border-y border-line">
+        <div className="flex items-center justify-between gap-3 py-3">
+          <div className="min-w-0">
+            <p className="m-0 text-[13px] font-semibold">Developer tools</p>
+            <p className="mt-0.5 mb-0 text-xs text-dim">
+              Show the Sources page: every port beside the upstream project it tracks.
+            </p>
+          </div>
+          <Switch size="sm" checked={dev} onCheckedChange={setDevMode} aria-label="Show developer tools" />
+        </div>
       </div>
 
       <div>

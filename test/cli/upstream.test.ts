@@ -42,7 +42,7 @@ test("every shipped pstack body maps to an upstream path", () => {
 function row(overrides: Partial<SourceRow> = {}): SourceRow {
   return {
     source: "x", pin: "", upstream: "", tracked: 2, matched: 2, drift: 0, added: 0, removed: 0, ceiling: 0,
-    measured: true, status: "ok", kind: "bytes", compare: "", gaps: [], moved: [], appeared: [], gone: [], note: "",
+    measured: true, status: "ok", kind: "bytes", link: "", gaps: [], moved: [], appeared: [], gone: [], note: "",
     ...overrides,
   };
 }
@@ -126,7 +126,7 @@ test("every gap is named with whose move it was", () => {
 test("an extension a host's manifest never names is a gap, though the file is present", () => {
   // The byte compare cannot see this one: the tree carries the module and the manifest never loads it.
   const card = makeCard(
-    [row({ source: "Caveman", drift: 1, moved: ["skills/caveman/SKILL.md"], compare: "https://github.com/JuliusBrussee/caveman/compare/abc1234...HEAD" })],
+    [row({ source: "Caveman", drift: 1, moved: ["skills/caveman/SKILL.md"], link: "https://github.com/JuliusBrussee/caveman/compare/abc1234...HEAD" })],
     [hostRow({ unloaded: ["extensions/pstack/index.ts"] })],
   );
   expect(gateFails(card, false)).toBe(true);

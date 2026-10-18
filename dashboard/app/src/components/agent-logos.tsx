@@ -1,5 +1,5 @@
 // Agent brand marks shared by the settings agent list and recent-requests Agent column.
-import { OpenAIGlyph } from "./brand";
+import { MarkGlyph, OpenAIGlyph } from "./brand";
 
 // Black-on-transparent PNG masked to currentColor; inlined for file:// export.
 const OMP_LOGO =
@@ -50,6 +50,7 @@ export function OpencodeLogo({ className = "size-full" }: { className?: string }
 
 export function AgentLogo({ host, className }: { host?: string; className?: string }) {
   if (host === "omp") return <OmpLogo className={className} />;
+  if (host === "claude-code") return <MarkGlyph slug="anthropic" className={className ?? "size-full"} />;
   if (host === "codex") return <OpenAIGlyph className={className} />;
   if (host === "opencode") return <OpencodeLogo className={className} />;
   return <PiLogo className={className} />;

@@ -786,55 +786,6 @@ test("verbose dry-run reveals file paths hidden by default", () => {
   expect(result.stdout).toMatch(/\[dry-run\] would write .*commands[\\/]index\.ts/);
 });
 
-test("reinstall refreshes a named host and verifies it", () => {
-  // A temp home: the install writes a real plugin tree, and parallel siblings share the fixture as HOME.
-  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-reinstall-"));
-  try {
-    const result = spawnSync(process.execPath, [installer, "reinstall", "--host", "omp", "--dry-run", "--yes"], {
-      encoding: "utf8",
-      timeout: 60000,
-      cwd: root,
-      env: cliEnv(home),
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Reinstall — Tersio v[\d.]+ into Oh My Pi/);
-    expect(result.stdout).toMatch(/Preview — no changes will be written/);
-    // The plugin manifest's tree, not the agent tree, is what a reinstall refreshes.
-    expect(result.stdout).toMatch(/plugins[\\/]node_modules[\\/]@krtclcdy[\\/]tersio[\\/]extensions/);
-    // dry-run writes nothing, so the verification pass has nothing to report.
-    expect(result.stdout, "a dry run must not re-run the doctor").not.toMatch(/Reinstall verified/);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("reinstall says so instead of guessing when no agent has tersio", () => {
-  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-reinstall-empty-"));
-  try {
-    const result = spawnSync(process.execPath, [installer, "reinstall", "--yes"], {
-      encoding: "utf8",
-      timeout: 60000,
-      cwd: root,
-      env: cliEnv(home),
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Nothing to reinstall/);
-    expect(result.stdout).toMatch(/tersio install/);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
-test("the menu offers reinstall right below install", () => {
-  const menu = readFileSync(path.join(root, "cli", "install.ts"), "utf8");
-  const installAt = menu.indexOf("{ value: 'install',");
-  const reinstallAt = menu.indexOf("{ value: 'reinstall',");
-  expect(installAt, "install option").toBeGreaterThan(-1);
-  expect(reinstallAt, "reinstall option").toBeGreaterThan(installAt);
-  const updateAt = menu.indexOf("{ value: 'update',");
-  expect(reinstallAt).toBeLessThan(updateAt);
-});
-
 test("bare dry-run never prompts for the pending update and exits 0", () => {
   const missingHome = path.join(root, "test", "definitely-missing-home");
   const result = spawnSync(
