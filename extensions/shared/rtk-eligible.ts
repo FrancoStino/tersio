@@ -1,8 +1,7 @@
 // Eligible heads come from rtk's own contract: `rtk rewrite <probe>` exits 0 or 3 when rtk handles the command, 1 when it has no equivalent.
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
 import { normalizeRtkVersion, shimCommand, tersioDataPath } from './utils.ts';
+import { patchState, readState, takeLegacy } from './state.ts';
 
 /** Verified against rtk 1.0.1; the drift test fails when rtk's set moves. */
 export const FALLBACK_ELIGIBLE_HEADS: readonly string[] = [
@@ -63,17 +62,15 @@ function rtkVersion(bin: string): string {
 export function eligibleHeads(bin: string | null): ReadonlySet<string> {
   if (!bin) return new Set(FALLBACK_ELIGIBLE_HEADS);
   const version = rtkVersion(bin);
-  const file = tersioDataPath('rtk-eligible.json', 'rtk-eligible.json');
-  try {
-    const cached = JSON.parse(fs.readFileSync(file, 'utf8')) as { version?: unknown; heads?: unknown };
-    if (cached.version === version && Array.isArray(cached.heads) && cached.heads.every((h) => typeof h === 'string')) {
-      return new Set(cached.heads as string[]);
-    }
-  } catch { /* derive below */ }
+  const cached = readState().rtkEligible
+    ?? takeLegacy(tersioDataPath('rtk-eligible.json', 'rtk-eligible.json'), (raw) => {
+      const parsed = JSON.parse(raw) as { version?: unknown; heads?: unknown };
+      return typeof parsed.version === 'string' && Array.isArray(parsed.heads) ? { version: parsed.version, heads: parsed.heads as string[] } : null;
+    });
+  if (cached?.version === version && Array.isArray(cached.heads) && cached.heads.every((h) => typeof h === 'string')) {
+    return new Set(cached.heads);
+  }
   const heads = deriveEligibleHeads(bin);
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify({ version, heads: [...heads] })}\n`, 'utf8');
-  } catch { /* the cache is best-effort */ }
+  patchState({ rtkEligible: { version, heads: [...heads] } });
   return heads;
 }

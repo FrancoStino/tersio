@@ -1,7 +1,8 @@
 // Usage and report surface: the ledger, store, hosts, tokens, backups, currency, and agent stats.
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fs, { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,16 +27,11 @@ import {
   usdCost,
 } from "../../extensions/shared/usage-ledger.ts";
 import {
-  backupUsageDb,
-  backupUsageDir,
   clearUsageDb,
-  deleteUsageBackup,
-  listUsageBackups,
   maybeScheduledBackup,
   readBackupSchedule,
   readUsageDb,
   reparseGuardReport,
-  restoreUsageBackup,
   syncUsageDb,
   usageDbPath,
 } from "../../extensions/shared/usage-store.ts";
@@ -48,8 +44,10 @@ import {
   dataSources,
   deleteDataBackup,
   listDataBackups,
+  pruneBackups,
+  readSnapshotMember,
   restoreDataBackup,
-} from "../../cli/backups.ts";
+} from "../../extensions/shared/snapshots.ts";
 import { FX_SNAPSHOT_RATES, convertUsd, formatCurrency } from "../../cli/currency.ts";
 import { offsetFrom } from "../../cli/dashboard.ts";
 import { FX_SNAPSHOT } from "../../dashboard/app/src/lib/format.ts";
@@ -61,24 +59,27 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const installer = path.join(root, "dist", "tersio.js");
 
 // --- usage-backups: touch user data, so each test fails loudly. ---
+/** Point every snapshot source at the sandbox, so a test snapshot never reads the developer's files. */
+const SOURCE_ENV: ReadonlyArray<[string, string]> = [
+  ["TERSIO_AGENT_STATS_DB", "stats.db"],
+  ["TERSIO_AGENT_SESSIONS_DB", "agent.db"],
+  ["TERSIO_RTK_DB", "rtk.db"],
+];
+
 function sandbox(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-backups-"));
-  const prevDb = process.env.TERSIO_USAGE_DB;
-  const prevHome = process.env.TERSIO_HOME;
-  const prevSessions = process.env.TERSIO_SESSIONS_DIR;
+  const keys = ["TERSIO_USAGE_DB", "TERSIO_HOME", "TERSIO_SESSIONS_DIR", ...SOURCE_ENV.map(([key]) => key)] as const;
+  const prev = new Map<string, string | undefined>(keys.map((key) => [key, process.env[key]]));
   process.env.TERSIO_USAGE_DB = path.join(dir, "usage.db");
   process.env.TERSIO_SESSIONS_DIR = path.join(dir, "sessions");
   // Without this the schedule tests read the real ~/.tersio/settings.json.
   process.env.TERSIO_HOME = dir;
+  for (const [key, name] of SOURCE_ENV) process.env[key] = path.join(dir, name);
   writeFileSync(path.join(dir, "usage.db"), "current");
   return {
     dir,
     cleanup: () => {
-      for (const [key, value] of [
-        ["TERSIO_USAGE_DB", prevDb],
-        ["TERSIO_HOME", prevHome],
-        ["TERSIO_SESSIONS_DIR", prevSessions],
-      ] as const) {
+      for (const [key, value] of prev) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
@@ -88,8 +89,8 @@ function sandbox(): { dir: string; cleanup: () => void } {
 }
 
 function seedSnapshot(name: string, body: string): string {
-  mkdirSync(backupUsageDir(), { recursive: true });
-  const full = path.join(backupUsageDir(), name);
+  mkdirSync(backupDir(), { recursive: true });
+  const full = path.join(backupDir(), name);
   writeFileSync(full, body);
   return full;
 }
@@ -98,11 +99,9 @@ function seedSnapshot(name: string, body: string): string {
 
 // --- restore --------------------------------------------------------------
 
-test.skipIf(!hasSqlite())("restore puts a readable snapshot back over the live mirror", () => {
-  const { dir, cleanup } = sandbox();
+test.skipIf(!hasSqlite())("a restore puts a readable snapshot back over the live mirror", () => {
+  const { cleanup } = sandbox();
   try {
-    // TERSIO_HOME keeps the schedule away from the developer's real settings.
-    process.env.TERSIO_HOME = dir;
     // sandbox seeds a placeholder db; a real one has to come from the transcripts.
     rmSync(usageDbPath(), { force: true });
     mkdirSync(process.env.TERSIO_SESSIONS_DIR!, { recursive: true });
@@ -114,23 +113,22 @@ test.skipIf(!hasSqlite())("restore puts a readable snapshot back over the live m
     expect(syncUsageDb()).toBe(true);
     expect(readUsageDb()?.tokens.messages).toBe(1);
     // What the dashboard's "Backup now" does, over a db that already has rows.
-    backupUsageDb(usageDbPath());
-    const [snapshot] = listUsageBackups();
+    const made = createDataBackup();
     expect(clearUsageDb()).toBe(1);
     expect(readUsageDb()).toBe(null);
-    expect(restoreUsageBackup(path.basename(snapshot.file))).toBe(true);
+    expect(restoreDataBackup(made.name)).toBe(true);
     expect(readUsageDb()?.tokens.messages).toBe(1);
   } finally {
     cleanup();
   }
 });
 
-test("restore rejects an unknown or missing snapshot and leaves the mirror alone", () => {
+test("a restore rejects a name that is not a snapshot and leaves the mirror alone", () => {
   const { cleanup } = sandbox();
   try {
     writeFileSync(usageDbPath(), "untouched");
-    expect(restoreUsageBackup("usage-20990101000000.db")).toBe(false);
-    expect(restoreUsageBackup("")).toBe(false);
+    expect(restoreDataBackup("data-20990101000000.snap")).toBe(false);
+    expect(restoreDataBackup("")).toBe(false);
     expect(readFileSync(usageDbPath(), "utf8")).toBe("untouched");
   } finally {
     cleanup();
@@ -139,23 +137,23 @@ test("restore rejects an unknown or missing snapshot and leaves the mirror alone
 
 // --- delete ---------------------------------------------------------------
 
-test("delete removes exactly one snapshot and keeps the rest", () => {
+test("a delete removes exactly one snapshot and keeps the rest", () => {
   const { cleanup } = sandbox();
   try {
-    seedSnapshot("usage-20260101000000.db", "a");
-    seedSnapshot("usage-20260102000000.db", "b");
-    expect(deleteUsageBackup("usage-20260101000000.db")).toBe(true);
-    expect(listUsageBackups().map((x) => path.basename(x.file))).toEqual(["usage-20260102000000.db"]);
+    const first = createDataBackup();
+    const second = createDataBackup();
+    expect(deleteDataBackup(first.name)).toBe(true);
+    expect(listDataBackups().map((x) => x.name)).toEqual([second.name]);
   } finally {
     cleanup();
   }
 });
 
-test("delete never touches the live mirror", () => {
+test("a delete never touches the live mirror", () => {
   const { cleanup } = sandbox();
   try {
-    seedSnapshot("usage-20260101000000.db", "a");
-    expect(deleteUsageBackup("usage-20260101000000.db")).toBe(true);
+    const made = createDataBackup();
+    expect(deleteDataBackup(made.name)).toBe(true);
     expect(existsSync(usageDbPath())).toBe(true);
     expect(readFileSync(usageDbPath(), "utf8")).toBe("current");
   } finally {
@@ -163,16 +161,16 @@ test("delete never touches the live mirror", () => {
   }
 });
 
-test("delete refuses a path outside the backup directory", () => {
+test("a delete refuses a path outside the backup directory", () => {
   const { dir, cleanup } = sandbox();
   try {
-    const outside = path.join(dir, "not-a-snapshot.db");
+    const outside = path.join(dir, "not-a-snapshot.snap");
     writeFileSync(outside, "precious");
-    seedSnapshot("usage-20260101000000.db", "a");
+    seedSnapshot("data-20260101000000.snap", "a");
 
     // Absolute, relative, and bare traversals all resolve to a basename, so none can leave the backup dir.
-    for (const attempt of [outside, "../not-a-snapshot.db", "../../etc/hosts", "/etc/hosts"]) {
-      expect(deleteUsageBackup(attempt), attempt).toBe(false);
+    for (const attempt of [outside, "../not-a-snapshot.snap", "../../etc/hosts", "/etc/hosts"]) {
+      expect(deleteDataBackup(attempt), attempt).toBe(false);
     }
     expect(existsSync(outside), "the file outside the backup dir survives").toBe(true);
   } finally {
@@ -180,12 +178,12 @@ test("delete refuses a path outside the backup directory", () => {
   }
 });
 
-test("restore also refuses a path outside the backup directory", () => {
+test("a restore also refuses a path outside the backup directory", () => {
   const { dir, cleanup } = sandbox();
   try {
-    writeFileSync(path.join(dir, "not-a-snapshot.db"), "not a db");
-    expect(restoreUsageBackup(path.join(dir, "not-a-snapshot.db"))).toBe(false);
-    expect(restoreUsageBackup("../../usage.db")).toBe(false);
+    writeFileSync(path.join(dir, "not-a-snapshot.snap"), "not a snapshot");
+    expect(restoreDataBackup(path.join(dir, "not-a-snapshot.snap"))).toBe(false);
+    expect(restoreDataBackup("../../usage.db")).toBe(false);
     expect(readFileSync(usageDbPath(), "utf8")).toBe("current");
   } finally {
     cleanup();
@@ -208,12 +206,10 @@ test("a manual schedule takes no snapshot even when one is overdue", () => {
   try {
     // Force the schedule without touching the user's real settings file.
     writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ backupSchedule: "manual" }));
-    process.env.TERSIO_HOME = dir;
     expect(readBackupSchedule()).toBe("manual");
-    expect(maybeScheduledBackup(usageDbPath())).toBe(false);
-    expect(listUsageBackups()).toHaveLength(0);
+    expect(maybeScheduledBackup()).toBe(false);
+    expect(listDataBackups()).toHaveLength(0);
   } finally {
-    delete process.env.TERSIO_HOME;
     cleanup();
   }
 });
@@ -222,15 +218,13 @@ test("a monthly schedule snapshots an empty backup dir and skips while fresh", (
   const { dir, cleanup } = sandbox();
   try {
     writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ backupSchedule: "monthly" }));
-    process.env.TERSIO_HOME = dir;
-    expect(maybeScheduledBackup(usageDbPath()), "first run takes a snapshot").toBe(true);
-    const made = listUsageBackups();
+    expect(maybeScheduledBackup(), "first run takes a snapshot").toBe(true);
+    const made = listDataBackups();
     expect(made).toHaveLength(1);
-    expect(readFileSync(made[0].file, "utf8")).toBe("current");
-    expect(maybeScheduledBackup(usageDbPath()), "a fresh snapshot is not re-taken").toBe(false);
-    expect(listUsageBackups()).toHaveLength(1);
+    expect(readSnapshotMember(made[0], "usage.db")).toEqual(Buffer.from("current"));
+    expect(maybeScheduledBackup(), "a fresh snapshot is not re-taken").toBe(false);
+    expect(listDataBackups()).toHaveLength(1);
   } finally {
-    delete process.env.TERSIO_HOME;
     cleanup();
   }
 });
@@ -368,6 +362,54 @@ test.skipIf(!hasSqlite())("the reads the page needs are indexed", () => {
         "EXPLAIN QUERY PLAN SELECT MAX(t) FROM messages WHERE h='opencode';",
       );
       expect(plan).toMatch(/SEARCH messages USING (COVERING )?INDEX/);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!hasSqlite())("a tool call keeps its argument and result sizes and its error flag", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-toolfacts-"));
+  try {
+    const at = "2026-03-01T10:00:00.000Z";
+    const file = path.join(dir, ".omp", "agent", "sessions", "-proj-a", "t.jsonl");
+    mkdirSync(path.dirname(file), { recursive: true });
+    const call = {
+      role: "assistant",
+      model: "commandcode/priced-model",
+      usage: { input: 100, output: 50 },
+      timestamp: at,
+      stopReason: "toolUse",
+      content: [
+        { type: "toolCall", id: "c1", name: "edit", arguments: { path: "a.ts", old: "x" } },
+        { type: "toolCall", id: "c2", name: "read", arguments: { path: "b.ts" } },
+      ],
+    };
+    const result = (id: string, text: string, isError: boolean): Record<string, unknown> => ({
+      role: "toolResult", toolCallId: id, toolName: "t", content: [{ type: "text", text }], isError,
+    });
+    writeFileSync(file, [
+      { type: "session", version: 3, id: "t", timestamp: at, cwd: "/tmp/project" },
+      { type: "message", id: "m1", timestamp: at, message: call },
+      { type: "message", id: "m2", timestamp: at, message: result("c1", "ok", false) },
+      { type: "message", id: "m3", timestamp: at, message: result("c2", "boom", true) },
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+
+    withHome(dir, () => {
+      expect(syncUsageDb()).toBe(true);
+      const stats = readAgentStats("all");
+      const edit = stats.tools.find((row) => row.tool === "edit");
+      const read = stats.tools.find((row) => row.tool === "read");
+      // The argument size is the serialized JSON the model sent, which is what the model paid for.
+      expect(edit?.argsChars).toBe(JSON.stringify({ path: "a.ts", old: "x" }).length);
+      expect(edit?.resultChars).toBe(2);
+      expect(edit?.errors).toBe(0);
+      // The error flag and the result size sit on the toolResult line, keyed by the call id.
+      expect(read?.argsChars).toBe(JSON.stringify({ path: "b.ts" }).length);
+      expect(read?.resultChars).toBe(4);
+      expect(read?.errors).toBe(1);
+      expect(stats.toolSeries.reduce((sum, point) => sum + point.errors, 0)).toBe(1);
+      expect(stats.overall.requests).toBe(1);
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -661,7 +703,7 @@ test.skipIf(!hasSqlite())("a store from a newer tersio keeps its rows instead of
       }
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(6);
-      const backupsBefore = listUsageBackups().length;
+      const backupsBefore = listDataBackups().length;
       // A newer tersio wrote the store; this build cannot migrate it forward.
       sqliteExec(db, "UPDATE meta SET v='99' WHERE k='parser_version';");
       rmSync(path.join(dir, "sessions", "a.jsonl"));
@@ -670,7 +712,7 @@ test.skipIf(!hasSqlite())("a store from a newer tersio keeps its rows instead of
       expect(readUsageDb()?.tokens.messages).toBe(6);
       expect(reparseGuardReport()).toMatch(/written by a newer tersio/);
       // No backup was taken and none was restored: the wipe path never ran.
-      expect(listUsageBackups().length).toBe(backupsBefore);
+      expect(listDataBackups().length).toBe(backupsBefore);
       expect(sqliteRead(db, "SELECT v FROM meta WHERE k='parser_version';").trim()).toBe("99");
       // The force switch still accepts the loss on demand.
       process.env.TERSIO_FORCE_REPARSE = "1";
@@ -1256,38 +1298,41 @@ test("importer walks both hosts' session directories", () => {
 let dataBackupsDir = "";
 let previous: Record<string, string | undefined> = {};
 
+/** Every source env var and the file it points at inside the sandbox. */
+const SOURCE_FILES: ReadonlyArray<[string, string]> = [
+  ["TERSIO_USAGE_DB", "usage.db"],
+  ["TERSIO_AGENT_STATS_DB", "stats.db"],
+  ["TERSIO_AGENT_SESSIONS_DB", "agent.db"],
+  ["TERSIO_RTK_DB", "rtk.db"],
+];
+
 /** Point every data source at the sandbox, so no test can touch the developer's own files. */
 function sandboxSources(): void {
-  const sources = dataSources();
   previous = {};
-  const overrides: Record<string, string> = {
-    "Usage ledger": "usage.db",
-    "Reset watermark": "reset.json",
-    Settings: "settings.json",
-    "Price cache": "prices.json",
-    "Model price cache": "prices-modelsdev.json",
-    "Agent stats": "stats.db",
-    "Agent quota windows": "agent.db",
-    "Command history": "rtk.db",
-  };
-  const byEnv: Record<string, string> = {
-    "Usage ledger": "TERSIO_USAGE_DB",
-    "Reset watermark": "TERSIO_RESET_FILE",
-    "Agent stats": "TERSIO_AGENT_STATS_DB",
-    "Agent quota windows": "TERSIO_AGENT_SESSIONS_DB",
-    "Command history": "TERSIO_RTK_DB",
-  };
-  for (const source of sources) {
-    const name = overrides[source.label];
-    if (!name) continue;
-    previous[name] = process.env[name];
-    const envName = byEnv[source.label];
-    if (envName) process.env[envName] = path.join(dataBackupsDir, name);
-    const target = envName ? path.join(dataBackupsDir, name) : path.join(dataBackupsDir, ".tersio", name);
-    mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, `${source.label} body`);
-  }
+  previous.TERSIO_HOME = process.env.TERSIO_HOME;
   process.env.TERSIO_HOME = path.join(dataBackupsDir, ".tersio");
+  for (const [key, name] of SOURCE_FILES) {
+    previous[key] = process.env[key];
+    process.env[key] = path.join(dataBackupsDir, name);
+  }
+  // Each source is written where it now resolves, so the pack finds one file per label.
+  for (const source of dataSources()) {
+    mkdirSync(path.dirname(source.source), { recursive: true });
+    writeFileSync(source.source, `${source.label} body`);
+  }
+}
+
+/** A database held open, so its committed rows still sit in the write-ahead log while the pack runs. */
+function openLiveDb(file: string): { exec(sql: string): void; close(): void } | null {
+  const req = createRequire(import.meta.url);
+  for (const driver of ["node:sqlite", "bun:sqlite"]) {
+    try {
+      const mod = req(driver) as { DatabaseSync?: new (p: string) => { exec(sql: string): void; close(): void }; Database?: new (p: string) => { exec(sql: string): void; close(): void } };
+      const Ctor = mod.DatabaseSync ?? mod.Database;
+      if (Ctor) return new Ctor(file);
+    } catch { /* this runtime has no in-process driver */ }
+  }
+  return null;
 }
 
 // The hooks stay scoped to this suite so the sandbox env never leaks into the other tests above.
@@ -1305,70 +1350,136 @@ describe("data backups", () => {
     rmSync(dataBackupsDir, { recursive: true, force: true });
   });
 
-  test("a snapshot copies every file the machine has and names them in a manifest", async () => {
-    const made = await createDataBackup();
-    expect(existsSync(path.join(made.path, "usage.db")), "ledger copied").toBe(true);
-    expect(existsSync(path.join(made.path, "stats.db")), "agent stats copied").toBe(true);
-    expect(existsSync(path.join(made.path, "reset.json")), "watermark copied").toBe(true);
-    const manifest = JSON.parse(readFileSync(path.join(made.path, "manifest.json"), "utf8")) as Array<{ label: string; source: string }>;
-    expect(manifest.map((entry) => entry.label)).toEqual(made.files.map((entry) => entry.label));
-    expect(manifest.every((entry) => entry.source.startsWith(dataBackupsDir))).toBe(true);
+  test("a snapshot packs every file the machine has into one file", () => {
+    const made = createDataBackup();
+    expect(path.basename(made.path)).toMatch(/^data-\d+\.snap$/);
+    expect(existsSync(made.path), "one file on disk").toBe(true);
+    const labels = made.members.map((entry) => entry.label);
+    expect(labels).toContain("Usage ledger");
+    expect(labels).toContain("Agent stats");
+    expect(labels).toContain("State");
+    expect(made.members.every((entry) => entry.source.startsWith(dataBackupsDir))).toBe(true);
+    // Listing reads the snapshot alone, so nothing sits beside it.
+    expect(readdirSync(backupDir()).filter((name) => name.startsWith("data-"))).toEqual([path.basename(made.path)]);
   });
 
-  test("only the newest snapshots are kept", async () => {
-    for (let i = 0; i < BACKUP_KEEP + 2; i += 1) await createDataBackup();
+  test("only the newest snapshots are kept", () => {
+    for (let i = 0; i < BACKUP_KEEP + 2; i += 1) createDataBackup();
     const kept = listDataBackups();
     expect(kept.length).toBe(BACKUP_KEEP);
     const stamps = kept.map((entry) => entry.name.replace("data-", ""));
     expect(stamps).toEqual([...stamps].toSorted((a, b) => b.localeCompare(a)));
   });
 
-  test("a restore puts the snapshot's files back and leaves the rest alone", async () => {
-    await createDataBackup();
+  test("a damaged snapshot never displaces a readable one", () => {
+    const bad = createDataBackup();
+    const bytes = readFileSync(bad.path);
+    bytes[bytes.length - 4] ^= 0xff;
+    writeFileSync(bad.path, bytes);
+    // Newest by a clear margin, so age alone would keep it and drop a readable snapshot.
+    const ahead = new Date(Date.now() + 3_600_000);
+    utimesSync(bad.path, ahead, ahead);
+    const readable = Array.from({ length: BACKUP_KEEP }, () => createDataBackup().name);
+
+    pruneBackups();
+
+    expect(listDataBackups().length).toBe(BACKUP_KEEP);
+    expect(readable.filter((name) => !existsSync(path.join(backupDir(), name)))).toEqual([]);
+    expect(existsSync(bad.path)).toBe(false);
+  });
+
+  test("a snapshot keeps a row that still sits in the write-ahead log", () => {
+    const ledger = path.join(dataBackupsDir, "usage.db");
+    rmSync(ledger, { force: true });
+    const live = openLiveDb(ledger);
+    if (!live) return;
+    try {
+      live.exec("PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (1);");
+      expect(existsSync(`${ledger}-wal`), "the row sits in the log, not the main file").toBe(true);
+      const made = createDataBackup();
+      const back = path.join(dataBackupsDir, "readback");
+      mkdirSync(back, { recursive: true });
+      // What a restore does: the main file, plus any sidecar the pack had to keep beside it.
+      for (const name of ["usage.db", "usage.db-wal", "usage.db-shm"]) {
+        const body = readSnapshotMember(made, name);
+        if (body) writeFileSync(path.join(back, name), body);
+      }
+      expect(sqliteRead(path.join(back, "usage.db"), "SELECT x FROM t;").trim()).toBe("1");
+    } finally {
+      live.close();
+    }
+  });
+
+  test("a restore puts the snapshot's files back and leaves the rest alone", () => {
+    const made = createDataBackup();
     const ledger = path.join(dataBackupsDir, "usage.db");
     writeFileSync(ledger, "changed after the snapshot");
     const untouched = path.join(dataBackupsDir, "loose.txt");
     writeFileSync(untouched, "keep me");
-    const target = listDataBackups()[0];
 
-    expect(await restoreDataBackup(target.name)).toBe(true);
+    expect(restoreDataBackup(made.name)).toBe(true);
     expect(readFileSync(ledger, "utf8")).toBe("Usage ledger body");
+    // The restore copies the live data first, so a restore of the wrong snapshot stays reversible.
+    const after = listDataBackups();
+    expect(after.length).toBe(2);
+    expect(readSnapshotMember(after[0], "usage.db")).toEqual(Buffer.from("changed after the snapshot"));
     // A file the snapshot does not carry survives the restore.
     expect(readFileSync(untouched, "utf8")).toBe("keep me");
   });
 
-  test("a restore refuses a name outside the backup directory", async () => {
-    await createDataBackup();
-    expect(await restoreDataBackup("../usage.db")).toBe(false);
-    expect(await restoreDataBackup("/etc/passwd")).toBe(false);
-    expect(await restoreDataBackup("missing")).toBe(false);
+  test("a restore refuses a damaged snapshot and leaves the live data alone", () => {
+    const made = createDataBackup();
+    const bytes = readFileSync(made.path);
+    bytes[bytes.length - 4] ^= 0xff; // one flipped byte inside the packed body
+    writeFileSync(made.path, bytes);
+    const ledger = path.join(dataBackupsDir, "usage.db");
+    writeFileSync(ledger, "still live");
+
+    expect(restoreDataBackup(made.name)).toBe(false);
+    expect(readFileSync(ledger, "utf8")).toBe("still live");
   });
 
-  test("a delete removes exactly one snapshot", async () => {
-    await createDataBackup();
-    await createDataBackup();
+  test("a restore refuses a name outside the backup directory", () => {
+    createDataBackup();
+    expect(restoreDataBackup("../usage.db")).toBe(false);
+    expect(restoreDataBackup("/etc/passwd")).toBe(false);
+    expect(restoreDataBackup("missing")).toBe(false);
+  });
+
+  test("a delete removes exactly one snapshot", () => {
+    createDataBackup();
+    createDataBackup();
     const all = listDataBackups();
-    expect(await deleteDataBackup(all[0].name)).toBe(true);
+    expect(deleteDataBackup(all[0].name)).toBe(true);
     const left = listDataBackups();
     expect(left.map((entry) => entry.name)).toEqual([all[1].name]);
     // The live data is untouched by a delete of its snapshot.
     expect(existsSync(path.join(dataBackupsDir, "usage.db"))).toBe(true);
   });
 
-  test("an older single-file snapshot still lists and restores the ledger", async () => {
+  test("a legacy mirror lists, restores the ledger, and retires once a snapshot carries it", () => {
     const legacyName = "usage-20260101000000.db";
     mkdirSync(backupDir(), { recursive: true });
     writeFileSync(path.join(backupDir(), legacyName), "the old mirror");
     const found = listDataBackups();
     expect(found.map((entry) => entry.name)).toContain(legacyName);
-    expect(found.find((entry) => entry.name === legacyName)?.files.map((file) => file.label)).toEqual(["Usage ledger"]);
+    expect(found.find((entry) => entry.name === legacyName)?.members.map((file) => file.label)).toEqual(["Usage ledger"]);
 
     const ledger = path.join(dataBackupsDir, "usage.db");
     writeFileSync(ledger, "changed");
-    expect(await restoreDataBackup(legacyName)).toBe(true);
+    expect(restoreDataBackup(legacyName)).toBe(true);
     expect(readFileSync(ledger, "utf8")).toBe("the old mirror");
-    expect(await deleteDataBackup(legacyName)).toBe(true);
+    // The restore's own safety snapshot carries the ledger, so the mirror is redundant afterwards.
     expect(listDataBackups().some((entry) => entry.name === legacyName)).toBe(false);
+  });
+
+  test("a delete removes a legacy mirror and never the live ledger", () => {
+    const legacyName = "usage-20260101000000.db";
+    mkdirSync(backupDir(), { recursive: true });
+    writeFileSync(path.join(backupDir(), legacyName), "the old mirror");
+    expect(deleteDataBackup(legacyName)).toBe(true);
+    expect(listDataBackups().some((entry) => entry.name === legacyName)).toBe(false);
+    expect(readFileSync(path.join(dataBackupsDir, "usage.db"), "utf8")).toBe("Usage ledger body");
   });
 });
 
@@ -1861,7 +1972,7 @@ describe('omp stats', () => {
       expect(omp.tools.length).toBe(2);
       expect(read?.calls).toBe(1);
       expect(read?.model).toBe('commandcode/priced-model');
-      // The store keeps names, not per-call rows, so one name is one whole call: tokens and cost are its share.
+      // This row carries names only, so the sizes and the error flag read zero rather than a guess.
       expect(read?.totalTokensShare).toBeCloseTo(5500, 9);
       expect(read?.outputTokensShare).toBeCloseTo(500, 9);
       expect(read?.costShare).toBeCloseTo(0.10, 12);

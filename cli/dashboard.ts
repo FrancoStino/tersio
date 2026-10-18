@@ -13,13 +13,14 @@ import {
   OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
 } from './common.ts';
 import { BACKUP_SCHEDULES, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
-import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from './backups.ts';
+import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
@@ -256,30 +257,40 @@ const DIAG_TTL_MS: Record<DiagSchedule, number> = {
   monthly: 30 * 24 * 3600 * 1000,
 };
 
-function diagPaths(): { report: string } {
-  // Keep the report beside the overridden DB so tests never touch the real one.
-  const dbOverride = process.env.TERSIO_USAGE_DB;
-  if (dbOverride) return { report: path.join(path.dirname(dbOverride), 'diag.json') };
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  return { report: path.join(home, '.tersio', 'diag.json') };
+// The report lives in state.json; an overridden DB keeps it beside that DB so tests never touch the real home.
+function diagReport(): DoctorReport | null {
+  const raw = (process.env.TERSIO_USAGE_DB ? legacyDiag() : readState().diag ?? migratedDiag()) as Partial<DoctorReport> | undefined;
+  if (!raw || !Array.isArray(raw.rows) || typeof raw.checkedAt !== 'number') return null;
+  const schedule: DiagSchedule = raw.schedule === 'daily' || raw.schedule === 'weekly' || raw.schedule === 'monthly' ? raw.schedule : 'manual';
+  return { rows: raw.rows as DoctorRow[], checkedAt: raw.checkedAt, schedule };
 }
 
-function readDiagReport(): DoctorReport | null {
+// The old report sat loose in the data home; read it once, then keep it in state.json.
+function migratedDiag(): Partial<DoctorReport> | null {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const old = takeLegacy(path.join(home, '.tersio', 'diag.json'), (raw) => JSON.parse(raw) as Partial<DoctorReport>);
+  if (old) patchState({ diag: old });
+  return old;
+}
+
+function legacyDiag(): Partial<DoctorReport> | null {
   try {
-    const raw = JSON.parse(readFileSync(diagPaths().report, 'utf8')) as Partial<DoctorReport>;
-    if (!Array.isArray(raw.rows) || typeof raw.checkedAt !== 'number') return null;
-    const schedule: DiagSchedule = raw.schedule === 'daily' || raw.schedule === 'weekly' || raw.schedule === 'monthly' ? raw.schedule : 'manual';
-    return { rows: raw.rows as DoctorRow[], checkedAt: raw.checkedAt, schedule };
+    return JSON.parse(readFileSync(path.join(path.dirname(process.env.TERSIO_USAGE_DB as string), 'diag.json'), 'utf8')) as Partial<DoctorReport>;
   } catch {
     return null;
   }
 }
 
 function writeDiagReport(report: DoctorReport): void {
-  try {
-    mkdirSync(path.dirname(diagPaths().report), { recursive: true });
-    writeFileSync(diagPaths().report, JSON.stringify(report) + '\n', 'utf8');
-  } catch { /* best-effort */ }
+  if (process.env.TERSIO_USAGE_DB) {
+    try {
+      const file = path.join(path.dirname(process.env.TERSIO_USAGE_DB), 'diag.json');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify(report) + '\n', 'utf8');
+    } catch { /* best-effort */ }
+    return;
+  }
+  patchState({ diag: report });
 }
 
 function ageStr(p: string): string | null {
@@ -394,7 +405,7 @@ function isRetiredReport(report: DoctorReport): boolean {
 
 // Recompute when forced, missing, retired, or past schedule; manual schedules recompute on open, dated ones reuse.
 function getDoctorReport(force: boolean): DoctorReport {
-  const saved = readDiagReport();
+  const saved = diagReport();
   const ttl = saved ? DIAG_TTL_MS[saved.schedule] : 0;
   if (!force && saved && !isRetiredReport(saved) && ttl > 0 && Date.now() - saved.checkedAt < ttl) return saved;
   const report: DoctorReport = { rows: computeDoctorRows(), checkedAt: Date.now(), schedule: saved?.schedule ?? 'manual' };
@@ -403,7 +414,7 @@ function getDoctorReport(force: boolean): DoctorReport {
 }
 
 function setDiagSchedule(schedule: DiagSchedule): DoctorReport {
-  const base = readDiagReport() ?? { rows: computeDoctorRows(), checkedAt: Date.now(), schedule };
+  const base = diagReport() ?? { rows: computeDoctorRows(), checkedAt: Date.now(), schedule };
   base.schedule = schedule;
   writeDiagReport(base);
   return base;
@@ -458,7 +469,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
 }
 
 function readDiagSchedule(): DiagSchedule {
-  return readDiagReport()?.schedule ?? 'manual';
+  return diagReport()?.schedule ?? 'manual';
 }
 
 // Persist the picker choice: every run serves a fresh port, so localStorage alone cannot survive a restart.
@@ -556,19 +567,19 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       // A missing SQLite engine, or a locked file, is a 500 with a message rather than a silent no-op.
       try {
         if (action === 'create') {
-          const made = await createDataBackup();
+          const made = createDataBackup();
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, name: made.name, files: made.files.length }));
+          res.end(JSON.stringify({ ok: true, name: made.name }));
           return;
         }
         if (action === 'restore') {
-          const ok = await restoreDataBackup(name);
+          const ok = restoreDataBackup(name);
           res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
           return;
         }
         if (action === 'delete') {
-          const ok = await deleteDataBackup(name);
+          const ok = deleteDataBackup(name);
           res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
           return;

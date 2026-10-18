@@ -9,6 +9,7 @@ import {
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { readTextIfExists, resolveRtkBinary, tersioDataPath } from '../extensions/shared/utils.ts';
+import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { refreshPrices } from '../extensions/shared/pricing.ts';
 import {
   CAVEMAN_REMOTE_ULTRA,
@@ -49,15 +50,13 @@ async function latestPublishedVersion(): Promise<string | null> {
 
 // A newer version, null when up to date, 'unknown' when the registry is unreachable. Cached for a TTL unless force.
 async function checkForUpdate(force = false): Promise<string | null | 'unknown'> {
-  const cachePath = tersioDataPath('update-check.json', 'tersio-update-check.json');
-  const cached = parseJsonObject<{ latest?: string; lastCheck?: number }>(await readTextIfExists(cachePath));
+  const cached = readState().updateCheck ?? takeLegacy(tersioDataPath('update-check.json', 'tersio-update-check.json'), (raw) => parseJsonObject<{ latest?: string; lastCheck?: number }>(raw));
   const cacheFresh = typeof cached?.lastCheck === 'number' && Date.now() - cached.lastCheck < UPDATE_CHECK_TTL_MS;
   if (!force && cacheFresh && cached?.latest) return newerThan(cached.latest, PACKAGE_VERSION) ? cached.latest : null;
 
   const latest = await latestPublishedVersion();
   if (latest) {
-    await fs.mkdir(OMP_PLUGINS_DIR, { recursive: true }).catch(() => { });
-    await fs.writeFile(cachePath, JSON.stringify({ latest, lastCheck: Date.now() }) + '\n', 'utf8').catch(() => { });
+    patchState({ updateCheck: { latest, lastCheck: Date.now() } });
     return newerThan(latest, PACKAGE_VERSION) ? latest : null;
   }
   // Unreachable registry: a stale cache naming a newer release is actionable, else unknown, so none claim "latest".

@@ -3,8 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, shimCommand, tersioDataPath } from './utils.ts';
+import { tersioStateFile } from './state.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
+import { patchState, readState, takeLegacy } from './state.ts';
 
 export type UsageKind = 'command' | 'toggle' | 'install' | 'update' | 'rtk-audit';
 
@@ -20,16 +22,30 @@ export function ledgerPath(): string {
   return tersioDataPath('usage.jsonl', 'tersio-usage.jsonl');
 }
 
-// Reset watermark: views filter rows older than it, so nothing else is deleted.
+// Reset watermark: views filter rows older than it, so nothing else is deleted. The env override still names a file.
 export function resetMarkerPath(): string {
   const override = process.env.TERSIO_RESET_FILE;
   if (override) return override;
-  return tersioDataPath('reset.json', 'tersio-reset.json');
+  return tersioStateFile();
 }
 
 export function readResetWatermark(): number {
+  const override = process.env.TERSIO_RESET_FILE;
+  if (!override) {
+    const value = readState().reset;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+    const legacy = takeLegacy(tersioDataPath('reset.json', 'tersio-reset.json'), (raw) => {
+      const ts = (JSON.parse(raw) as { ts?: unknown }).ts;
+      return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : null;
+    });
+    if (legacy !== null) {
+      patchState({ reset: legacy });
+      return legacy;
+    }
+    return 0;
+  }
   try {
-    const raw = JSON.parse(fs.readFileSync(resetMarkerPath(), 'utf8')) as { ts?: unknown };
+    const raw = JSON.parse(fs.readFileSync(override, 'utf8')) as { ts?: unknown };
     return typeof raw.ts === 'number' && Number.isFinite(raw.ts) && raw.ts > 0 ? raw.ts : 0;
   } catch {
     return 0;
@@ -37,10 +53,14 @@ export function readResetWatermark(): number {
 }
 
 export function markReset(now = Date.now()): number {
-  try {
-    fs.mkdirSync(path.dirname(resetMarkerPath()), { recursive: true });
-    fs.writeFileSync(resetMarkerPath(), JSON.stringify({ ts: now }) + '\n', 'utf8');
-  } catch { /* best-effort; never break the caller */ }
+  if (process.env.TERSIO_RESET_FILE) {
+    try {
+      fs.mkdirSync(path.dirname(resetMarkerPath()), { recursive: true });
+      fs.writeFileSync(resetMarkerPath(), JSON.stringify({ ts: now }) + '\n', 'utf8');
+    } catch { /* best-effort */ }
+    return now;
+  }
+  patchState({ reset: now });
   return now;
 }
 
@@ -434,7 +454,81 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
   return true;
 }
 export type SessionLineKind = 'codex_provider' | 'codex_model' | 'token_row' | 'assistant_row' | 'skip';
-export function classifySessionLine(row: { timestamp?: string | number; type?: unknown; message?: { role?: unknown; model?: unknown; usage?: Record<string, unknown>; duration?: unknown; ttft?: unknown; completedAt?: unknown; timestamp?: unknown; stopReason?: unknown; errorStatus?: unknown; errorMessage?: unknown; isError?: unknown; content?: Array<{ type?: unknown; name?: unknown; arguments?: unknown }> }; payload?: { type?: unknown; model?: unknown; model_provider?: unknown; info?: { last_token_usage?: Record<string, unknown> } } }): { kind: SessionLineKind; provider?: string; model?: string; usage?: Record<string, unknown>; durMs?: number; ttftMs?: number; run?: { st: RunStatus; code?: number; note?: string }; tools?: string[]; ms?: number } {
+
+/** One tool call with the facts the Tools page reads: name, argument bytes, result bytes, error flag. */
+export interface ToolFact {
+  n: string;
+  a: number;
+  r: number;
+  e: number;
+}
+
+/** Result text length and error flag per call id: both sit on the `toolResult` line, not on the call. */
+export type ToolResults = Map<string, { chars: number; error: boolean }>;
+
+/** The bytes a JSON value serializes to, which is what the model sent and the host stored. */
+function jsonChars(value: unknown): number {
+  if (value === undefined) return 0;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Every `toolResult` line in a transcript, keyed by the call it closes. */
+export function collectToolResults(text: string): ToolResults {
+  const found: ToolResults = new Map();
+  for (const line of text.split('\n')) {
+    if (!line.includes('toolResult')) continue;
+    try {
+      const row = JSON.parse(line) as { message?: { role?: unknown; toolCallId?: unknown; content?: unknown; isError?: unknown } };
+      const msg = row.message;
+      if (!msg || msg.role !== 'toolResult' || typeof msg.toolCallId !== 'string' || !msg.toolCallId) continue;
+      const parts = Array.isArray(msg.content) ? msg.content as Array<Record<string, unknown>> : [];
+      const chars = parts.reduce((sum, part) => sum + (typeof part.text === 'string' ? part.text.length : 0), 0);
+      found.set(msg.toolCallId, { chars, error: msg.isError === true });
+    } catch { /* skip a corrupt line */ }
+  }
+  return found;
+}
+
+/** A transcript line as every host writes it. Only the fields the parse reads are named. */
+export interface SessionLineRow {
+  timestamp?: string | number;
+  type?: unknown;
+  message?: {
+    role?: unknown;
+    model?: unknown;
+    usage?: Record<string, unknown>;
+    duration?: unknown;
+    ttft?: unknown;
+    completedAt?: unknown;
+    timestamp?: unknown;
+    stopReason?: unknown;
+    errorStatus?: unknown;
+    errorMessage?: unknown;
+    isError?: unknown;
+    content?: Array<{ type?: unknown; name?: unknown; id?: unknown; arguments?: unknown }>;
+  };
+  payload?: { type?: unknown; model?: unknown; model_provider?: unknown; info?: { last_token_usage?: Record<string, unknown> } };
+}
+
+/** What one transcript line classifies to. `assistant_row` carries the usage and the tool facts. */
+export interface SessionLine {
+  kind: SessionLineKind;
+  provider?: string;
+  model?: string;
+  usage?: Record<string, unknown>;
+  durMs?: number;
+  ttftMs?: number;
+  run?: { st: RunStatus; code?: number; note?: string };
+  tools?: string[];
+  toolFacts?: ToolFact[];
+  ms?: number;
+}
+
+export function classifySessionLine(row: SessionLineRow, results?: ToolResults): SessionLine {
   const payload = row.payload;
   if (payload && typeof payload === 'object') {
     if (row.type === 'session_meta' && typeof payload.model_provider === 'string') return { kind: 'codex_provider', provider: payload.model_provider };
@@ -459,16 +553,17 @@ export function classifySessionLine(row: { timestamp?: string | number; type?: u
   const endMs = typeof msg.completedAt === 'number' ? msg.completedAt : stampMs(row.timestamp);
   const computedDur = startMs !== undefined && Number.isFinite(endMs) && endMs > startMs ? endMs - startMs : undefined;
   const tools: string[] = [];
+  const toolFacts: ToolFact[] = [];
   for (const part of msg.content ?? []) {
     if (part?.type !== 'toolCall' || typeof part.name !== 'string' || !part.name) continue;
-    if (part.name !== 'bash') {
-      tools.push(part.name);
-      continue;
-    }
-    const command = (part.arguments as { command?: unknown } | null)?.command;
-    tools.push(`bash:${leadBinary(command)}`);
+    const name = part.name === 'bash'
+      ? `bash:${leadBinary((part.arguments as { command?: unknown } | null)?.command)}`
+      : part.name;
+    tools.push(name);
+    const result = typeof part.id === 'string' ? results?.get(part.id) : undefined;
+    toolFacts.push({ n: name, a: jsonChars(part.arguments), r: result?.chars ?? 0, e: result?.error ? 1 : 0 });
   }
-  return { kind: 'assistant_row', model, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, ttftMs: typeof msg.ttft === 'number' ? msg.ttft : undefined, run: statusOf(msg), tools };
+  return { kind: 'assistant_row', model, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, ttftMs: typeof msg.ttft === 'number' ? msg.ttft : undefined, run: statusOf(msg), tools, toolFacts };
 }
 // True when at least one token bucket holds a positive finite count.
 export function hasPositiveUsage(usage: Record<string, unknown>): boolean {
@@ -506,8 +601,17 @@ export function opencodeToolNames(message: OpencodeMessage, joined?: string): st
   return names;
 }
 
+/** One OpenCode assistant message, as the shared accumulator reads it. */
+export interface OpencodeClassification {
+  model: string;
+  usage: Record<string, unknown>;
+  ms: number | undefined;
+  durMs: number | undefined;
+  ttftMs: number | undefined;
+}
+
 // One OpenCode message file; assistant rows carry the token buckets.
-export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined): { model: string; usage: Record<string, unknown>; ms: number | undefined; durMs: number | undefined; ttftMs: number | undefined } | null {
+export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined): OpencodeClassification | null {
   if (!obj || typeof obj !== 'object' || obj.role !== 'assistant') return null;
   const t = obj.tokens;
   if (!t || typeof t !== 'object') return null;
@@ -889,11 +993,13 @@ export function readRtkAdoption(): RtkAdoption {
   };
 }
 export function processSessionText(accum: SessionAccum, state: { codexProvider: string | null; codexModel?: string | null }, text: string, host?: string, agent?: string): void {
+  // A call's result arrives on a later line, so the whole file is scanned for results first.
+  const results = collectToolResults(text);
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as Parameters<typeof classifySessionLine>[0];
-      const parsed = classifySessionLine(row);
+      const row = JSON.parse(line) as SessionLineRow;
+      const parsed = classifySessionLine(row, results);
       const rid = messageRowId(row);
       if (parsed.kind === 'codex_provider') {
         if (parsed.provider) state.codexProvider = parsed.provider;

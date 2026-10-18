@@ -8,6 +8,7 @@ import {
   canonicalModelId,
   classifySessionLine,
   classifyOpencodeMessage,
+  collectToolResults,
   costOf,
   durOf,
   agentOfSessionText,
@@ -24,9 +25,10 @@ import {
   walkJsonl,
 } from './usage-ledger.ts';
 import { tersioDataPath } from './utils.ts';
+import { createDataBackup, newestDataBackup, readSnapshotMember, restoreSnapshotMember } from './snapshots.ts';
 import { MODEL_ALIASES } from './pricing.ts';
 import { tersioSettingsFile } from './plugin-settings.ts';
-import type { OpencodeDbRow, OpencodeMessage, RunStatus, SessionTokens } from './usage-ledger.ts';
+import type { OpencodeClassification, OpencodeDbRow, OpencodeMessage, RunStatus, SessionLineRow, SessionTokens, ToolFact } from './usage-ledger.ts';
 
 export function usageDbPath(): string {
   const override = process.env.TERSIO_USAGE_DB;
@@ -88,7 +90,7 @@ const SCHEMA_SQL =
   `CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);` +
   `CREATE TABLE IF NOT EXISTS messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
   ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
-  ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);` +
+  ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT);` +
   // Every read filters or orders by one of these three; without them each sync and read scans the table.
   `CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_id);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_t ON messages(t);` +
@@ -153,16 +155,21 @@ function opencodeToolsBackfilled(db: string): boolean {
   }
 }
 
-// Same pre-migration state as the newest backup: another copy churns the 3-slot rotation for nothing.
+// Same pre-migration state as the newest snapshot: another copy churns the rotation for nothing.
 function newestBackupMatches(stored: string | null): boolean {
   if (stored === null) return false;
+  const newest = newestDataBackup();
+  const body = newest ? readSnapshotMember(newest, path.basename(usageDbPath())) : null;
+  if (!body) return false;
+  const copy = path.join(os.tmpdir(), `tersio-guard-${process.pid}.db`);
   try {
-    const newest = listUsageBackups()[0];
-    if (!newest) return false;
-    const out = query(newest.file, `SELECT v FROM meta WHERE k='parser_version';`);
+    fs.writeFileSync(copy, body);
+    const out = query(copy, `SELECT v FROM meta WHERE k='parser_version';`);
     return out.length > 0 && out[0][0] === stored;
   } catch {
     return false;
+  } finally {
+    fs.rmSync(copy, { force: true });
   }
 }
 
@@ -185,7 +192,7 @@ function migrateInPlace(db: string, preCount: number): boolean {
       `INSERT INTO files_new (path, mtime, size) SELECT path, mtime, size FROM files;` +
       `CREATE TABLE messages_new (file_id INTEGER NOT NULL REFERENCES files_new(id), t REAL, model TEXT NOT NULL,` +
       ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
-      ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT);` +
+      ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT);` +
       `INSERT INTO messages_new (file_id, ${cols}) SELECT (SELECT id FROM files_new WHERE files_new.path = messages.file), ${cols} FROM messages;` +
       `DROP TABLE messages;DROP TABLE files;` +
       `ALTER TABLE files_new RENAME TO files;ALTER TABLE messages_new RENAME TO messages;` +
@@ -244,6 +251,37 @@ function addTtftColumn(db: string): boolean {
 /** First-token-latency marker; unchanged transcripts are never revisited, so old stores stay null. */
 const TTFT_VERSION = '1';
 
+/** Tool-facts marker: rows written before it carry names only, so one backfill fills sizes and errors. */
+const TOOL_FACTS_VERSION = '1';
+
+function toolFactsBackfilled(db: string): boolean {
+  try {
+    const rows = query(db, `SELECT v FROM meta WHERE k='tool_facts';`);
+    return rows.length > 0 && rows[0][0] === TOOL_FACTS_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+// The tool facts are additive too: a bare ALTER, then one transcript re-read fills them.
+function canAddToolFacts(db: string): boolean {
+  try {
+    const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
+    return names.includes('file_id') && !names.includes('tc');
+  } catch {
+    return false;
+  }
+}
+
+function addToolFactsColumn(db: string): boolean {
+  try {
+    run(db, `ALTER TABLE messages ADD COLUMN tc TEXT;`);
+  } catch {
+    return false;
+  }
+  return !canAddToolFacts(db);
+}
+
 function ttftBackfilled(db: string): boolean {
   try {
     const rows = query(db, `SELECT v FROM meta WHERE k='ttft_backfill';`);
@@ -286,7 +324,9 @@ function ensureSchema(db: string, forceWipe: boolean): void {
   const stored = storedParserVersion(db);
   pragmas(db);
   if (stored === PARSER_VERSION) {
+    // A store this build already wrote still gains a column added since, without a version bump.
     run(db, SCHEMA_SQL + rekeys);
+    if (addAdditiveColumns(db)) run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
     return;
   }
   // A newer store keeps its rows: only an explicit force re-parse may wipe it.
@@ -296,7 +336,7 @@ function ensureSchema(db: string, forceWipe: boolean): void {
   }
   // A version bump rebuilds both tables, so no ALTER patchwork survives a migration.
   try {
-    if (countMessages(db) > 0 && !newestBackupMatches(stored)) backupUsageDb(db);
+    if (countMessages(db) > 0 && !newestBackupMatches(stored)) snapshotData();
     if (stored !== null && canMigrateInPlace(db) && migrateInPlace(db, countMessages(db))) {
       run(db, `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
       try { run(db, `VACUUM;`); } catch { /* best-effort */ }
@@ -306,13 +346,8 @@ function ensureSchema(db: string, forceWipe: boolean): void {
       run(db, `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
       return;
     }
-    // The agent column is additive: every row survives and unchanged transcripts read NULL until a re-parse.
-    if (stored !== null && canAddAgent(db) && addAgentColumn(db)) {
-      run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
-      return;
-    }
-    // The ttft column is additive too; its values come from the backfill in `syncUsageDb`.
-    if (stored !== null && canAddTtft(db) && addTtftColumn(db)) {
+    // Every additive column lands in one pass: an older store may miss more than one.
+    if (stored !== null && addAdditiveColumns(db)) {
       run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
       return;
     }
@@ -321,38 +356,20 @@ function ensureSchema(db: string, forceWipe: boolean): void {
   } catch { /* fresh db, nothing to invalidate */ }
 }
 
-// The one destructive thing we do; keep the last few so a bad bump is recoverable.
-const BACKUP_KEEP = 3;
-
-export function backupUsageDir(): string {
-  return path.join(path.dirname(usageDbPath()), 'backups');
+/** Adds each missing additive column: the agent kind, the first-token latency, and the tool facts. */
+function addAdditiveColumns(db: string): boolean {
+  let added = false;
+  if (canAddAgent(db) && addAgentColumn(db)) added = true;
+  if (canAddTtft(db) && addTtftColumn(db)) added = true;
+  if (canAddToolFacts(db) && addToolFactsColumn(db)) added = true;
+  return added;
 }
 
-export function listUsageBackups(): Array<{ file: string; mtime: number; size: number }> {
+// The one destructive thing we do; the snapshot rotation keeps a bad bump recoverable.
+export function snapshotData(): void {
   try {
-    return fs.readdirSync(backupUsageDir())
-      .filter((n) => /^usage-\d{14}\.db$/.test(n))
-      .map((n) => {
-        const full = path.join(backupUsageDir(), n);
-        const st = fs.statSync(full);
-        return { file: full, mtime: st.mtimeMs, size: st.size };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-  } catch {
-    return [];
-  }
-}
-
-export function backupUsageDb(db: string): void {
-  try {
-    const dir = backupUsageDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    fs.copyFileSync(db, path.join(dir, `usage-${stamp}.db`));
-    for (const old of listUsageBackups().slice(BACKUP_KEEP)) {
-      fs.rmSync(old.file, { force: true });
-    }
-  } catch { /* a missing backup must not block the sync */ }
+    createDataBackup();
+  } catch { /* a missing snapshot must not block the sync */ }
 }
 
 const SCHEDULE_MS: Record<string, number> = { daily: 86_400_000, weekly: 604_800_000, monthly: 2_592_000_000 };
@@ -368,45 +385,13 @@ export function readBackupSchedule(): string {
 }
 
 /** Snapshot on the schedule, skipping when the newest one is still fresh. */
-export function maybeScheduledBackup(db: string): boolean {
+export function maybeScheduledBackup(): boolean {
   const every = SCHEDULE_MS[readBackupSchedule()];
   if (!every) return false;
   try {
-    const newest = listUsageBackups()[0];
+    const newest = newestDataBackup();
     if (newest && Date.now() - newest.mtime < every) return false;
-    backupUsageDb(db);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// basename only: a crafted `../` must not escape the backup dir.
-function resolveBackupFile(file: string): string | null {
-  const dir = path.resolve(backupUsageDir());
-  const target = path.join(dir, path.basename(String(file || '')));
-  if (!target.startsWith(dir + path.sep)) return null;
-  return fs.existsSync(target) ? target : null;
-}
-
-/** Put a backup back in place. The next sync then re-parses over it. */
-export function restoreUsageBackup(file: string): boolean {
-  try {
-    const src = resolveBackupFile(file);
-    if (!src) return false;
-    fs.copyFileSync(src, usageDbPath());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Delete one snapshot. Only ever touches a file inside the backup dir. */
-export function deleteUsageBackup(file: string): boolean {
-  try {
-    const target = resolveBackupFile(file);
-    if (!target) return false;
-    fs.rmSync(target, { force: true });
+    createDataBackup();
     return true;
   } catch {
     return false;
@@ -439,6 +424,8 @@ interface StoredRow {
   code: number | undefined;
   note: string | undefined;
   tools: string[];
+  /** Name, argument bytes, result bytes, and error flag per call. Absent for a name-only row. */
+  toolFacts?: ToolFact[];
   host?: string;
   /** `main` or `subagent`; null on a row written before the store carried it. */
   agent?: string | null;
@@ -447,7 +434,7 @@ interface StoredRow {
 
 // OpenCode rows carry only tokens, msg id, and tools; they record as the main agent, so no NULL kind.
 function opencodeStoredRow(
-  oc: NonNullable<ReturnType<typeof classifyOpencodeMessage>>,
+  oc: NonNullable<OpencodeClassification>,
   host: string | undefined,
   id: string | undefined,
   tools: string[],
@@ -475,7 +462,7 @@ function opencodeStoredRow(
 function parseFile(text: string, host?: string, file?: string, agent?: string): StoredRow[] {
   const rows: StoredRow[] = [];
   // Guarded: a JSONL transcript must fall through, not abort the sync.
-  let oc: ReturnType<typeof classifyOpencodeMessage> = null;
+  let oc: OpencodeClassification | null = null;
   try {
     const message = JSON.parse(text) as OpencodeMessage;
     oc = classifyOpencodeMessage(message);
@@ -484,14 +471,16 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
       return rows;
     }
   } catch { /* JSONL */ }
+  // A call's result arrives on a later line, so the whole file is scanned for results first.
+  const results = collectToolResults(text);
   let codexProvider: string | null = null;
   let codexModel: string | null = null;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as Parameters<typeof classifySessionLine>[0];
+      const row = JSON.parse(line) as SessionLineRow;
       const rid = messageRowId(row);
-      const parsed = classifySessionLine(row);
+      const parsed = classifySessionLine(row, results);
       if (parsed.kind === 'codex_provider') {
         if (parsed.provider) codexProvider = parsed.provider;
         continue;
@@ -545,6 +534,7 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
         code: run.code,
         note,
         tools: parsed.tools ?? [],
+        toolFacts: parsed.toolFacts,
         host,
         agent,
         id: rid,
@@ -555,10 +545,11 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
 }
 
 function insertSql(file: string, r: StoredRow): string {
-  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id) VALUES (` +
+  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id, tc) VALUES (` +
     `(SELECT id FROM files WHERE path=${esc(file)}),${r.t === null ? 'NULL' : String(r.t)},${esc(r.model)},${r.i},${r.o},` +
     `${nullNum(r.d)},${nullNum(r.tf)},${r.cr},${r.cw},${nullNum(r.usd)},${esc(r.st)},` +
-    `${nullNum(r.code)},${nullStr(r.note)},${esc(JSON.stringify(r.tools))},${nullStr(r.host)},${nullStr(r.agent ?? undefined)},${nullStr(r.id)});`;
+    `${nullNum(r.code)},${nullStr(r.note)},${esc(JSON.stringify(r.tools))},${nullStr(r.host)},${nullStr(r.agent ?? undefined)},${nullStr(r.id)},` +
+    `${r.toolFacts && r.toolFacts.length > 0 ? esc(JSON.stringify(r.toolFacts)) : 'NULL'});`;
 }
 
 // Unchanged transcripts are skipped via mtime+size; rows for deleted ones are kept so rotation never erases history.
@@ -578,9 +569,9 @@ export function syncUsageDb(): boolean {
     if (downgrade) guardReport = `store was written by a newer tersio (parser ${stored} > ${PARSER_VERSION}); kept its rows and skipped the re-parse`;
     if (migrated && !forced) preWipe = countMessages(db);
     ensureSchema(db, forced);
-    // One rewrite so the additive column's NULL rows gain latency; runs while the marker is absent.
-    if (!downgrade && !ttftBackfilled(db)) markTranscriptsDirty(db);
-    maybeScheduledBackup(db);
+    // One rewrite so the additive columns' NULL rows gain latency and tool facts; runs while a marker is absent.
+    if (!downgrade && (!ttftBackfilled(db) || !toolFactsBackfilled(db))) markTranscriptsDirty(db);
+    maybeScheduledBackup();
   } catch {
     return false;
   }
@@ -682,14 +673,16 @@ export function syncUsageDb(): boolean {
   // Set only after the rewrite commits: a crash mid-backfill leaves mtimes cleared and the marker absent.
   if (changed.length > 0) {
     if (!push(`INSERT OR REPLACE INTO meta (k, v) VALUES ('ttft_backfill','${TTFT_VERSION}');`)) return false;
+    if (!push(`INSERT OR REPLACE INTO meta (k, v) VALUES ('tool_facts','${TOOL_FACTS_VERSION}');`)) return false;
   }
   if (!flush()) return false;
   if (preWipe > 0) {
     const kept = countMessages(db);
     if (kept < preWipe * REPARSE_GUARD_RATIO) {
-      const newest = listUsageBackups()[0];
-      if (newest && restoreUsageBackup(path.basename(newest.file))) {
-        guardReport = `re-parse kept ${kept} of ${preWipe} rows; restored ${path.basename(newest.file)} (set TERSIO_FORCE_REPARSE=1 to accept the loss)`;
+      const newest = newestDataBackup();
+      const ledger = path.basename(usageDbPath());
+      if (newest && restoreSnapshotMember(newest, ledger)) {
+        guardReport = `re-parse kept ${kept} of ${preWipe} rows; restored ${newest.name} (set TERSIO_FORCE_REPARSE=1 to accept the loss)`;
         return false;
       }
     }
@@ -698,7 +691,7 @@ export function syncUsageDb(): boolean {
   if (migrated) {
     try { run(db, `VACUUM;`); } catch { /* best-effort */ }
   }
-  // Fold the WAL back into the main file: a backup copies one file, and a checkpoint keeps it whole.
+  // Fold the WAL back into the main file. Snapshots read through the WAL themselves, so this only keeps the ledger's own directory small.
   try { run(db, `PRAGMA wal_checkpoint(TRUNCATE);`); } catch { /* best-effort */ }
   return true;
 }
