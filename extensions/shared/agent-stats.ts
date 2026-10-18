@@ -5,6 +5,10 @@ import path from 'node:path';
 import { sqliteRead } from './sqlite.ts';
 import { homeDir } from './utils.ts';
 import { usageDbPath } from './usage-store.ts';
+import { readRtkGainByVerb, rtkGainFailure } from './rtk-gain.ts';
+import type { RtkCommandRow } from './rtk-gain.ts';
+import { readRtkAdoption } from './usage-ledger.ts';
+import type { RtkAdoption } from './usage-ledger.ts';
 
 export type RangeKey = '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
 
@@ -74,6 +78,8 @@ const RECENT_LIMIT = 200;
 const ERROR_LIMIT = 300;
 const TRACE_LIMIT = 300;
 const TOOL_MODEL_LIMIT = 300;
+/** Folded verb rows the Tools page can show before the tail folds into one row. */
+const RTK_VERB_ROWS = 40;
 const SERIES_PROVIDERS = 8;
 const SERIES_MODELS = 12;
 
@@ -505,12 +511,64 @@ export interface AgentStats {
   tools: AgentToolRow[];
   toolsByModel: AgentToolRow[];
   toolSeries: Array<{ ts: number; tool: string; calls: number; errors: number }>;
+  /** What rtk kept out of context in this range, and how much of the work it took. */
+  rtk: AgentRtk;
   usageSeries: AgentWindowSeries[];
   windowInsights: AgentWindowInsight[];
   providerHourly: AgentProviderHour[];
   requestStats: AgentRequestStats;
   /** Raw failure rows inside the range, newest first: the Errors page's list. */
   errors: AgentRequestRow[];
+}
+
+/** rtk's own savings, read from its history, plus how much of the bash work it took. */
+export interface AgentRtk {
+  /** False when rtk's database could not be read: a zero here means "not measured", never "saved nothing". */
+  measured: boolean;
+  /** Why the read failed, when it did. Empty on a successful read. */
+  failure: string;
+  commands: number;
+  input: number;
+  saved: number;
+  avgPct: number;
+  /** Commands folded by their leading verb, biggest saving first. */
+  byVerb: RtkCommandRow[];
+  bashCalls: number;
+  eligibleCalls: number;
+  rtkCalls: number;
+  missedCalls: number;
+  adoptionPct: number;
+}
+
+/** A read that never ran, so a page draws "not measured" rather than a row of zeros. */
+const EMPTY_RTK: AgentRtk = {
+  measured: false, failure: '', commands: 0, input: 0, saved: 0, avgPct: 0, byVerb: [],
+  bashCalls: 0, eligibleCalls: 0, rtkCalls: 0, missedCalls: 0, adoptionPct: 0,
+};
+
+/** rtk's savings and adoption for one range. rtk's database is second, so its failure never fails the page. */
+function readRtk(cutoff: number): AgentRtk {
+  const gain = readRtkGainByVerb(RTK_VERB_ROWS, cutoff > 0 ? cutoff : undefined);
+  let adoption: RtkAdoption;
+  try {
+    adoption = readRtkAdoption();
+  } catch {
+    adoption = { sessions: 0, bashCalls: 0, eligibleCalls: 0, rtkCalls: 0, missedCalls: 0, adoptionPct: 0, byHost: {} };
+  }
+  return {
+    measured: gain.measured,
+    failure: gain.measured ? '' : (rtkGainFailure() ?? ''),
+    commands: gain.commands,
+    input: gain.input,
+    saved: gain.saved,
+    avgPct: gain.avgPct,
+    byVerb: gain.byCommand,
+    bashCalls: adoption.bashCalls,
+    eligibleCalls: adoption.eligibleCalls,
+    rtkCalls: adoption.rtkCalls,
+    missedCalls: adoption.missedCalls,
+    adoptionPct: adoption.adoptionPct,
+  };
 }
 
 export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
@@ -531,7 +589,7 @@ export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
     byModel: [], byProvider: [], byProject: [], byAgentType: [],
     series: [], seriesByProvider: [], modelSeries: [], modelPerformance: [], hourOfDay: [], topModels: [],
     recent: [], errorGroups: [], errorModels: [], traces: [],
-    tools: [], toolsByModel: [], toolSeries: [],
+    tools: [], toolsByModel: [], toolSeries: [], rtk: EMPTY_RTK,
     usageSeries: [], windowInsights: [], providerHourly: [],
     requestStats: {
       requests: 0, failed: 0, aborted: 0, tokens: 0, costUsd: 0, unpriced: 0, shipped: 0,
@@ -909,33 +967,41 @@ function readProviderSeries(db: string, cutoff: number, bucketMs: number): Array
     .map(([provider, held]) => ({ provider, points: held.points }));
 }
 
-/** Tool calls from each message's names array: a name is one whole call, so per-call sizes read as zero. */
+/** Tool calls per message. A row carrying `tc` holds one fact per call; an older row holds names only. */
 function readToolSeries(db: string, cutoff: number, bucketMs: number): Partial<AgentStats> {
   const where = `WHERE ${COL.timestamp} >= ${Math.floor(cutoff)}`;
-  const names = `CASE WHEN m.tools LIKE '[%' THEN m.tools ELSE '[]' END`;
-  const from = `${SOURCE}, json_each(${names}) te`;
+  // `tc` wins when present: it carries the argument and result sizes and the error flag per call.
+  const entries = `CASE WHEN m.tc LIKE '[%' THEN m.tc WHEN m.tools LIKE '[%' THEN m.tools ELSE '[]' END`;
+  const from = `${SOURCE}, json_each(${entries}) te`;
+  // A facts row holds objects; a names-only row holds plain strings, which read as a call with no size.
+  const name = `CASE WHEN te.type = 'object' THEN json_extract(te.value,'$.n') ELSE te.value END`;
+  const args = `CASE WHEN te.type = 'object' THEN COALESCE(json_extract(te.value,'$.a'),0) ELSE 0 END`;
+  const result = `CASE WHEN te.type = 'object' THEN COALESCE(json_extract(te.value,'$.r'),0) ELSE 0 END`;
+  const failed = `CASE WHEN te.type = 'object' THEN COALESCE(json_extract(te.value,'$.e'),0) ELSE 0 END`;
   const facts = `
     ${COL.timestamp},
-    te.value, ${COL.model}, ${COL.provider},
+    ${name}, ${COL.model}, ${COL.provider},
     COUNT(*),
     TOTAL(${COL.total}),
     TOTAL(${COL.output}),
     TOTAL(${COL.costTotal}),
-    MAX(${COL.timestamp})`;
+    MAX(${COL.timestamp}),
+    TOTAL(${args}),
+    TOTAL(${result}),
+    TOTAL(${failed})`;
   const out = readBlocks(db, [
-    ['byTool', `SELECT ${facts} FROM ${from} ${where} GROUP BY te.value ORDER BY 5 DESC`],
-    ['byToolModel', `SELECT ${facts} FROM ${from} ${where} GROUP BY te.value, ${COL.model}, ${COL.provider}
+    ['byTool', `SELECT ${facts} FROM ${from} ${where} GROUP BY 2 ORDER BY 5 DESC`],
+    ['byToolModel', `SELECT ${facts} FROM ${from} ${where} GROUP BY 2, 3, 4
       ORDER BY 5 DESC LIMIT ${TOOL_MODEL_LIMIT}`],
-    ['toolSeries', `SELECT (${COL.bucket} / ${bucketMs}) * ${bucketMs}, te.value, COUNT(*),
-      SUM(CASE WHEN ${COL.stopReason} = 'error' THEN 1 ELSE 0 END)
+    ['toolSeries', `SELECT (${COL.bucket} / ${bucketMs}) * ${bucketMs}, ${name}, COUNT(*), TOTAL(${failed})
       FROM ${from} ${where} GROUP BY 1, 2 ORDER BY 1`],
   ]);
   const parseTool = (r: string[]): AgentToolRow => ({
     tool: r[1] ?? '',
     calls: num(r[4]),
-    errors: 0,
-    argsChars: 0,
-    resultChars: 0,
+    errors: num(r[11]),
+    argsChars: num(r[9]),
+    resultChars: num(r[10]),
     totalTokensShare: num(r[5]),
     outputTokensShare: num(r[6]),
     costShare: num(r[7]),
@@ -1300,6 +1366,24 @@ function firstLine(parts: Array<Record<string, unknown>>): string {
   return text ? text.slice(0, TRACE_DETAIL_MAX) : '';
 }
 
+/** One line naming what a tool call was told to do: the command, the path, or the keys it carries. */
+function argSummary(args: unknown): string {
+  if (args === null || args === undefined) return '';
+  if (typeof args === 'string') return args.replace(/\s+/g, ' ').trim().slice(0, TRACE_DETAIL_MAX);
+  if (typeof args !== 'object') return String(args).slice(0, TRACE_DETAIL_MAX);
+  const record = args as Record<string, unknown>;
+  // The first of these reads as the call's subject; anything else falls back to the whole object.
+  for (const key of ['command', 'path', 'file', 'pattern', 'query', 'url']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.replace(/\s+/g, ' ').trim().slice(0, TRACE_DETAIL_MAX);
+  }
+  try {
+    return JSON.stringify(args).slice(0, TRACE_DETAIL_MAX);
+  } catch {
+    return '';
+  }
+}
+
 /** How a request stopped, read from the assistant message's stop reason. */
 function stopState(stopReason: string): AgentTraceSpan['stopped'] {
   if (stopReason === 'error') return 'failed';
@@ -1332,7 +1416,7 @@ export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT):
     entryId: string; ts: number; role: string; tool: string; detail: string;
     model: string; provider: string; tokens: number; costUsd: number;
     durationMs: number | null; startAt: number | null; isError: boolean;
-    stopped: AgentTraceSpan['stopped']; callId: string; calls: Array<{ id: string; name: string }>;
+    stopped: AgentTraceSpan['stopped']; callId: string; calls: Array<{ id: string; name: string; args: string }>;
   };
   const raw: Raw[] = [];
   const markers: AgentTraceMarker[] = [];
@@ -1378,7 +1462,12 @@ export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT):
       callId: String(message.toolCallId ?? ''),
       calls: content
         .filter((part) => part.type === 'toolCall')
-        .map((part) => ({ id: String(part.id ?? ''), name: String(part.name ?? 'tool') })),
+        .map((part) => ({
+          id: String(part.id ?? ''),
+          name: String(part.name ?? 'tool'),
+          // The call's own arguments, one line: the reference names a tool call by what it was told to do.
+          args: argSummary(part.arguments),
+        })),
     });
   }
 
@@ -1407,8 +1496,10 @@ export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT):
       row.calls.forEach((call, index) => {
         const result = call.id ? resultAt.get(call.id) : undefined;
         const end = result ? Math.max(result.ts, row.ts) : row.ts;
-        built.push({ ...base, id: `${row.entryId}#${index}`, kind: 'tool', label: call.name, detail: result?.detail ?? '',
-          start: row.ts, end, tool: call.name, isError: result ? result.isError : base.isError, stopped: 'completed' });
+        built.push({ ...base, id: `${row.entryId}#${index}`, kind: 'tool', label: call.name, detail: call.args || result?.detail || '',
+          start: row.ts, end, tool: call.name, isError: result ? result.isError : base.isError, stopped: 'completed',
+          // The result line is its own entry, so the drawer reads the tool's own output rather than the turn's.
+          entryId: result?.entryId || row.entryId });
       });
       continue;
     }
@@ -1441,7 +1532,7 @@ export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT):
 
   return {
     sessionFile, project, title, cwd: project, startedAt, endedAt,
-    tracks: [{ id: 'main', label: 'Session', parentId: null, spans }],
+    tracks: [{ id: 'main', label: 'Main', parentId: null, spans }],
     markers: markers.toSorted((a, b) => a.ts - b.ts),
     summary: summarizeTrace(spans, startedAt, endedAt),
     toolStats: buildToolStats(spans),
@@ -1602,7 +1693,11 @@ export function readAgentStats(range: RangeKey = '24h', view: AgentView = 'all',
   if (parts.has('seriesByProvider')) stats.seriesByProvider = readProviderSeries(db, cutoff, stats.bucketMs);
   if (parts.has('modelSeries')) stats.modelSeries = readModelSeries(db, cutoff, stats.bucketMs);
   if (parts.has('modelPerformance')) stats.modelPerformance = readModelPerformance(db, cutoff, stats.bucketMs);
-  if (parts.has('tools')) Object.assign(stats, readToolSeries(db, cutoff, stats.bucketMs));
+  if (parts.has('tools')) {
+    Object.assign(stats, readToolSeries(db, cutoff, stats.bucketMs));
+    // rtk's own database is second, so a Tools page never fails on it.
+    stats.rtk = readRtk(cutoff);
+  }
   if (stats.byModel.length > 0) stats.topModels = stats.byModel.slice(0, 12);
   if (parts.has('providerHourly')) stats.providerHourly = readProviderHourly(db, cutoff);
   if (parts.has('recent')) stats.requestStats = computeRequestStats(stats.recent, stats.overall);

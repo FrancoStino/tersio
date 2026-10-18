@@ -138,11 +138,38 @@ function cliRead(db: string, sql: string): string {
   }
 }
 
+/**
+ * Read through the in-process engine, retrying on a private copy when the file will not open.
+ * A WAL database whose `-shm` is gone cannot be opened read-only, because read-only cannot create it;
+ * the copy can, which is the same rung `cliRead` falls back to.
+ */
+function engineRead(e: Engine, db: string, sql: string): unknown[][] {
+  try {
+    return e.read(db, sql);
+  } catch {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tersio-sqlite-'));
+    const target = path.join(dir, path.basename(db));
+    try {
+      fs.copyFileSync(db, target);
+      for (const suffix of ['-wal', '-shm']) {
+        if (fs.existsSync(`${db}${suffix}`)) fs.copyFileSync(`${db}${suffix}`, `${target}${suffix}`);
+      }
+      return e.read(target, sql);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
 /** Run a read and return the tab-separated rows. Throws when the file is missing, as the callers expect. */
 export function sqliteRead(db: string, sql: string): string {
   if (!fs.existsSync(db)) throw new Error(`missing database: ${db}`);
   const e = engine();
-  if (e !== null) return toTsv(e.read(db, sql));
+  if (e !== null) {
+    try {
+      return toTsv(engineRead(e, db, sql));
+    } catch { /* the engine may lack a feature the CLI has; the CLI gets the last word */ }
+  }
   return cliRead(db, sql);
 }
 

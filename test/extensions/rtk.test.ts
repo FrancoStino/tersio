@@ -21,7 +21,7 @@ import rtkSessionExtension from "../../extensions/rtk/session.ts";
 import timingExtension from "../../extensions/timing/index.ts";
 import { resetSharedComboState, setSharedComboMode } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from "../../extensions/shared/types.ts";
-import { readRtkGain, rtkDbPath } from "../../extensions/shared/rtk-gain.ts";
+import { readRtkGain, readRtkGainByVerb, rtkDbPath, rtkGainFailure } from "../../extensions/shared/rtk-gain.ts";
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
 import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
@@ -244,7 +244,9 @@ test("missing rtk db returns empty gain without throwing", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-rtk-"));
   try {
     withDb(path.join(dir, "nope.db"), () => {
-      expect(readRtkGain()).toEqual({ commands: 0, saved: 0, input: 0, avgPct: 0, totalMs: 0, byCommand: [] });
+      expect(readRtkGain()).toEqual({ commands: 0, saved: 0, input: 0, avgPct: 0, totalMs: 0, byCommand: [], measured: false });
+      // An absent database is a failed read, not a measured zero.
+      expect(rtkGainFailure()).toContain("no rtk database");
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -300,6 +302,47 @@ test.skipIf(!hasSqlite())("cutoff filters the view without touching the db", () 
       expect(g.byCommand.length).toBe(1);
       const all = readRtkGain();
       expect(all.commands).toBe(3);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!hasSqlite())("folds thousands of full commands into one row per leading verb", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-rtk-"));
+  const db = path.join(dir, "history.db");
+  try {
+    sqliteExec(db, [
+      "CREATE TABLE commands (id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL,",
+      "original_cmd TEXT NOT NULL, rtk_cmd TEXT NOT NULL, input_tokens INTEGER NOT NULL,",
+      "output_tokens INTEGER NOT NULL, saved_tokens INTEGER NOT NULL, savings_pct REAL NOT NULL,",
+      "exec_time_ms INTEGER DEFAULT 0, project_path TEXT DEFAULT '');",
+      // Three distinct `rtk ls` spellings, so the verb folds them and names the count.
+      "INSERT INTO commands VALUES (1,'2026-09-01T00:00:00Z','ls a','rtk ls a',100,10,90,90.0,10,'/tmp');",
+      "INSERT INTO commands VALUES (2,'2026-09-01T00:01:00Z','ls b','rtk ls b',200,20,180,90.0,30,'/tmp');",
+      "INSERT INTO commands VALUES (3,'2026-09-01T00:02:00Z','ls -R c','rtk ls -R c',300,30,270,90.0,20,'/tmp');",
+      "INSERT INTO commands VALUES (4,'2026-09-01T00:03:00Z','read x','rtk read x',1000,10,990,99.0,50,'/tmp');",
+      // A subcommand verb: `rtk git status` is the git verb, not a bare `rtk`.
+      "INSERT INTO commands VALUES (5,'2026-09-01T00:04:00Z','git status','rtk git status',10,20,-10,-100.0,5,'/tmp');",
+    ].join(" "));
+    withDb(db, () => {
+      const g = readRtkGainByVerb(10);
+      expect(g.measured).toBe(true);
+      expect(rtkGainFailure()).toBe(null);
+      expect(g.commands).toBe(5);
+      expect(g.byCommand.map((row) => row.command)).toEqual(["rtk read", "rtk ls", "rtk git"]);
+      const ls = g.byCommand.find((row) => row.command === "rtk ls")!;
+      expect(ls.variants, "three spellings fold into one verb").toBe(3);
+      expect(ls.count).toBe(3);
+      expect(ls.saved).toBe(540);
+      // The verb's rate is its own saved bytes over its own input, not a mean of per-command rates.
+      expect(ls.avgPct).toBeCloseTo((540 / 600) * 100, 9);
+      // A command that cost more than it saved stays negative, so a wrapper losing bytes is visible.
+      const git = g.byCommand.find((row) => row.command === "rtk git")!;
+      expect(git.saved).toBe(-10);
+      expect(git.avgPct).toBeLessThan(0);
+      // `limit` bounds the folded rows, biggest saving first.
+      expect(readRtkGainByVerb(1).byCommand.map((row) => row.command)).toEqual(["rtk read"]);
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
