@@ -7,8 +7,8 @@ import {
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { CURRENCY_CODES } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
-import { textTable } from './usage.ts';
 import { ask, askInteractiveChoice, closeRL, tty } from './interactive.ts';
+import { textTable } from './common.ts';
 import { applyComboPreset, formatCliStatus, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import type { Profile } from './profile.ts';
 import { readDiagSchedule, setDiagSchedule } from './dashboard.ts';

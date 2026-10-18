@@ -37,7 +37,6 @@ flowchart TB
   UI -->|"/api/update"| UPDT
   UPDT -->|"spawns tersio update"| INST
   UI -->|"/api/agent"| ASTS
-  CLI -->|"tersio usage"| LED
   CLI -->|"tersio upstream"| UP
   TCMD -->|publishes| SS
   SS -.->|"mirror, no reload"| CAV & RTK
@@ -117,17 +116,15 @@ flowchart LR
   end
   ADB["~/.omp/agent/agent.db<br/>usage_history — omp's quota only"]
   DASH["the ten dashboard pages"]
-  CLI["tersio usage"]
 
   OMPJ & PIJ & OCJ & OCD --> UDB
   UDB --> ASTS --> API --> DASH
-  UDB --> CLI
   JRN --> SESS --> DASH
   ADB --> ASTS
 ```
 
-- **One store feeds both readers.** `agent-stats.ts` opens `~/.tersio/usage.db`, the same file `tersio usage` aggregates. Every one of the ten pages — Overview, Models, Providers, Costs, Carbon, Requests, Errors, Traces, Tools, Projects — reads every host: omp, pi, and OpenCode. A dashboard figure and a report figure are the same figure by construction, not by coincidence.
-- **The dashboard syncs before it reads.** `cli/dashboard.ts` runs `syncUsageDb()` behind a 15s throttle, so a page reads what the transcripts hold rather than what the last `tersio usage` wrote. The 5s memo still collapses a burst of polls, keyed on the store's own mtime and size.
+- **One store feeds both readers.** `agent-stats.ts` opens `~/.tersio/usage.db`, the same file the ten pages aggregate. Every one of the ten pages — Overview, Models, Providers, Costs, Carbon, Requests, Errors, Traces, Tools, Projects — reads every host: omp, pi, and OpenCode. A dashboard figure and a report figure are the same figure by construction, not by coincidence.
+- **The dashboard syncs before it reads.** `cli/dashboard.ts` runs `syncUsageDb()` behind a 15s throttle, so a page reads what the transcripts hold rather than what the last sync wrote. The 5s memo still collapses a burst of polls, keyed on the store's own mtime and size.
 - **omp's quota snapshots stay omp's.** Only omp records `usage_history`, so the Providers page still reads `~/.omp/agent/agent.db` for it. Nothing in the store replicates them, and the page's window figures degrade to empty when that database is absent.
 - **A trace is still a journal read.** `readSessionTrace` and `readAgentRequestEntry` open the session transcript itself, because the store keeps facts, not message bodies. OpenCode writes no `.jsonl`, so its traces keep drawing the empty state, while pi transcripts trace in full from the same reader.
 - **What the store does not carry reads as a literal, never as an estimate.** omp's schema held a per-component cost split, a route name, a per-request premium count, and a service tier. The store holds none of these, so `COL` in `agent-stats.ts` maps each to `NULL`, or `''`, in one place: cost reads whole with no split, a route reads empty. The provider column is not stored either, so it derives from the model id's first segment, spelled the way the dashboard marks it. First-token latency *is* stored, in `tf`, and it is omp-only: pi and OpenCode record none, so their rows read null and their latency averages read null rather than zero, because a zero would draw a flat line and claim no wait at all.

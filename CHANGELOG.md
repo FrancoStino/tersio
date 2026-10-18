@@ -1,3 +1,8 @@
+## Unreleased
+
+### Removed
+ - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. Everything behind it stays: the ledger, the price list, `tersio reset`, and the in-session `/tersio usage` summary.
+
 ## v2.25.9
 
 ### Added

@@ -72,7 +72,7 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, usage: true, dashboard: true, reset: true, settings: true, upstream: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, dashboard: true, reset: true, settings: true, upstream: true, version: true, help: true };
 const args = process.argv.slice(2);
 const commandArg = args.find((arg) => !arg.startsWith('-'));
 const command = commandArg?.toLowerCase() || null;
@@ -97,7 +97,6 @@ const verbose = args.includes('--verbose');
 const allowUnverified = args.includes('--allow-unverified');
 const doctor = command === 'doctor' || args.includes('--doctor');
 const fix = args.includes('--fix') || args.some((a) => a.startsWith('--fix='));
-const usage = command === 'usage' || args.includes('--usage');
 const dashboard = command === 'dashboard';
 const reset = command === 'reset';
 const settings = command === 'settings';
@@ -382,13 +381,34 @@ function relTime(ageMs: number): string {
   const weeks = Math.floor(days / 7);
   return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
 }
+
+function pad(s: string, n: number): string {
+  return s.length >= n ? s : s + ' '.repeat(n - s.length);
+}
+
+// Box-drawing table, plain text (piped-safe, byte-stable). Numbers right-align; long cells truncate with an ellipsis.
+function textTable(headers: string[], rows: string[][], right: boolean[] = [], maxW = 32): string[] {
+  const cells = [headers, ...rows].map((r) =>
+    r.map((c) => (c.length > maxW ? c.slice(0, maxW - 1) + '…' : c)),
+  );
+  const widths = headers.map((_, i) => Math.max(...cells.map((r) => r[i].length)));
+  const line = (l: string, m: string, r: string): string =>
+    l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r;
+  const row = (cs: string[]): string =>
+    '│ ' + cs.map((c, i) => (right[i] ? c.padStart(widths[i]) : pad(c, widths[i]))).join(' │ ') + ' │';
+  const out = [line('┌', '┬', '┐'), row(cells[0]), line('├', '┼', '┤')];
+  for (const r of cells.slice(1)) out.push(row(r));
+  out.push(line('└', '┴', '┘'));
+  return out.map((l) => '  ' + l);
+}
+
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,
   install, reinstall, update, showVersion, showHelp, applyUpdate, args,
-  dryRun, yes, verbose, doctor, fix, uninstall, usage, dashboard, reset, settings, upstream,
+  dryRun, yes, verbose, doctor, fix, uninstall, dashboard, reset, settings, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,
@@ -397,6 +417,6 @@ export {
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,
-  ensurePonytailConfigValue, readPluginsPackage, relTime,
+  ensurePonytailConfigValue, readPluginsPackage, relTime, textTable,
 };
 export type { InstallOptions, PluginsPackage, PonytailConfig, WriteOptions };

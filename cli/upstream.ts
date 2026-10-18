@@ -4,9 +4,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, promises as fs, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { PACKAGE_VERSION, args, flagValue, parseJsonObject } from './common.ts';
-import { textTable } from './usage.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 import { EXT_DIR, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_VERSION, shippedOmpManifest, sourcePath, treeFileText, treeFilesFor } from './manifest.ts';
+import { textTable } from './common.ts';
 import { adaptCavemanFull } from '../extensions/updater/index.ts';
 import {
   RTK_RELEASE_API,

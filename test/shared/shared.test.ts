@@ -176,38 +176,6 @@ test("refreshPrices returns false on fetch failure", async () => {
   }
 });
 
-test("tersio usage prices from the live cache", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-sessions-"));
-  mkdirSync(path.join(dir, "branch"), { recursive: true });
-  writeFileSync(
-    path.join(dir, "branch", "s1.jsonl"),
-    '{"type":"message","id":"a","timestamp":"2026-09-01T10:01:00.000Z","message":{"role":"assistant","model":"claude-sonnet-5","usage":{"input":1000000,"output":0,"cacheRead":0,"cacheWrite":0}}}\n',
-    "utf8",
-  );
-  writeFileSync(
-    path.join(dir, "prices.json"),
-    JSON.stringify({ fetchedAt: Date.now(), exact: { "claude-sonnet-5": [2, 10, 0.2, 2.5] } }),
-    "utf8",
-  );
-  const root = path.resolve("test", "..");
-  const result = spawnSync(process.execPath, [path.join(root, "dist", "tersio.js"), "usage"], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      // Isolate HOME so ambient settings can't leak into currency assertions.
-      HOME: dir,
-      USERPROFILE: dir,
-      TERSIO_SESSIONS_DIR: dir,
-      TERSIO_USAGE_FILE: path.join(dir, "missing.jsonl"),
-      TERSIO_PRICES_FILE: path.join(dir, "prices.json"),
-      TERSIO_RESET_FILE: path.join(dir, "missing-reset.json"),
-    },
-  });
-  rmSync(dir, { recursive: true, force: true });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Anthropic - Claude - Sonnet-5.*1,000,000.*\$2\.00/);
-});
-
 // Two spellings of one model must group as a single row priced at zero.
 test("the space-bunny aliases resolve to one free model", () => {
   const spellings = ["space-bunny", "Space-Bunny", "stealth/Space-Bunny-Alpha", "stealth/space-bunny-alpha", "opencode/kilo/stealth/space-bunny-alpha", "opencode/opencode/space-bunny"];

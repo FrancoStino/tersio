@@ -549,7 +549,7 @@ function screenAt(rows: number): string[] {
   return lines;
 }
 
-const LABELS = ["Install add-ons", "Update", "Doctor", "Settings", "Usage", "Dashboard", "Uninstall"];
+const LABELS = ["Install add-ons", "Update", "Doctor", "Settings", "Dashboard", "Uninstall"];
 
 // Slow the registry past a spinner frame: Clack's CI spinner residue once pushed tips off a 20-row screen.
 function screenAtCi(rows: number): string[] {
@@ -710,7 +710,7 @@ for (const alias of [["help"], ["--help"], ["-h"]]) {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/^Usage:/);
-    for (const command of ["install", "update", "doctor", "uninstall", "usage", "dashboard", "reset", "settings", "version", "help"]) {
+    for (const command of ["install", "update", "doctor", "uninstall", "dashboard", "reset", "settings", "version", "help"]) {
       expect(result.stdout).toMatch(new RegExp(`^  ${command}\\s`, "m"));
     }
     expect(result.stderr).toBe("");
@@ -970,22 +970,6 @@ test("uninstall dry-run never prompts for confirmation", () => {
   expect(result.stdout).not.toMatch(/Proceed\?/);
   expect(result.stdout).toMatch(/\[dry-run\] would remove .*extensions[\\/]shared(?:\r?\n|$)/);
 });
-
-test("usage with an empty ledger and no sessions prints the empty state and exits 0", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-usage-empty-"));
-  const missing = path.join(root, "test", "definitely-missing-home", "no-ledger.jsonl");
-  const noSessions = path.join(root, "test", "definitely-missing-home", "no-sessions");
-  const result = spawnSync(process.execPath, [installer, "usage"], {
-    encoding: "utf8",
-    cwd: root,
-    env: { ...process.env, TERSIO_USAGE_FILE: missing, TERSIO_SESSIONS_DIR: noSessions, TERSIO_RESET_FILE: path.join(root, "test", "definitely-missing-home", "no-reset.json"), TERSIO_USAGE_DB: path.join(dir, "usage.db") },
-  });
-  expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/No ledger rows or session tokens yet/);
-  expect(result.stdout).toMatch(/· stored ===/);
-  rmSync(dir, { recursive: true, force: true });
-});
-
 
 test("dashboard --export writes a self-contained html file", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-dash-"));

@@ -21,7 +21,6 @@ import { checkForUpdate, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
 import { runDoctor } from './doctor.ts';
 import { runReset } from './reset.ts';
-import { runUsage } from './usage.ts';
 import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
@@ -578,7 +577,6 @@ async function runCommandMenu(): Promise<void> {
     { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'settings', label: 'Settings', hint: 'default combo mode, currency, diagnosis schedule' },
-    { value: 'usage', label: 'Usage', hint: 'token usage and savings report' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
     { value: 'reset', label: 'Reset statistics', hint: 'clear statistics; transcripts and RTK history stay' },
     { value: 'uninstall', label: 'Uninstall', hint: 'remove tersio' },
@@ -630,10 +628,6 @@ async function runCommandMenu(): Promise<void> {
     }
     case 'settings':
       await runSettings();
-      closeRL();
-      break;
-    case 'usage':
-      await runUsage();
       closeRL();
       break;
     case 'dashboard':

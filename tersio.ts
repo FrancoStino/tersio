@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reinstall, reset, settings, showHelp, showVersion, uninstall, unknownCommand, update, usage, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, reinstall, reset, settings, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
@@ -9,7 +9,6 @@ import { runInstall, runReinstall } from './cli/install.ts';
 import { runDoctor } from './cli/doctor.ts';
 import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
-import { runUsage } from './cli/usage.ts';
 import { runUpstream } from './cli/upstream.ts';
 import { runReset } from './cli/reset.ts';
 import { runSettings } from './cli/settings.ts';
@@ -23,7 +22,6 @@ Commands:
   reinstall    Refresh one agent's install: pick it, reinstall, then verify (--host picks without asking)
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
-  usage        Ledger-backed usage + savings report
   dashboard     Open the Dashboard (localhost only)
   reset        Clear tersio statistics (usage ledger)
   settings     View/change session-start defaults (combo, caveman, rtk, ponytail)
@@ -47,7 +45,7 @@ Options:
   --port <n> (dashboard: pin port, default ephemeral)
   --open (dashboard: open browser)
   --export <file> (dashboard: write HTML file instead of serving)
-  --currency <code> (usage|dashboard: display currency; flag wins, then tersio settings default, then USD)
+  --currency <code> (dashboard: display currency; flag wins, then tersio settings default, then USD)
   --version, -v
   --help, -h`);
 }
@@ -81,12 +79,6 @@ async function main(): Promise<void> {
 
   if (doctor) {
     await runDoctor();
-    closeRL();
-    return;
-  }
-
-  if (usage) {
-    await runUsage();
     closeRL();
     return;
   }
