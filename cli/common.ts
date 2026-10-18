@@ -44,7 +44,6 @@ const CAVEMAN_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra', 'megacave-lite
 const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
-const DIAG_SCHEDULES = new Set(['manual', 'daily', 'weekly', 'monthly']);
 
 // Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all four modes.
 const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
@@ -72,17 +71,10 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, dashboard: true, settings: true, upstream: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, reinstall: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, version: true, help: true };
 const args = process.argv.slice(2);
 const commandArg = args.find((arg) => !arg.startsWith('-'));
 const command = commandArg?.toLowerCase() || null;
-// `tersio settings diagnosis` jumps to one prompt. Index-based, so flag values never count as positionals.
-const settingArg = ((): string | null => {
-  const at = args.indexOf(commandArg ?? '');
-  const next = at >= 0 ? args[at + 1] : undefined;
-  if (!next || next.startsWith('-')) return null;
-  return next.toLowerCase();
-})();
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
 const reinstall = command === 'reinstall';
@@ -98,7 +90,6 @@ const allowUnverified = args.includes('--allow-unverified');
 const doctor = command === 'doctor' || args.includes('--doctor');
 const fix = args.includes('--fix') || args.some((a) => a.startsWith('--fix='));
 const dashboard = command === 'dashboard';
-const settings = command === 'settings';
 const upstream = command === 'upstream' || args.includes('--upstream');
 const dashboardPort = Number.parseInt(flagValue('--port') ?? '', 10) || 0;
 const dashboardOpen = args.includes('--open');
@@ -124,16 +115,9 @@ const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEF
 const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
 const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');
 const rtkDefaultFlag = parseEnum(flagValue('--rtk-default'), RTK_DEFAULTS, '--rtk-default');
-const diagScheduleFlag = parseEnum(flagValue('--diag-schedule'), DIAG_SCHEDULES, '--diag-schedule');
 
 const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag]
   .some((flag) => flag !== undefined);
-
-// Repeatable `--subagent-marker`; overrides the built-in host prompt marker.
-const subagentMarkerFlags: string[] = args
-  .map((a, i) => (a === '--subagent-marker' ? args[i + 1] : undefined))
-  .filter((v): v is string => typeof v === 'string' && !v.startsWith('-') && v.trim() !== '');
-const subagentMarkersGiven = subagentMarkerFlags.length > 0;
 
 function debug(...a: unknown[]): void {
   if (verbose) console.log('  [debug]', ...a);
@@ -404,15 +388,14 @@ function textTable(headers: string[], rows: string[][], right: boolean[] = [], m
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
-  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, DIAG_SCHEDULES, COMBO_PRESET_MODES, COMBO_DEFAULTS,
-  parseEnum, flagValue, COMMANDS, commandArg, command, settingArg, unknownCommand,
+  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS,
+  parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand,
   install, reinstall, update, showVersion, showHelp, applyUpdate, args,
-  dryRun, yes, verbose, doctor, fix, uninstall, dashboard, settings, upstream,
+  dryRun, yes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,
-  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, rtkDefaultFlag, diagScheduleFlag, profileFlagsGiven,
-  subagentMarkerFlags, subagentMarkersGiven,
+  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, rtkDefaultFlag, profileFlagsGiven,
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,

@@ -28,7 +28,6 @@ import {
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
-import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
@@ -575,7 +574,6 @@ async function runCommandMenu(): Promise<void> {
     { value: 'reinstall', label: 'Reinstall', hint: 're-install Tersio for the ai agents, then verify' },
     { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
-    { value: 'settings', label: 'Settings', hint: 'default combo mode, currency, diagnosis schedule' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
     { value: 'uninstall', label: 'Uninstall', hint: 'remove tersio' },
   ], 'install');
@@ -624,10 +622,6 @@ async function runCommandMenu(): Promise<void> {
       closeRL();
       break;
     }
-    case 'settings':
-      await runSettings();
-      closeRL();
-      break;
     case 'dashboard':
       await runDashboard({ port: dashboardPort, open: true, exportFile: dashboardExport, currency });
       closeRL();

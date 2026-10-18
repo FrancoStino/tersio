@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Changed
+ - `tersio settings` is gone, and the session-start defaults, the display currency, and the diagnosis schedule are set in the dashboard, which already carried all three. The installer still takes `--combo-default`, `--caveman-default`, `--rtk-default`, `--ponytail-default`, and `--pstack-default`, so a scripted install keeps working. The `--diag-schedule` and `--subagent-marker` flags go with the command.
  - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
 
 ### Removed

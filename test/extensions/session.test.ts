@@ -1432,7 +1432,7 @@ test("a headless worker still inherits the parent's Ponytail level", async () =>
 });
 
 test("a stored pstack default survives without a sibling mode key", async () => {
-  // `tersio settings --pstack-default on` alone must not be read back as the Combo preset's `off`.
+  // `tersio install --pstack-default on` alone must not be read back as the Combo preset's `off`.
   await withHome(async (home) => {
     mkdirSync(path.join(home, ".tersio"), { recursive: true });
     writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
