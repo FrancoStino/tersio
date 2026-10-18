@@ -1,13 +1,3 @@
-## Unreleased
-
-### Changed
- - The picker names its two plugin rows plainly: `Install plugin` and `Uninstall plugin`, where they read `Install add-ons` and `Uninstall`.
- - `tersio settings` is gone, and the session-start defaults, the display currency, and the diagnosis schedule are set in the dashboard, which already carried all three. The installer still takes `--combo-default`, `--caveman-default`, `--rtk-default`, `--ponytail-default`, and `--pstack-default`, so a scripted install keeps working. The `--diag-schedule` and `--subagent-marker` flags go with the command.
- - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
-
-### Removed
- - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. The ledger, the price list, and the in-session `/tersio usage` summary stay.
-
 ## v2.25.9
 
 ### Added
@@ -26,12 +16,18 @@
  - Snapshots are one file each, checked against their own hash before they count, and the pane reads `1K · 1 file` per row with a tooltip naming what it holds.
  - Four small state files fold into `~/.tersio/state.json`, and two files with no reader left are gone.
  - pstack moves to upstream `a968159` and Ponytail to 5.3.2. `docs/ARCHITECTURE.md` shows the order the modes run in, and the status line reads `🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON`.
+ - The picker names its two plugin rows plainly: `Install plugin` and `Uninstall plugin`, where they read `Install add-ons` and `Uninstall`.
+ - `tersio settings` is gone, and the session-start defaults, the display currency, and the diagnosis schedule are set in the dashboard, which already carried all three. The installer still takes `--combo-default`, `--caveman-default`, `--rtk-default`, `--ponytail-default`, and `--pstack-default`, so a scripted install keeps working. The `--diag-schedule` and `--subagent-marker` flags go with the command.
+ - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
 
 ### Fixed
  - Savings and scorecard numbers could read zero on a busy database, and a snapshot could miss rows still in flight or keep a damaged one. All three read the committed state now: on this machine a plain copy held 7,194 rows where the database held 7,207, and the prune pass reads six snapshots in 18 ms.
  - The Tools page shows real result sizes, call arguments, and error counts instead of zeros. Measured here: 711.1K result characters and 29 failed calls in 24 hours, where both read 0.
  - Settings left every mode row at its old level after you picked a Combo preset: each row updated only itself, while a preset writes all four. The dialog shows what was saved now.
  - A restore refuses a snapshot whose body fails its hash, and the live files stay untouched.
+
+### Removed
+ - `tersio usage` is gone from the CLI. The dashboard shows the same figures from the same store across ten pages, so the terminal report only duplicated them. The ledger, the price list, and the in-session `/tersio usage` summary stay.
 
 ## v2.25.8
 
