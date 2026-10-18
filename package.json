@@ -37,6 +37,9 @@
       "./extensions/combo/index.ts",
       "./extensions/commands/index.ts"
     ],
+    "skills": [
+      "./extensions/ponytail/skills"
+    ],
     "features": {
       "updater": {
         "description": "In-session updater for Ponytail, RTK, and Caveman (/ai-addons)",
@@ -131,7 +134,8 @@
     "extensions/caveman/rule-megacave-ultra.md",
     "extensions/caveman/rule-ultra.md",
     "extensions/caveman/rule-megacave.md",
-    "extensions/pstack/**/*.md"
+    "extensions/pstack/**/*.md",
+    "extensions/ponytail/**/*"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -161,7 +165,6 @@
   },
   "dependencies": {
     "@clack/core": "^1.5.1",
-    "@clack/prompts": "^1.8.0",
-    "@dietrichgebert/ponytail": "^5.3.2"
+    "@clack/prompts": "^1.8.0"
   }
 }

@@ -114,6 +114,21 @@ export function treeFileText(file: string): string | null {
   try { return readFileSync(sourcePath(file), 'utf8'); } catch { return null; }
 }
 
+/** The vendored Ponytail copy. Tersio ships it, so a host lists one plugin instead of two. */
+export const PONYTAIL_DIR = path.join(EXT_DIR, 'ponytail');
+
+/** The vendored copy's package name; the migration drops this entry from an older install. */
+export const PONYTAIL_PKG = '@dietrichgebert/ponytail';
+
+/** The vendored copy's own manifest holds the version, so the scorecard and the copy never drift. */
+export const PONYTAIL_VERSION: string = ((): string => {
+  try {
+    return (JSON.parse(readFileSync(path.join(PONYTAIL_DIR, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
+  } catch {
+    return '';
+  }
+})();
+
 /** The ponytail ruleset this build ships, copied to every host that cannot install the package. */
 export const PONYTAIL_SKILL_NAMES = ['ponytail', 'ponytail-audit', 'ponytail-debt', 'ponytail-gain', 'ponytail-help', 'ponytail-review'] as const;
 

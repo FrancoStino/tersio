@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { cliEnv, fakeExecutable, isWindows } from "../helpers/env.ts";
 import { fileContains } from "../../extensions/shared/utils.ts";
 import { PI_PONYTAIL_FILES, TREE_FILES, sourcePath, treeFileText, treeFilesFor } from "../../cli/manifest.ts";
-import { bundledPonytailSpec } from "../../cli/common.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -602,10 +601,9 @@ test("doctor names a stale ponytail file, not just the host", () => {
   const home = missingHome();
   try {
     seededHostTree(home, "pi");
-    const ref = path.join(home, ".omp", "plugins", "node_modules", "@dietrichgebert", "ponytail");
+    const ref = path.join(seedPluginPackage(home), "extensions", "ponytail");
     const piDir = path.join(home, ".pi", "agent", "ponytail");
     seedPonytailBodies(ref, (rel) => `reference ${rel}\n`);
-    seedPonytailManifest(ref);
     // pi's copy agrees everywhere except one skill body, so the row must name that file and nothing else.
     seedPonytailBodies(piDir, (rel) => (rel === "skills/ponytail-debt/SKILL.md" ? "older body\n" : `reference ${rel}\n`));
     // pi loads the package its settings.json names; without it the doctor falls back to the npm route.
@@ -869,37 +867,25 @@ function seedPonytailBodies(dir: string, body: (rel: string) => string): void {
   }
 }
 
-/** The manifest that makes `dir` the package the doctor resolves as the reference. */
-function seedPonytailManifest(dir: string): void {
-  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "@dietrichgebert/ponytail", version: "5.2.0" }), "utf8");
-}
-
-test("bundled ponytail spec matches this tree declaration", async () => {
-  const spec = await bundledPonytailSpec();
-  const local = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { dependencies: Record<string, string> };
-  expect(spec).toBe(local.dependencies["@dietrichgebert/ponytail"]);
-  expect(spec).toBeTruthy();
-});
-
-// Node resolves npm's nested copy first, so the reference must be the copy the extensions load.
-test("doctor measures ponytail bodies against the copy the extensions load", () => {
+// The vendored copy inside the package is what the extensions load, so it is the reference.
+test("doctor measures ponytail bodies against this tree's vendored copy", () => {
   const home = missingHome();
   try {
     const pkg = seedPluginPackage(home);
-    const nested = path.join(pkg, "node_modules", "@dietrichgebert", "ponytail");
-    const topLevel = path.join(home, ".omp", "plugins", "node_modules", "@dietrichgebert", "ponytail");
-    seedPonytailBodies(nested, (rel) => `NESTED ${rel}\n`);
-    seedPonytailManifest(nested);
-    seedPonytailBodies(topLevel, (rel) => `TOP ${rel}\n`);
-    // OpenCode keeps the body the nested copy carries, so it agrees with what omp loads.
+    const vendored = path.join(pkg, "extensions", "ponytail");
+    seedPonytailBodies(vendored, (rel) => `VENDORED ${rel}\n`);
+    // A sibling package a host might still discover must not become the reference.
+    const stray = path.join(home, ".omp", "plugins", "node_modules", "@dietrichgebert", "ponytail");
+    seedPonytailBodies(stray, (rel) => `STRAY ${rel}\n`);
+    // OpenCode keeps the vendored body, so it agrees with what omp loads.
     seededHostTree(home, "opencode");
     const agrees = path.join(hostExtensionsDirForTest("opencode", home), "ponytail-bundle");
-    seedPonytailBodies(agrees, (rel) => `NESTED ${rel}\n`);
-    // pi keeps the top-level body and loads from the package its settings.json names, so it is the one that drifted.
+    seedPonytailBodies(agrees, (rel) => `VENDORED ${rel}\n`);
+    // pi loads from the package its settings.json names, so that copy is the one that drifted.
     seededHostTree(home, "pi");
     const agentDir = path.join(home, ".pi", "agent");
     const local = path.join(agentDir, "ponytail");
-    seedPonytailBodies(local, (rel) => (rel === "hooks/ponytail-instructions.js" ? `TOP ${rel}\n` : `NESTED ${rel}\n`));
+    seedPonytailBodies(local, (rel) => (rel === "hooks/ponytail-instructions.js" ? `STRAY ${rel}\n` : `VENDORED ${rel}\n`));
     writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: [local] }, null, 2), "utf8");
 
     const result = runDoctor(home, path.join(home, "empty-bin"));
@@ -921,10 +907,9 @@ test("doctor checks pi ponytail at the path its settings declare", () => {
     seededHostTree(home, "pi");
     seedPonytailBodies(local, (rel) => (rel === "hooks/ponytail-instructions.js" ? "PI BODY\n" : `SHARED ${rel}\n`));
     writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-subagents", local] }, null, 2), "utf8");
-    // The copy the omp extensions load is the reference: a nested copy, resolved nearest-first.
-    const ref = path.join(pkg, "node_modules", "@dietrichgebert", "ponytail");
+    // The copy the omp extensions load is the reference: the vendored tree inside the package.
+    const ref = path.join(pkg, "extensions", "ponytail");
     seedPonytailBodies(ref, (rel) => `SHARED ${rel}\n`);
-    seedPonytailManifest(ref);
 
     const result = runDoctor(home, path.join(home, "empty-bin"));
     expect(result.status, result.stderr).toBe(0);

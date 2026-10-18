@@ -26,7 +26,6 @@ import {
   setSharedComboMode,
 } from "../../extensions/shared/session-state.ts";
 import { formatStatus } from "../../extensions/shared/status.ts";
-import { findHoistedPackage } from "../../extensions/shared/utils.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from "../../extensions/shared/types.ts";
 import { fakeRtkBin, withHome as inHome } from "../helpers/env.ts";
 
@@ -318,7 +317,7 @@ test("the context hook injects the Caveman, Ponytail, and RTK bodies", async () 
       "utf8",
     );
     expect(joined).toContain(rule);
-    // Ponytail comes from the hoisted package, not from the built-in fallback.
+    // Ponytail comes from the vendored copy, not from the built-in fallback.
     expect(joined).toMatch(/PONYTAIL MODE ACTIVE — level: full/);
     expect(joined).toMatch(/RTK guidance active/);
     // The base prompt is untouched and nothing is injected twice.
@@ -462,18 +461,18 @@ function instruction(result: { systemPrompt?: string[] } | undefined) {
   return result?.systemPrompt?.at(-1) || "";
 }
 
-/** The Ponytail body the hoisted package ships, read as `combo/index.ts` does. */
+/** The Ponytail body the vendored copy ships, read as `combo/index.ts` does. */
 async function upstreamPonytail(level: string): Promise<string> {
-  // The package's `exports` names only the plugin entry, so the subpath is reached by walking the filesystem.
+  // The vendored copy sits beside the extensions, so the subpath is a plain path.
   const extensionDir = fileURLToPath(new URL("../../extensions/combo/index.ts", import.meta.url));
-  const file = findHoistedPackage('@dietrichgebert/ponytail', dirname(extensionDir), 'hooks', 'ponytail-instructions.js');
-  expect(file, "the hoisted ponytail package carries its instruction builder").toBeTypeOf("string");
+  const file = join(dirname(extensionDir), '..', 'ponytail', 'hooks', 'ponytail-instructions.js');
+  expect(file, "the vendored ponytail copy carries its instruction builder").toBeTypeOf("string");
   const mod = (await import(pathToFileURL(file!).href)) as {
     getPonytailInstructions?: (l: string) => string;
     default?: { getPonytailInstructions?: (l: string) => string };
   };
   const build = mod.getPonytailInstructions ?? mod.default?.getPonytailInstructions;
-  expect(build, "the hoisted ponytail package exports its instruction builder").toBeTypeOf("function");
+  expect(build, "the vendored ponytail copy exports its instruction builder").toBeTypeOf("function");
   return build!(level);
 }
 
@@ -501,7 +500,7 @@ test("parent Combo max is inherited by separately instantiated marked children",
   expect(ponytail).toMatch(/# Ponytail/);
   expect(ponytail).toMatch(/PONYTAIL MODE ACTIVE — level: ultra/);
   expect(ponytail).toMatch(/root cause/i);
-  // Compares against the hoisted package, not quoted words: v5 reworded the ladder and dropped "YAGNI".
+  // Compares against the vendored copy, not quoted words: v5 reworded the ladder and dropped "YAGNI".
   expect(ponytail.startsWith(await upstreamPonytail("ultra"))).toBe(true);
 });
 

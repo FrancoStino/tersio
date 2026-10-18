@@ -326,3 +326,8 @@ The entries below are editing and verification discipline. No test, lint rule, o
 
 **Prevention rule:** Stage with `git add`, then commit with no pathspec. Before a partial push, read back the committed content with `git show HEAD:<path>`; `git show :<path>` and a tree comparison both pass while the index and the commit hold different text.
 
+## 2026-10-19 — A vendored copy was resolved from each extension's own directory
+
+**What happened:** Moving Ponytail into `extensions/ponytail/` broke `extensions/combo` and `extensions/updater`: both looked for it at `path.join(EXTENSION_DIR, 'ponytail', ...)`, and each of those files defines `EXTENSION_DIR` as its *own* directory, so the path named `extensions/combo/ponytail/` and the instruction load fell back to the built-in text. Five extension tests failed.
+**Root cause:** The constant is named as if it were the extensions directory, but it is per file. The neighbouring line in the same function already used `path.join(EXTENSION_DIR, '..', 'ponytail-bundle', ...)` correctly, and the replacement copied the intent instead of that shape.
+**Prevention rule:** Read the definition of a directory constant in the file you are editing before joining a new path from it. When a moved file must be found from an extension, mirror the join an existing line in that function already gets right.

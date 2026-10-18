@@ -14,10 +14,10 @@ import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { findHoistedPackage, fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
-import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
+import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
 import { serviceRunning, serviceState } from './doctor-fix.ts';
 
 /** Bytes at the scale a transcript gap reads in: `5.6M`, not `5571992`. */
@@ -45,9 +45,8 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // One source for the installed plugin path, so the doctor follows a package rename.
   const tersioPluginDir = ompPackageDir();
 
-  // Node resolves npm's nested copy before the top-level one, so the top-level copy is a decoy no host loads.
-  const ponytailPkg = findHoistedPackage('@dietrichgebert/ponytail', tersioPluginDir, 'package.json')
-    ?? path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
+  // Ponytail rides inside this tree now: one vendored copy, and no sibling package to discover.
+  const ponytailIndex = path.join(tersioPluginDir, 'extensions', 'ponytail', 'pi-extension', 'index.js');
   const cavemanIndex = path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts');
   const cavemanRule = (name: string) => path.join(tersioPluginDir, 'extensions', 'caveman', name);
   // The pstack body is a Tersio fork with no remote, so the check proves it is usable, not current.
@@ -65,7 +64,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   };
   // One hook cannot stand for the set: 5.1 and 5.2 ship the same instructions file and differ inside a skill.
   const ponytailStale: string[] = [];
-  const ponytailSource = path.dirname(ponytailPkg);
+  const ponytailSource = path.join(tersioPluginDir, 'extensions', 'ponytail');
   for (const host of hosts.filter((h) => h.installed)) {
     const copy = ponytailLoads[host.id];
     if (!copy) continue;
@@ -126,7 +125,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const probes = {
     ompPkgText: readTextIfExists(path.join(ompPackageDir(), 'package.json')),
     configText: readTextIfExists(path.join(OMP_AGENT_DIR, 'config.yml')),
-    ponytailPkgText: readTextIfExists(ponytailPkg),
+    ponytailPkgText: readTextIfExists(ponytailIndex),
     rtkBinText: rtkBin ? readTextIfExists(rtkBin) : Promise.resolve(null),
     cavemanIndexText: readTextIfExists(cavemanIndex),
     cavemanRuleText: readTextIfExists(cavemanRule('rule.md')),
@@ -143,7 +142,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     updaterIndexText: readTextIfExists(updaterIndex),
     rtkMtime: rtkBin ? fs.stat(rtkBin).catch(() => null) : Promise.resolve(null),
     ruleMtime: fs.stat(cavemanRule('rule.md')).catch(() => null),
-    ponytailMtime: fs.stat(ponytailPkg).catch(() => null),
+    ponytailMtime: fs.stat(ponytailIndex).catch(() => null),
     pricesMtime: fs.stat(pricesCachePath()).catch(() => null),
   };
   const rtkVersionProbe: Promise<string | null> = rtkBin ? execP(rtkBin, ['--version'], { timeout: 5000 }).then(
@@ -332,15 +331,14 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode'))) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
-  const ponytailVer = parseJsonObject<{ version?: string }>(ponytailPkgText)?.version ?? '';
-  check('Ponytail', ponytailPkgText !== null, [ponytailVer, ponytailAge].filter(Boolean).join(' '));
+  check('Ponytail', ponytailPkgText !== null, [PONYTAIL_VERSION, ponytailAge].filter(Boolean).join(' '));
   if (ponytailStale.length > 0) {
     warnLine('Ponytail per-host bodies',
       `stale in ${ponytailStale.length} file${ponytailStale.length === 1 ? '' : 's'}: ${ponytailStale.slice(0, 6).join(', ')}` +
       `${ponytailStale.length > 6 ? ` +${ponytailStale.length - 6} more` : ''} — run: tersio install --host <host>`);
   }
   // Offline-safe: the registry call is best-effort, and silence means no row rather than a stale one.
-  const ponytailVersionGap = await ponytailLatestGap(ponytailPkgText);
+  const ponytailVersionGap = await ponytailLatestGap(PONYTAIL_VERSION);
   if (ponytailVersionGap) warnLine('Ponytail version', `${ponytailVersionGap} — run: tersio update --apply-update --yes`);
 
   const total = tally.ok + tally.missing + tally.warn;
@@ -395,8 +393,7 @@ function ompBinary(): string | null {
 const CAVEMAN_BODIES = ['rule.md', 'rule-lite.md', 'rule-megacave-lite.md', 'rule-megacave-ultra.md', 'rule-ultra.md', 'rule-megacave.md'] as const;
 
 /** `"installed < latest"` when npm answers, else null: silence means "no row", not "stale". */
-async function ponytailLatestGap(installedPkgText: string | null): Promise<string | null> {
-  const local = parseJsonObject<{ version?: string }>(installedPkgText)?.version;
+async function ponytailLatestGap(local: string): Promise<string | null> {
   if (!local) return null;
   try {
     const meta = await fetchJson<{ version?: string }>('https://registry.npmjs.org/@dietrichgebert/ponytail/latest');

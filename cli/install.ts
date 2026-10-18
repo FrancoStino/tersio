@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUN_BIN_DIR, BUN_BIN, COMBO_PRESET_MODES, HOME, IS_WINDOWS, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
-  allowUnverified, applyUpdate, bundledPonytailSpec, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
+  allowUnverified, applyUpdate, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
   ponytailDefaultFlag, pstackDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
   dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
@@ -25,90 +25,54 @@ import { runUsage } from './usage.ts';
 import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
-  CAVEMAN_REMOTE_ULTRA, CAVEMAN_REMOTE_MEGACAVE, RTK_RELEASE_API, fetchJson, findFile, findHoistedPackage, httpsGet,
+  CAVEMAN_REMOTE_ULTRA, CAVEMAN_REMOTE_MEGACAVE, RTK_RELEASE_API, fetchJson, findFile, httpsGet,
   findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { runSettings } from './settings.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
+import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 
 
 async function stepPonytail(pluginsDir: string, options: InstallOptions): Promise<void> {
-  if (!options.quiet) console.log('  Ponytail — ensure bundled plugin');
-  await fs.mkdir(pluginsDir, { recursive: true });
+  // Ponytail rides inside this package now. An older install carried it as its own dependency,
+  // which a host then listed as a second plugin, so drop that entry and its sibling copy.
+  if (!options.quiet) console.log('  Ponytail — bundled in this plugin');
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  // npm resolves the *published* tersio, so a plain dependency entry lets npm nest the range's version.
   let migrated = false;
-  const localSpec = await bundledPonytailSpec();
-  const declared = pkg.dependencies['@dietrichgebert/ponytail'];
-  // Node resolves the nested copy first, so a dependency entry alone cannot hold the local version.
-  const rawOverrides: Record<string, string> =
+  if (PONYTAIL_PKG in pkg.dependencies) {
+    delete pkg.dependencies[PONYTAIL_PKG];
+    migrated = true;
+  }
+  const overrides: Record<string, string> =
     typeof pkg.overrides === 'object' && pkg.overrides !== null ? { ...pkg.overrides as Record<string, string> } : {};
-  const overrideNeeded = localSpec !== null && rawOverrides['@dietrichgebert/ponytail'] !== localSpec;
-  if (localSpec !== null && declared !== localSpec) {
-    pkg.dependencies['@dietrichgebert/ponytail'] = localSpec;
-    migrated = true;
-  } else if (localSpec === null && declared) {
-    delete pkg.dependencies['@dietrichgebert/ponytail'];
+  if (PONYTAIL_PKG in overrides) {
+    delete overrides[PONYTAIL_PKG];
+    if (Object.keys(overrides).length === 0) delete pkg.overrides;
+    else pkg.overrides = overrides;
     migrated = true;
   }
-  if (localSpec === null) {
-    // No bundled spec means no tersio-owned row, so an override would resurrect the dependency.
-    delete rawOverrides['@dietrichgebert/ponytail'];
-  } else if (overrideNeeded) {
-    rawOverrides['@dietrichgebert/ponytail'] = localSpec;
-  }
-  if (Object.keys(rawOverrides).length === 0) delete pkg.overrides;
-  else if (JSON.stringify(rawOverrides) !== JSON.stringify(typeof pkg.overrides === 'object' && pkg.overrides !== null ? pkg.overrides : {})) {
-    pkg.overrides = rawOverrides;
-    migrated = true;
-  }
-
   if (options.dryRun) {
-    if (verbose && !options.quiet) sayTagged(`  [dry-run] would write ${pkgPath}`);
-    if (migrated && verbose && !options.quiet) sayTagged(`  [dry-run] would set @dietrichgebert/ponytail → ${localSpec ?? 'this tree\x27s range'} (bundled with tersio)`);
+    if (migrated && verbose && !options.quiet) sayTagged(`  [dry-run] would drop ${PONYTAIL_PKG} from ${pkgPath}`);
   } else if (migrated) {
     await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-    if (!options.quiet) console.log(`  [migrate] set @dietrichgebert/ponytail → ${pkg.dependencies['@dietrichgebert/ponytail'] ?? 'this tree\x27s range'} (bundled with tersio)`);
+    if (!options.quiet) console.log(`  [migrate] dropped ${PONYTAIL_PKG} (now bundled in tersio)`);
   }
 
-  const ponytailExtPath = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail', 'pi-extension', 'index.js');
-  const probeExt = async (): Promise<boolean> => (await readTextIfExists(ponytailExtPath)) !== null;
-  // Skip the network unless a refresh was asked; migration always reinstalls.
-  let ponytailExtExists = !options.reinstall && !options.dryRun && !migrated ? await probeExt() : false;
-  if (ponytailExtExists) {
-    debug('Bundled Ponytail pi-extension already installed; skipping network refresh');
-  } else if (options.dryRun) {
-    // Pretend the extension is present so the wiring below still runs, without touching the network.
-    if (verbose && !options.quiet) console.log('  [dry-run] would run: npm install --no-audit --no-fund (in plugins dir)');
-    ponytailExtExists = true;
-  } else {
-    // Reinstall only when the self-plugin step did not materialize it.
-    try {
-      await execNetwork('Installing bundled Ponytail', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 });
-    } catch {
-      try {
-        await execNetwork('Installing bundled Ponytail', BUN_BIN, ['install'], { cwd: pluginsDir, timeout: 180000 });
-      } catch (e) {
-        sayTagged(`  [fail] Could not install bundled ponytail: ${(e as Error).message}`);
-        console.log('  [hint] Manual: cd ~/.omp/plugins && npm install --no-audit --no-fund');
-      }
-    }
-    ponytailExtExists = await probeExt();
+  // A host discovers every package in node_modules, so the old sibling would still be listed.
+  const sibling = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail');
+  if (options.dryRun) {
+    if (existsSync(sibling) && verbose && !options.quiet) sayTagged(`  [dry-run] would remove ${sibling}`);
+  } else if (existsSync(sibling)) {
+    await fs.rm(sibling, { recursive: true, force: true });
+    if (!options.quiet) console.log('  [migrate] removed the separate ponytail package');
   }
 
-  if (!ponytailExtExists) {
-    console.log('  [skip] Bundled Ponytail pi-extension/index.js still not found — skill-only mode');
-    console.log('  [hint] The /ponytail command won\'t work, but ponytail skills will still load');
-  } else if (!options.dryRun && !options.quiet) {
-    debug('Bundled Ponytail pi-extension found; OMP loads it from the plugin manifest');
-  }
   await ensurePonytailConfigValue('defaultMode', 'off', options);
   // hideStatus=true keeps the upstream ponytail bar hidden; combo owns the bar.
   await ensurePonytailConfigValue('hideStatus', true, options);
@@ -491,8 +455,8 @@ async function stepPstack(extDir: string, options: InstallOptions): Promise<void
 
 // The tree ships no node_modules, so the ruleset rides along as files. Both hosts need the same six.
 async function stepPonytailBundle(treeDir: string, options: InstallOptions): Promise<void> {
-  const root = findHoistedPackage('@dietrichgebert/ponytail', findPackageRoot(path.dirname(fileURLToPath(import.meta.url))));
-  if (!root) {
+  const root = PONYTAIL_DIR;
+  if (!existsSync(root)) {
     if (!options.quiet) console.log('  [skip] Ponytail package not found next to the CLI — OpenCode keeps the built-in text');
     return;
   }
@@ -801,7 +765,7 @@ const PI_PONYTAIL_PACKAGE = `${JSON.stringify({ name: 'ponytail', version: '0.0.
 
 async function stepPonytailForPi(agentDir: string, options: InstallOptions): Promise<void> {
   if (!options.quiet) console.log('  Ponytail — write the local pi package');
-  const root = findHoistedPackage('@dietrichgebert/ponytail', findPackageRoot(path.dirname(fileURLToPath(import.meta.url))));
+  const root = PONYTAIL_DIR;
   const dest = path.join(agentDir, 'ponytail');
   if (!root) {
     console.log('  [skip] Ponytail package not found next to the CLI');

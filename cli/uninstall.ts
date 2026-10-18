@@ -6,10 +6,11 @@ import {
   args, dryRun, keepPonytail, removePonytail, removeRtk, yes,
   debug, writeConfigLines,
 } from './common.ts';
+import { PONYTAIL_PKG } from './manifest.ts';
 import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } from './interactive.ts';
 import { detectHosts, hostHint, hostLabel, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
-import { findHoistedPackage, piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
+import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { fileURLToPath } from 'node:url';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
@@ -22,7 +23,6 @@ interface UninstallOptions {
 }
 
 // The pi tree mirrors the OMP one. Ponytail and rtk stay: a package and a shared binary are not ours to delete.
-const PONYTAIL_PKG = '@dietrichgebert/ponytail';
 
 const PI_TREE_DIRS = [
   // What an install writes now.

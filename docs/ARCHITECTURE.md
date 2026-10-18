@@ -10,6 +10,7 @@ flowchart TB
     INST["cli/install.ts<br/>writes the extension tree + rtk.ts wiring"]
     DOC["cli/doctor.ts · update.ts · uninstall.ts"]
     UP["cli/upstream.ts<br/>scorecard vs pinned upstreams"]
+    UPDT["cli/dashboard-update.ts<br/>update view, apply, cadence"]
     SRV["cli/dashboard.ts<br/>127.0.0.1, or --export one file"]
   end
   subgraph APP["dashboard/app (Vite + React)"]
@@ -32,6 +33,9 @@ flowchart TB
   INST -->|writes| MODES
   INST -->|ships| SRV
   SRV -->|serves| UI
+  SRV --> UPDT
+  UI -->|"/api/update"| UPDT
+  UPDT -->|"spawns tersio update"| INST
   UI -->|"/api/agent"| ASTS
   CLI -->|"tersio usage"| LED
   CLI -->|"tersio upstream"| UP
@@ -151,7 +155,7 @@ Every mode Tersio ships is a port. `cli/upstream.ts` holds one pin per source an
 |---|---|---|
 | Caveman | `JuliusBrussee/caveman` commit `d262ab3` | Three bodies byte for byte, after the one adapted line; three local forks by presence |
 | pstack | `cursor/plugins` commit `a968159` | Every shipped body by presence; every body is a fork with Cursor's surface removed |
-| Ponytail | the installed npm package | Each host's bundled copy against the package it was copied from |
+| Ponytail | the vendored copy at `extensions/ponytail/`, its version read from that tree's own manifest | Each host's copy against that tree; npm's `latest` tag for upstream drift |
 | RTK | `rtk-ai/rtk` release feed | The binary's `--version` against the latest release tag |
 
 ```mermaid
@@ -177,6 +181,32 @@ flowchart LR
 - **Drift is not a failure.** A plain run only reports. `--check` fails on any gap of ours, and `--strict` implies it, then adds drift past the ceiling plus an unmeasured drift, so a rate-limited run never passes silently.
 - **The command is hidden, and it writes a report.** `tersio upstream` is not listed in `tersio help`, because it is an engineering check, not a user command. It writes `~/.tersio/upstream/scorecard.json` for machines and `~/.tersio/upstream/scorecard.md` for a reader: tables, a text bar per source and host, and an `xychart-beta` Mermaid graph. `--md <file>` writes the report elsewhere.
 - **No scheduled job.** The scorecard runs when someone runs it. A weekly CI job was tried and removed: it needs a token, it goes red on reviewed drift, and the same answer is one local command away.
+
+## The dashboard update surface
+
+`cli/dashboard-update.ts` owns the update state, and `cli/dashboard.ts` only routes to it. The page polls one view, so the notice and the About pane cannot disagree.
+
+```mermaid
+flowchart LR
+  POLL["the page's poll<br/>every 20s, 1.5s while busy"] --> VIEW["updateView()"]
+  STATE["state.json<br/>cadence, last check, snooze, skip"] --> VIEW
+  VIEW --> NOTICE["persistent notice<br/>Update now · Remind me later · Skip"]
+  VIEW --> PANE["About pane<br/>cadence, status, log"]
+  TICK["timer, while a server runs"] --> DUE{"cadence due?"}
+  DUE -->|yes| CHECK["checkForUpdate(true)<br/>registry /latest"]
+  CHECK --> STATE
+  NOTICE --> APPLY["spawn: tersio update --yes"]
+  APPLY --> LOG["child's stdout and stderr<br/>become the pane's log"]
+```
+
+- **The check reads the registry's `latest` tag over HTTPS.** `npm view` cost a process spawn and a resolver walk for one string, so the check now costs one request, and a manual `Check now` lands in well under a second.
+- **The server owns the clock.** The page sends no timestamps: `dueIn` and `snoozeIn` arrive as durations, so a laptop waking from sleep cannot show a stale window, and the render calls no clock.
+- **The timer only exists while a dashboard runs.** Both timers are `unref`d, so they never hold the process open, and the cadence resumes on the next launch. A check stamps `lastCheck` even when the registry is unreachable, so an offline machine retries on its cadence rather than on every tick.
+- **Applying spawns this CLI's own update path**, `tersio update --yes`, as a child with both streams captured. The smoke check before an install, the global CLI refresh, and the add-on pass therefore stay in one place, and the child's output is what the pane prints. Nothing about the release is taken from the request body.
+- **`current` is read from the installed manifest, `running` from this process.** An install moves `current` while the old build keeps serving, so the pane can say a reload is what finishes the job, and the notice stops offering a release already on disk.
+- **The notice is one toast per concern**, keyed by id: a poll that finds the same release 60 times replaces the same toast instead of stacking 60.
+- **Skip is per release, snooze is per window.** Skipping retires the version named and nothing later; a snooze hides the notice for six hours and lapses on its own.
+- **Nothing installs without a click.** The cadence only asks the registry; the apply path is the notice's `Update now` or the pane's `Update to X`.
 
 ## Key invariants
 

@@ -443,7 +443,7 @@ test("off mode gets no injection, on mode gets it on any turn", async () => {
 
 // The header is the only level-specific text; YAGNI appears in every level.
 test("the Ponytail fallback carries the installed package's own level rules", async () => {
-  // The fallback only fires when the hoisted package cannot be resolved, so it is the one place our text speaks for Ponytail: its per-level rule must be the package's own, not a paraphrase.
+  // The fallback only fires when the vendored copy cannot be resolved, so it is the one place our text speaks for Ponytail: its per-level rule must be the package's own, not a paraphrase.
   for (const level of ["lite", "full", "ultra"] as const) {
     // The injected body comes from the installed package, so an empty row means the package did not resolve and this test would otherwise compare the fallback against itself.
     const row = (/^\|\s*\*\*\w+\*\*\s*\|([^|]*)/m.exec(await injectMarked(level))?.[1] ?? "").trim();

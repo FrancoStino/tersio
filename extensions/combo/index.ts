@@ -30,7 +30,7 @@ import {
   readRtkDefault,
   saveComboSetup,
 } from '../shared/plugin-settings.ts';
-import { findHoistedPackage, isPiProcess, piAgentDir } from '../shared/utils.ts';
+import { isPiProcess, piAgentDir } from '../shared/utils.ts';
 import type { ComboState, ExtensionApi, ExtensionCtx, SystemPromptEvent } from '../shared/types.ts';
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -67,10 +67,10 @@ export function ponytailFallback(mode: string): string {
 
 // Ponytail is hoisted, so one upward walk covers every layout. The hook is CommonJS, so both namespaces are tried.
 async function loadPonytailInstructions(mode: string): Promise<string> {
-  const installed = findHoistedPackage('@dietrichgebert/ponytail', EXTENSION_DIR, 'hooks', 'ponytail-instructions.js');
-  // The OpenCode tree ships no node_modules; the installer bundles the ruleset beside the extensions.
+  // Ponytail rides inside this tree; the OpenCode layout bundles the ruleset beside the extensions.
+  const vendored = path.join(EXTENSION_DIR, '..', 'ponytail', 'hooks', 'ponytail-instructions.js');
   const bundled = path.join(EXTENSION_DIR, '..', 'ponytail-bundle', 'hooks', 'ponytail-instructions.js');
-  const treeLocal = installed ?? (existsSync(bundled) ? bundled : null);
+  const treeLocal = existsSync(vendored) ? vendored : (existsSync(bundled) ? bundled : null);
   if (treeLocal) {
     try {
       const loaded = await import(pathToFileURL(treeLocal).href) as {

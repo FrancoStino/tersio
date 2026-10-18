@@ -15,7 +15,7 @@ export interface HttpOptions {
 }
 
 // Promise.withResolvers is Node 22+; the package supports Node 18+.
-function withResolvers<T>(): PromiseWithResolvers<T> {
+export function withResolvers<T>(): PromiseWithResolvers<T> {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
@@ -151,21 +151,6 @@ export function isPiProcess(): boolean {
 export function piAgentDir(): string {
   const override = process.env.PI_CODING_AGENT_DIR;
   return isPiProcess() && override ? override : path.join(homeDir(), '.pi', 'agent');
-}
-
-// Ponytail is hoisted, so it sits in Tersio's node_modules, a host's plugin dir, or beside it; walking up covers all.
-export function findHoistedPackage(pkg: string, fromDir: string, ...relInside: string[]): string | null {
-  let dir = fromDir;
-  for (;;) {
-    const candidate = path.join(dir, 'node_modules', ...pkg.split('/'), ...relInside);
-    if (existsSync(candidate)) return candidate;
-    // pi installs npm packages under ~/.pi/agent/npm/node_modules.
-    const piCandidate = path.join(dir, 'npm', 'node_modules', ...pkg.split('/'), ...relInside);
-    if (existsSync(piCandidate)) return piCandidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
 }
 
 export function httpsGet(url: string, opts: HttpOptions = {}): Promise<string> {

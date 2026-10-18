@@ -6,12 +6,11 @@ import path from 'node:path';
 import { PACKAGE_VERSION, args, flagValue, parseJsonObject } from './common.ts';
 import { textTable } from './usage.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
-import { EXT_DIR, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, shippedOmpManifest, sourcePath, treeFileText, treeFilesFor } from './manifest.ts';
+import { EXT_DIR, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_VERSION, shippedOmpManifest, sourcePath, treeFileText, treeFilesFor } from './manifest.ts';
 import { adaptCavemanFull } from '../extensions/updater/index.ts';
 import {
   RTK_RELEASE_API,
   fetchJson,
-  findHoistedPackage,
   httpsGet,
   normalizeRtkVersion,
   piAgentDir,
@@ -396,11 +395,10 @@ async function checkPstack(): Promise<SourceRow> {
   };
 }
 
-/** Ponytail: the installed package is the source of truth, and each host's bundled copy must match it. */
+/** Ponytail: the vendored copy is the source of truth, and each host's copy must match it. */
 async function checkPonytail(hosts: HostRow[]): Promise<SourceRow> {
-  const pkg = findHoistedPackage('@dietrichgebert/ponytail', EXT_DIR, 'package.json');
-  const bundled = parseJsonObject<{ version?: string }>(pkg ? await readTextIfExists(pkg) : null)?.version ?? null;
-  const root = pkg ? path.dirname(pkg) : null;
+  const bundled = PONYTAIL_VERSION;
+  const root = PONYTAIL_DIR;
   const copies: Array<{ dir: string; files: readonly string[] }> = [];
   for (const host of hosts) {
     if (!host.installed) continue;

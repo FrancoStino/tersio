@@ -84,9 +84,9 @@ OpenCode reports the same way as the other two. `tersio doctor --fix extensions`
 The OMP plugin install and the one-line installer bring two more pieces:
 
 - **RTK binary** — compact shell output, written to `~/.bun/bin/rtk`.
-- **Ponytail** — bundled as a Tersio dependency, loaded as a skill by both hosts.
+- **Ponytail** — vendored inside Tersio at `extensions/ponytail/`, loaded as a skill by both hosts.
 
-Both routes install Ponytail: OMP as a nested plugin dependency, pi as `npm:@dietrichgebert/ponytail` (with a skills copy as the offline fallback). RTK is a separate binary: get it with `tersio install` or the one-liner.
+Both routes carry Ponytail inside Tersio: OMP loads the skills from the plugin's own `extensions/ponytail/` tree, and pi gets a local package written from that same copy. RTK is a separate binary: get it with `tersio install` or the one-liner.
 
 ## Uninstall
 

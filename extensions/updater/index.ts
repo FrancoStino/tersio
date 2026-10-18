@@ -16,7 +16,6 @@ import {
   RTK_RELEASE_API,
   fetchJson,
   findFile,
-  findHoistedPackage,
   homeDir,
   httpsGet,
   httpsDownload,
@@ -57,9 +56,10 @@ export { adaptCavemanFull };
 // Host-neutral: this updater runs inside pi, OMP, and OpenCode alike.
 const RELOAD_MSG = 'Reminder: restart your agent (or reload extensions) for updates to take effect.';
 
-// Ponytail is hoisted, so the installed copy is found by walking up, not by naming a host directory.
+// Ponytail rides inside this extension tree, so its copy is a fixed path, not an upward walk.
 function ponytailLocal(): string | null {
-  return findHoistedPackage('@dietrichgebert/ponytail', EXTENSION_DIR, 'package.json');
+  const pkg = path.join(EXTENSION_DIR, '..', 'ponytail', 'package.json');
+  return fsSync.existsSync(pkg) ? pkg : null;
 }
 
 interface AddonUpdaterCtx {

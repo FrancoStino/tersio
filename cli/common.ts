@@ -311,13 +311,6 @@ function readPonytailConfig(): { dir: string; path: string } {
   return { dir, path: path.join(dir, 'config.json') };
 }
 
-/** This package's ponytail range, or null; repair pins it, since npm installs the published range. */
-async function bundledPonytailSpec(): Promise<string | null> {
-  const root = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
-  const text = await readTextIfExists(path.join(root, 'package.json'));
-  return parseJsonObject<{ dependencies?: Record<string, string> }>(text)?.dependencies?.['@dietrichgebert/ponytail'] ?? null;
-}
-
 interface PonytailConfig {
   defaultMode?: string;
   hideStatus?: boolean;
@@ -371,15 +364,6 @@ async function ensurePonytailConfigValue<K extends keyof PonytailConfig>(
 }
 
 
-
-// npm prefers a nested copy over the pin when the plugin's range excludes it; only `overrides` reaches it.
-function ponytailOverride(pkg: PluginsPackage): string | null {
-  const overrides = pkg.overrides;
-  if (typeof overrides !== 'object' || overrides === null) return null;
-  const value = (overrides as Record<string, unknown>)['@dietrichgebert/ponytail'];
-  return typeof value === 'string' ? value : null;
-}
-
 // Read plugins/package.json tolerantly; a corrupt or missing file starts fresh with installer-managed defaults.
 async function readPluginsPackage(pkgPath: string): Promise<PluginsPackage & { dependencies: Record<string, string> }> {
   const pkg = parseJsonObject<PluginsPackage>(await readTextIfExists(pkgPath)) ?? {};
@@ -413,6 +397,6 @@ export {
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,
-  ensurePonytailConfigValue, readPluginsPackage, relTime, bundledPonytailSpec, ponytailOverride,
+  ensurePonytailConfigValue, readPluginsPackage, relTime,
 };
 export type { InstallOptions, PluginsPackage, PonytailConfig, WriteOptions };

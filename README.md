@@ -138,7 +138,7 @@ Shared, and identical for every host:
 | Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, and the display currency |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
-| Session state | `~/.tersio/state.json` — reset watermark, update check, rtk heads, and the doctor report |
+| Session state | `~/.tersio/state.json` — reset watermark, update check and cadence, rtk heads, and the doctor report |
 | Upstream scorecard | `~/.tersio/upstream/` — `scorecard.json`, `scorecard.md`, and the cached trees |
 | `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
 | Model prices | `~/.tersio/prices.json` caches LiteLLM's feed; `~/.tersio/prices.local.json` is yours, keyed by model id or a `*` gateway prefix, and it wins over the feed. `tersio usage` prints an `Unpriced` line naming the keys to add. |
@@ -149,8 +149,8 @@ Per host, written by `tersio install --host <omp|pi|opencode>`:
 
 | Host | Extensions | Ponytail |
 |---|---|---|
-| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — the plugin manifest (`omp.extensions`) owns every mode extension, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring, which `config.yml` registers by path | nested plugin dependency under `~/.omp/plugins/node_modules/`, one Plugins row |
-| pi | `~/.pi/agent/extensions/{caveman,pstack,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `npm:@dietrichgebert/ponytail`, installed as a pi package |
+| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — the plugin manifest (`omp.extensions`) owns every mode extension, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring, which `config.yml` registers by path | vendored at `extensions/ponytail/` inside the plugin, so **Settings → Plugins** lists one row |
+| pi | `~/.pi/agent/extensions/{caveman,pstack,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `~/.pi/agent/ponytail/`, a local package written from Tersio's vendored copy |
 | OpenCode | `~/.config/opencode/plugins/tersio/` — registered in `opencode.json` plugins, so there is nothing else to register | bundled with Tersio; no separate package |
 
 All three hosts carry the same `shared/` modules and the same mode extensions from the same sources.

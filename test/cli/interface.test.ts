@@ -10,6 +10,7 @@ import { bannerLines, bannerTier } from "../../cli/banner.ts";
 import { detectHosts, hostLabel } from "../../cli/hosts.ts";
 import type { HostEntry } from "../../cli/hosts.ts";
 import { cliEnv, fakeRtkBin } from "../helpers/env.ts";
+import { registryUrl } from "../helpers/registry.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
@@ -570,21 +571,15 @@ function screenAtCi(rows: number): string[] {
 
 /** A registry that answers with a newer version, so the welcome carries its update prompt too. */
 function screenAtUpdate(rows: number): string[] {
-  const bin = mkdtempSync(path.join(os.tmpdir(), "tersio-newer-npm-"));
-  try {
-    writeFileSync(`${bin}/npm`, "#!/bin/sh\necho 99.0.0\n", { mode: 0o755 });
-    // No CI here: a real terminal also prints the registry spinner, which is what sits above the tips.
-    const result = spawnSync("python3", ["-c", PY, String(rows), process.execPath, installer], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 30000,
-      env: { ...process.env, TERM: "xterm-256color", TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-screen-")), PATH: `${bin}${process.env.PATH ? `:${process.env.PATH}` : ""}` },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    return JSON.parse(result.stdout) as string[];
-  } finally {
-    rmSync(bin, { recursive: true, force: true });
-  }
+  // No CI here: the layout is read from a real terminal under pyte.
+  const result = spawnSync("python3", ["-c", PY, String(rows), process.execPath, installer], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30000,
+    env: { ...process.env, TERM: "xterm-256color", TERSIO_HOME: mkdtempSync(path.join(os.tmpdir(), "tersio-screen-")), TERSIO_UPDATE_URL: registryUrl("99.0.0") },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as string[];
 }
 
 describe.skipIf(!havePyte)("menu layout", () => {
@@ -750,7 +745,7 @@ test("dry-run previews shared bridge before dependent extensions without writing
   expect(shared >= 0, result.stdout).toBeTruthy();
   expect(rtk > shared, result.stdout).toBeTruthy();
   expect(caveman > shared, result.stdout).toBeTruthy();
-  expect(result.stdout).toMatch(/Ponytail — ensure bundled plugin/);
+  expect(result.stdout).toMatch(/Ponytail — bundled in this plugin/);
   expect(result.stdout).toMatch(/Tersio — register plugin/);
   expect(result.stdout).not.toMatch(/\/tmp|\/Users|\.omp[\\/]agent[\\/]extensions\/shared\/session-state\.js/);
   expect(existsSync(path.join(root, "extensions", "shared-session-state.js"))).toBe(false);
@@ -769,7 +764,7 @@ test("user dry-run installs commands without retired reinforcement", () => {
   );
 
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Ponytail — ensure bundled plugin/);
+  expect(result.stdout).toMatch(/Ponytail — bundled in this plugin/);
   expect(result.stdout).toMatch(/Combo — install preset switch/);
   expect(result.stdout).toMatch(/Tersio — register plugin/);
   expect(result.stdout).not.toMatch(/mode reinforcement/i);
@@ -875,15 +870,16 @@ test("uninstall dry-run previews shared bridge removal", () => {
 });
 
 // npm nests an old copy when the published range excludes the pin, so the override makes the pinned version load.
-test("install pins the bundled ponytail range with an override", () => {
+test("the ponytail repair drops an older install's dependency and sibling copy", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-ponytail-override-"));
   try {
     const pluginsDir = path.join(home, ".omp", "plugins");
-    mkdirSync(pluginsDir, { recursive: true });
+    const sibling = path.join(pluginsDir, "node_modules", "@dietrichgebert", "ponytail");
+    mkdirSync(sibling, { recursive: true });
     const pkgPath = path.join(pluginsDir, "package.json");
     writeFileSync(
       pkgPath,
-      JSON.stringify({ name: "omp-plugins", private: true, dependencies: { "@dietrichgebert/ponytail": "^4.12.0" } }, null, 2),
+      JSON.stringify({ name: "omp-plugins", private: true, dependencies: { "@dietrichgebert/ponytail": "^4.12.0" }, overrides: { "@dietrichgebert/ponytail": "^4.12.0" } }, null, 2),
       "utf8",
     );
     const result = spawnSync(process.execPath, [installer, "doctor", "--fix", "ponytail", "--yes", "--dry-run"], {
@@ -893,9 +889,11 @@ test("install pins the bundled ponytail range with an override", () => {
       env: cliEnv(home),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/\[dry-run\] .*@dietrichgebert\/ponytail → \^5/);
-    expect(result.stdout).toMatch(/overrides/);
-    expect(JSON.parse(readFileSync(pkgPath, "utf8")).overrides, "a dry run must not write").toBeUndefined();
+    expect(result.stdout).toMatch(/\[dry-run\] would drop @dietrichgebert\/ponytail/);
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { dependencies: Record<string, string>; overrides?: Record<string, string> };
+    expect(pkg.dependencies["@dietrichgebert/ponytail"], "a dry run must not write").toBe("^4.12.0");
+    expect(pkg.overrides?.["@dietrichgebert/ponytail"], "a dry run must not write").toBe("^4.12.0");
+    expect(existsSync(sibling), "a dry run must not delete").toBe(true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

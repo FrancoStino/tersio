@@ -21,6 +21,8 @@ import type { RtkRelease } from '../extensions/shared/utils.ts';
 import { parseHostArg } from './hosts.ts';
 
 const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+/** How long the registry gets before the check gives up and reports unknown. */
+const NPM_LATEST_TIMEOUT_MS = 3000;
 
 function newerThan(a: string, b: string): boolean {
   const pa = a.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -31,20 +33,25 @@ function newerThan(a: string, b: string): boolean {
   return false;
 }
 
+/** The registry's latest tag. `TERSIO_UPDATE_URL` points it at a stub, the way the prices feed does. */
+function updateUrl(): string {
+  return process.env.TERSIO_UPDATE_URL || `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
+}
+
+// One HTTP read of the registry's own latest tag: the answer is a string, and `npm view` cost a
+// process spawn plus a resolver walk to produce it.
 async function latestPublishedVersion(): Promise<string | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), NPM_LATEST_TIMEOUT_MS);
   try {
-    const args = IS_WINDOWS
-      ? ['/d', '/s', '/c', 'npm', 'view', PACKAGE_NAME, 'version', '--prefer-online']
-      : ['view', PACKAGE_NAME, 'version', '--prefer-online'];
-    const r = await execNetwork('Checking npm registry for tersio updates', IS_WINDOWS ? process.env.ComSpec || 'cmd.exe' : 'npm', args, {
-      timeout: 4000,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-      shell: false,
-    });
-    return r.stdout.trim() || null;
+    const res = await fetch(updateUrl(), { signal: ctl.signal });
+    if (!res.ok) return null;
+    const version = ((await res.json()) as { version?: unknown }).version;
+    return typeof version === 'string' && version ? version : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -243,4 +250,4 @@ async function runLatestUpdate(): Promise<void> {
     process.exitCode = 1;
   }
 }
-export { checkForUpdate, runLatestUpdate };
+export { checkForUpdate, newerThan, runLatestUpdate };

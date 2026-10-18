@@ -8,7 +8,7 @@ import {
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, removeExtensionFromConfig,
   dryRun, verbose,
   debug,
-  bundledPonytailSpec, execP, parseJsonObject, ponytailOverride, readPluginsPackage,
+  execP, parseJsonObject, readPluginsPackage,
   shimCommand,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
@@ -19,7 +19,7 @@ import {
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease } from '../extensions/shared/utils.ts';
 import { runLatestUpdate } from './update.ts';
-import { OPENCODE_ENTRY, TREE_FILES, isObsoleteTreeFile, syncPluginManifest, syncTreeFiles, treeFilesFor } from './manifest.ts';
+import { OPENCODE_ENTRY, PONYTAIL_PKG, TREE_FILES, isObsoleteTreeFile, syncPluginManifest, syncTreeFiles, treeFilesFor } from './manifest.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 
 type FixTarget = 'extensions' | 'registrations' | 'rtk' | 'ponytail' | 'cli' | 'service';
@@ -294,27 +294,30 @@ async function fixRtk(binDir: string): Promise<void> {
 }
 
 async function fixPonytail(pluginsDir: string): Promise<void> {
-  console.log('  Doctor --fix: restoring bundled Ponytail');
+  // Ponytail rides inside tersio now. The old dependency made a host list it as a second plugin,
+  // so the repair drops the entry, the override, and the sibling copy the host still discovers.
+  console.log('  Doctor --fix: drop the separate Ponytail package');
   await fs.mkdir(pluginsDir, { recursive: true });
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
   if (!(PACKAGE_NAME in pkg.dependencies)) pkg.dependencies[PACKAGE_NAME] = `^${PACKAGE_VERSION}`;
-  // npm resolves the *published* tersio, whose range can lag this tree; the override is what reaches the loaded copy.
-  const localSpec = await bundledPonytailSpec();
-  if (localSpec !== null) {
-    if (pkg.dependencies['@dietrichgebert/ponytail'] !== localSpec) pkg.dependencies['@dietrichgebert/ponytail'] = localSpec;
-    if (ponytailOverride(pkg) !== localSpec) {
-      pkg.overrides = { ...(typeof pkg.overrides === 'object' && pkg.overrides !== null ? pkg.overrides as Record<string, string> : {}), '@dietrichgebert/ponytail': localSpec };
-      const note = 'forced with overrides, so the nested copy is dropped';
-      if (dryRun) sayTagged(`  [dry-run] would pin @dietrichgebert/ponytail → ${localSpec} (${note})`);
-      else console.log(`  [pin] @dietrichgebert/ponytail → ${localSpec} (${note})`);
-    }
+  const hadEntry = PONYTAIL_PKG in pkg.dependencies;
+  delete pkg.dependencies[PONYTAIL_PKG];
+  if (typeof pkg.overrides === 'object' && pkg.overrides !== null) {
+    const overrides = { ...pkg.overrides as Record<string, string> };
+    delete overrides[PONYTAIL_PKG];
+    if (Object.keys(overrides).length === 0) delete pkg.overrides;
+    else pkg.overrides = overrides;
   }
+  const sibling = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail');
   if (dryRun) {
-    console.log('  [dry-run] would run: npm install --no-audit --no-fund (in plugins dir)');
+    if (hadEntry) sayTagged(`  [dry-run] would drop ${PONYTAIL_PKG} from ${pkgPath}, and ${sibling} when present`);
+    console.log('  [dry-run] would write the plugin manifest, then run: npm install --no-audit --no-fund (in plugins dir)');
     return;
   }
+  if (hadEntry) console.log(`  [migrate] dropped ${PONYTAIL_PKG} (now bundled in tersio)`);
   await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  await fs.rm(sibling, { recursive: true, force: true }).catch(() => undefined);
   await execNetwork('Restoring bundled Ponytail', NPM_BIN, ['install', '--no-audit', '--no-fund'], { cwd: pluginsDir, timeout: 180000 }).catch((e) => {
     throw new Error(`bundled ponytail restore failed: ${(e as Error).message}`);
   });
