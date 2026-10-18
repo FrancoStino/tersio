@@ -10,6 +10,8 @@ import path from 'node:path';
 export interface HttpOptions {
   maxRedirects?: number;
   signal?: AbortSignal;
+  // Extra request headers; a GitHub token lifts the unauthenticated rate limit.
+  headers?: Record<string, string>;
 }
 
 // Promise.withResolvers is Node 22+; the package supports Node 18+.
@@ -169,7 +171,7 @@ export function findHoistedPackage(pkg: string, fromDir: string, ...relInside: s
 export function httpsGet(url: string, opts: HttpOptions = {}): Promise<string> {
   const { promise, resolve, reject } = withResolvers<string>();
   const maxRedirects = opts.maxRedirects ?? 5;
-  const req = https.get(url, { headers: { 'User-Agent': 'tersio', Accept: 'application/json,*/*' }, signal: opts.signal }, (res) => {
+  const req = https.get(url, { headers: { 'User-Agent': 'tersio', Accept: 'application/json,*/*', ...opts.headers }, signal: opts.signal }, (res) => {
     const next = redirectNext(res, url);
     if (next) {
       if (maxRedirects <= 0) { res.resume(); reject(new Error(`Too many redirects fetching ${url}`)); return; }
@@ -215,8 +217,8 @@ export function httpsDownload(url: string, dest: string, opts: HttpOptions = {})
   return promise;
 }
 
-export async function fetchJson<T>(url: string): Promise<T> {
-  const body = await httpsGet(url);
+export async function fetchJson<T>(url: string, opts: HttpOptions = {}): Promise<T> {
+  const body = await httpsGet(url, opts);
   try {
     return JSON.parse(body) as T;
   } catch {

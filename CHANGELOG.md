@@ -4,6 +4,7 @@
  - `tersio upstream` prints a scorecard for all four sources of truth: how many files match their pin, what drifted upstream, and how each installed host's tree compares. `--json` for machines, `--offline` for the last result, `--check` and `--strict` for automation.
  - `tersio upstream` also writes `~/.tersio/upstream/scorecard.md`: tables, a text bar per source and host, and Mermaid charts. `--md <file>` writes it elsewhere. The command stays out of `tersio help`, because it is an engineering check.
  - `/tersio upstream` prints the same scorecard inside a session.
+ - The scorecard names every gap and groups it by whose move it was: `ours to fix`, `upstream moved`, or `unmeasured`. A failed read says which failure it was, a 404 on the pin included, and that one fails a plain `--check` rather than passing as unmeasured. The hosts table gains an `Unloaded` column for an entry a host's manifest never names, and each drift row carries a compare URL for the pin. The terminal folds a group at 12 names, and the Markdown report keeps all of them.
 
 ### Changed
  - The Tools page reads rtk's own savings: a `Saved by RTK` tile, a table folded by leading verb with a `Show every command` toggle, and a footer naming adoption. Measured here: 62.6M B saved of 88.2M B taken in (71%), across 21,468 commands folded to 36 verbs.

@@ -33,6 +33,26 @@ function usageSummary(): string {
   return `tersio usage: ${rows.length} rows (${parts.join(', ')}), last write ${last}.`;
 }
 
+async function openScorecard(pi: ExtensionApi, ctx?: ExtensionCtx, offline = false): Promise<void> {
+  try {
+    const run = await pi.exec?.('tersio', ['upstream', '--json', ...(offline ? ['--offline'] : [])], { cwd: ctx?.cwd });
+    if (!run) throw new Error('this host cannot run tersio');
+    const card = JSON.parse(run.stdout) as {
+      accuracy?: number; drift?: number;
+      sources?: Array<{ source: string; matched: number; tracked: number; drift: number; added: number }>;
+      hosts?: Array<{ host: string; installed: boolean; matched: number; files: number; stale: number; missing: number }>;
+    };
+    const lines = [`tersio upstream: ${card.accuracy ?? '?'}% accurate · ${card.drift ?? 0} upstream file(s) drifted`];
+    for (const s of card.sources ?? []) lines.push(`${s.source}: ${s.matched}/${s.tracked} match · drift ${s.drift}${s.added ? ` · +${s.added} new` : ''}`);
+    for (const h of card.hosts ?? []) {
+      if (h.installed) lines.push(`${h.host}: ${h.matched}/${h.files} files${h.stale || h.missing ? ` · ${h.stale} stale, ${h.missing} missing` : ''}`);
+    }
+    ctx?.ui?.notify?.(lines.join('\n'), card.hosts?.some((h) => h.installed && (h.stale > 0 || h.missing > 0)) ? 'warning' : 'info');
+  } catch (e) {
+    ctx?.ui?.notify?.(`tersio upstream: could not read the scorecard (${(e as Error).message}). Run 'tersio upstream' in a shell.`, 'warning');
+  }
+}
+
 async function openDashboard(pi: ExtensionApi, ctx?: ExtensionCtx): Promise<void> {
   const file = path.join(os.tmpdir(), `tersio-dashboard-${Date.now()}.html`);
   try {
@@ -87,6 +107,10 @@ export default function tersioCommandsExtension(pi: ExtensionApi): void {
       }
       if (sub === 'dashboard') {
         await openDashboard(pi, ctx);
+        return;
+      }
+      if (sub === 'upstream') {
+        await openScorecard(pi, ctx, parts.includes('--offline'));
         return;
       }
       if (sub === 'usage') {
