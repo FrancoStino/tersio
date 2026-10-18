@@ -570,12 +570,12 @@ async function runCommandMenu(): Promise<void> {
   }
   updatePromptDone = true;
   const choice = await askInteractiveChoice(`Tersio — what next?\n${formatCliStatus(storedProfileSync())}`, [
-    { value: 'install', label: 'Install add-ons', hint: 'user scope + combo defaults' },
+    { value: 'install', label: 'Install plugin', hint: 'user scope + combo defaults' },
     { value: 'reinstall', label: 'Reinstall', hint: 're-install Tersio for the ai agents, then verify' },
     { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
-    { value: 'uninstall', label: 'Uninstall', hint: 'remove tersio' },
+    { value: 'uninstall', label: 'Uninstall plugin', hint: 'remove tersio' },
   ], 'install');
   if (choice.status !== 'selected') {
     closeRL();

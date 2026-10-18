@@ -549,7 +549,7 @@ function screenAt(rows: number): string[] {
   return lines;
 }
 
-const LABELS = ["Install add-ons", "Update", "Doctor", "Dashboard", "Uninstall"];
+const LABELS = ["Install plugin", "Update", "Doctor", "Dashboard", "Uninstall plugin"];
 
 // Slow the registry past a spinner frame: Clack's CI spinner residue once pushed tips off a 20-row screen.
 function screenAtCi(rows: number): string[] {
@@ -592,14 +592,14 @@ describe.skipIf(!havePyte)("menu layout", () => {
       }
       // The intro and every option must survive; scrolling them away showed a blank gap and sliced art.
       expect(lines.some((l) => l.includes("set up add-ons")), `tips visible at ${rows} rows`).toBe(true);
-      expect(lines.some((l) => l.includes("Uninstall")), `last option visible at ${rows} rows`).toBe(true);
+      expect(lines.some((l) => l.includes("Uninstall plugin")), `last option visible at ${rows} rows`).toBe(true);
     }, 20000);
   }
 
   test("a slow update check leaves no spinner residue under CI at 20 rows", () => {
     const lines = screenAtCi(20);
     expect(lines.some((l) => l.includes("set up add-ons")), "tips visible").toBe(true);
-    expect(lines.some((l) => l.includes("Install add-ons")), "menu visible").toBe(true);
+    expect(lines.some((l) => l.includes("Install plugin")), "menu visible").toBe(true);
     expect(lines.some((l) => l.includes("Checking npm registry")), "no spinner residue").toBe(false);
   }, 20000);
 
@@ -626,7 +626,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
     const lines = screenAt(30);
     const titleAt = lines.findIndex((l) => l.includes("what next?"));
     const comboAt = lines.findIndex((l) => l.includes("COMBO "));
-    const firstOptionAt = lines.findIndex((l) => l.includes("Install add-ons"));
+    const firstOptionAt = lines.findIndex((l) => l.includes("Install plugin"));
 
     expect(titleAt, "title present").toBeGreaterThan(-1);
     expect(comboAt, "combo present").toBeGreaterThan(titleAt);
