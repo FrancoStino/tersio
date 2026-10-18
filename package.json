@@ -1,7 +1,7 @@
 {
   "name": "@krtclcdy/tersio",
   "version": "2.25.8",
-  "description": "✂️ Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one-command combos over one shared extension tree.",
+  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
   "keywords": [
     "token-saving",
     "ai-tools",
@@ -95,7 +95,7 @@
       },
       "pstackDefault": {
         "type": "enum",
-        "description": "Session-start default; opt-in, never set by a combo preset",
+        "description": "Session-start default; every combo preset above off turns it on",
         "values": [
           "off",
           "on"
@@ -141,6 +141,7 @@
     "check": "tsc --noEmit",
     "verify": "bun install --frozen-lockfile && bun run build && bun run test",
     "doctor": "node dist/tersio.js --doctor",
+    "upstream": "node dist/tersio.js upstream",
     "dry-run": "node dist/tersio.js --dry-run --scope user --yes",
     "lint": "oxlint cli extensions test tersio.ts",
     "lint:dashboard": "bun run --cwd dashboard/app lint",
@@ -161,6 +162,6 @@
   "dependencies": {
     "@clack/core": "^1.5.1",
     "@clack/prompts": "^1.8.0",
-    "@dietrichgebert/ponytail": "^5.2.0"
+    "@dietrichgebert/ponytail": "^5.3.2"
   }
 }

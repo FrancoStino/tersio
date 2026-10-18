@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/core": "^1.5.1",
         "@clack/prompts": "^1.8.0",
-        "@dietrichgebert/ponytail": "^5.2.0",
+        "@dietrichgebert/ponytail": "^5.3.2",
       },
       "devDependencies": {
         "@opencode/plugin": "^2.0.22",
@@ -74,7 +74,7 @@
 
     "@clack/prompts": ["@clack/prompts@1.8.0", "", { "dependencies": { "@clack/core": "1.5.0", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-PXzLZ8N34rxmuo4dJg3xtOXhcBse94qGjDqsteoEYrFrrZ5FSjIGwMAuOcv64ln8rHVBBD06XeVGr+/JX+plcA=="],
 
-    "@dietrichgebert/ponytail": ["@dietrichgebert/ponytail@5.2.0", "", {}, "sha512-7jhVaF8PjQux0NCDLRfWMm49lp332FxlkgUGMUwt4+VvJHiJeBgEsdBFuwPXxxTIerBv4pEa390eeQ88C8DMxQ=="],
+    "@dietrichgebert/ponytail": ["@dietrichgebert/ponytail@5.3.2", "", {}, "sha512-AjJnMi54AXO55kXi0ISNPacLuTjb7e9V4lV2oidyxBOnVoPih8CIAmnfHgwX2VyPsDqwQhJthJ9bNu30MaHuOg=="],
 
     "@effect/opentelemetry": ["@effect/opentelemetry@4.0.0-rc.112", "", { "peerDependencies": { "@opentelemetry/api": ">=1.9.0 <2.0.0", "@opentelemetry/api-logs": ">=0.203.0 <0.300.0", "@opentelemetry/resources": ">=2.0.0 <3.0.0", "@opentelemetry/sdk-logs": ">=0.203.0 <0.300.0", "@opentelemetry/sdk-metrics": ">=2.0.0 <3.0.0", "@opentelemetry/sdk-trace-base": ">=2.0.0 <3.0.0", "@opentelemetry/sdk-trace-node": ">=2.0.0 <3.0.0", "@opentelemetry/sdk-trace-web": ">=2.0.0 <3.0.0", "@opentelemetry/semantic-conventions": ">=1.33.0 <2.0.0", "effect": "^4.0.0-rc.112" }, "optionalPeers": ["@opentelemetry/api", "@opentelemetry/api-logs", "@opentelemetry/resources", "@opentelemetry/sdk-logs", "@opentelemetry/sdk-metrics", "@opentelemetry/sdk-trace-base", "@opentelemetry/sdk-trace-node", "@opentelemetry/sdk-trace-web"] }, "sha512-OTRv1DxTHUmnakgJ6XVM8wVgF1KgZH4UXnOemwSLUwUjXO+RCikzF8oR/rlVmOGq81KtQzj1URM4M4nchlQOuQ=="],
 
