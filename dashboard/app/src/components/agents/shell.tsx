@@ -8,7 +8,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/charts";
 import { Icon } from "@/components/icon";
-import { MarkGlyph } from "@/components/brand";
+import { SocialLinks } from "@/components/brand";
 import { useTheme } from "@/components/theme-provider";
 import { AGENT_RANGES, isFileExport } from "@/lib/data";
 import type { AgentRange } from "@/lib/data";
@@ -57,6 +57,8 @@ export function ThemeToggle() {
 /** The five session-start mode fields the banner reads. */
 export interface ModeState {
   comboDefault: string;
+  /** The level the banner may claim: `custom` once the four modes stop matching the preset. */
+  comboLevel: string;
   cavemanDefault: string;
   rtkDefault: boolean;
   ponytailDefault: string;
@@ -73,7 +75,7 @@ const MODE_GLYPHS = [
 
 /** The combo preset this machine starts sessions with and the modes under it; a click opens Settings. */
 export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen: () => void }) {
-  const level = modes?.comboDefault ?? "off";
+  const level = modes?.comboLevel ?? modes?.comboDefault ?? "off";
   const on = level !== "off";
   const label = on ? `COMBO ${level.toUpperCase()}` : "COMBO OFF";
   const boxRef = useRef<HTMLSpanElement>(null);
@@ -113,8 +115,8 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
       onClick={onOpen}
       title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open Settings to change it.`}
       className={cn(
-        "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-accent-soft",
-        on ? "border-accent/40 bg-panel" : "border-line bg-panel/60",
+        "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-track",
+        on ? "border-ink/25 bg-panel" : "border-line bg-panel/60",
       )}
     >
       <span className="shrink-0 text-[13px]">🧩</span>
@@ -200,7 +202,7 @@ function SidebarAction({ icon, label, onClick }: { icon: string; label: string; 
       type="button"
       onClick={onClick}
       title={label}
-      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-dim transition-[background,color] duration-200 hover:bg-accent-soft hover:text-ink group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-dim transition-[background,color] duration-200 hover:bg-track hover:text-ink group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
     >
       <Icon name={icon} className="size-4 shrink-0" />
       <span className="group-data-[collapsible=icon]:hidden">{label}</span>
@@ -256,7 +258,7 @@ export function AppSidebar({
                         isActive={section === item.id}
                         tooltip={item.label}
                         onClick={() => onSection(item.id)}
-                        className="mono text-[13px] text-dim hover:bg-accent-soft hover:text-ink data-[active]:bg-accent-soft data-[active]:font-bold data-[active]:text-ink"
+                        className="mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink"
                       >
                         <Icon name={item.icon} className="size-4" />
                         <span className="truncate">{item.label}</span>
@@ -278,19 +280,7 @@ export function AppSidebar({
             hide there. Each of them would run past the 48 pixel rail and clip mid-word. */}
         <div className="mono flex items-center gap-1 px-1 text-[10px] text-dim group-data-[collapsible=icon]:hidden">
           <span className="truncate">© 2026 Tersio</span>
-          <span className="ml-auto flex items-center gap-0.5 text-ink">
-            <a href="https://github.com/KurutoDenzeru/tersio" target="_blank" rel="noopener" aria-label="GitHub" className="grid size-6 place-items-center rounded-md hover:text-accent [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96]">
-              <MarkGlyph slug="github" className="size-3.5" />
-            </a>
-            <a href="https://linkedin.com/in/kurtcalacday/" target="_blank" rel="noopener" aria-label="LinkedIn" className="grid size-6 place-items-center rounded-md hover:text-accent [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96] [&_svg]:block [&_svg]:size-3.5">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.225 0z" />
-              </svg>
-            </a>
-            <a href="https://instagram.com/krtclcdy/" target="_blank" rel="noopener" aria-label="Instagram" className="grid size-6 place-items-center rounded-md hover:text-accent [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96]">
-              <MarkGlyph slug="instagram" className="size-3.5" />
-            </a>
-          </span>
+          <SocialLinks className="ml-auto flex items-center gap-0.5 text-ink" />
         </div>
         <p className="mono hidden px-1 text-[10px] leading-relaxed text-dim group-data-[collapsible=offcanvas]:block">
           <kbd>1</kbd>-<kbd>6</kbd> window · <kbd>G</kbd> then a letter to jump

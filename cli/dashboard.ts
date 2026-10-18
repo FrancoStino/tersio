@@ -12,11 +12,13 @@ import type { CurrencyCode } from './currency.ts';
 import {
   OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
 } from './common.ts';
-import { BACKUP_SCHEDULES, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { BACKUP_SCHEDULES, applyComboPreset, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
+import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
+import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
+import { CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
@@ -427,8 +429,9 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   const profile = await storedProfile();
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
-    if (!level) return { ok: false, error: 'unknown combo level' };
-    profile.comboDefault = level;
+    // A preset level only: `custom` is what the four modes say, never a level to write.
+    if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
+    Object.assign(profile, applyComboPreset(profile, level));
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
@@ -602,6 +605,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           rtkDefault: profile.rtkDefault,
           ponytailDefault: profile.ponytailDefault,
           pstackDefault: profile.pstackDefault,
+          comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           currency: options.currency,
         }));
@@ -636,6 +640,31 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, currency: saved }));
       }
+      return;
+    }
+    if (req.url === '/api/update' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(updateView()));
+      return;
+    }
+    if (req.url === '/api/update' && req.method === 'POST') {
+      let prefs: UpdatePrefs = {};
+      try {
+        prefs = (JSON.parse(await readBody(req)) as UpdatePrefs) ?? {};
+      } catch { prefs = {}; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(setUpdatePrefs(prefs)));
+      return;
+    }
+    // Both start work and return at once: the page's poll carries the status and the streamed log.
+    if (req.url === '/api/update/check' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(startCheck(true)));
+      return;
+    }
+    if (req.url === '/api/update/apply' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(startApply()));
       return;
     }
     if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
@@ -713,12 +742,13 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     if (file === DASHBOARD_DIST || file.startsWith(DASHBOARD_DIST + path.sep)) {
       try {
         const body = await fs.readFile(file);
-        res.writeHead(200, { 'Content-Type': contentType(file) });
+        // No-store: after an update the reload has to serve the new bundle, not a cached one.
+        res.writeHead(200, { 'Content-Type': contentType(file), 'Cache-Control': 'no-store' });
         res.end(body);
         return;
       } catch { /* fall through to index */ }
     }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(await readSegment(DASHBOARD_INDEX));
   });
   await new Promise<void>((resolve, reject) => {
@@ -742,6 +772,8 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const port = typeof address === 'object' && address ? address.port : options.port;
       const url = `http://127.0.0.1:${port}`;
       console.log(`[ok] Dashboard live → ${url} (Ctrl-C to stop)`);
+      // The cadence only matters while a server is up, so the watch starts with it.
+      startUpdateWatch();
       if (options.open) openBrowser(url);
     });
   });

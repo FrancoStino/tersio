@@ -9,19 +9,13 @@ import { CURRENCY_CODES } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import { textTable } from './usage.ts';
 import { ask, askInteractiveChoice, closeRL, tty } from './interactive.ts';
-import { formatCliStatus, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
+import { applyComboPreset, formatCliStatus, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import type { Profile } from './profile.ts';
 import { readDiagSchedule, setDiagSchedule } from './dashboard.ts';
 import type { DiagSchedule } from './dashboard.ts';
 
 function applyFlags(base: Profile): Profile {
-  const next: Profile = { ...base };
-  if (comboDefaultFlag !== undefined) next.comboDefault = comboDefaultFlag;
-  const preset = COMBO_PRESET_MODES[next.comboDefault] ?? COMBO_PRESET_MODES.off;
-  next.cavemanDefault = preset.caveman;
-  next.rtkDefault = preset.rtk;
-  next.ponytailDefault = preset.ponytail;
-  next.pstackDefault = preset.pstack;
+  const next: Profile = applyComboPreset(base, comboDefaultFlag ?? base.comboDefault);
   if (cavemanDefaultFlag !== undefined) next.cavemanDefault = cavemanDefaultFlag;
   if (rtkDefaultFlag !== undefined) next.rtkDefault = rtkDefaultFlag === 'on';
   if (ponytailDefaultFlag !== undefined) next.ponytailDefault = ponytailDefaultFlag;

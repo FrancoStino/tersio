@@ -166,19 +166,38 @@ function formatProfile(profile: Profile): string {
 export { defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
 export type { Profile };
 
-/** The status line the extensions print, read from the persisted profile. */
-export function formatCliStatus(profile: Profile): string {
+/** A combo level writes all four modes, so the level names the preset that produced them. */
+export function applyComboPreset(profile: Profile, level: string): Profile {
+  const preset = COMBO_PRESET_MODES[level] ?? COMBO_PRESET_MODES.off;
+  return {
+    ...profile,
+    comboDefault: level,
+    cavemanDefault: preset.caveman,
+    rtkDefault: preset.rtk,
+    ponytailDefault: preset.ponytail,
+    pstackDefault: preset.pstack,
+  };
+}
+
+/** The level a status line may claim: a preset only while all four modes still match it. */
+export function comboLevelOf(profile: Profile): string {
   const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault, pstackDefault } = profile;
   if (comboDefault === 'off' && cavemanDefault === 'off' && !rtkDefault && ponytailDefault === 'off' && pstackDefault === 'off') {
-    return '🧩 COMBO OFF';
+    return 'off';
   }
   const preset = COMBO_PRESET_MODES[comboDefault];
-  const isPreset = preset !== undefined
+  const matches = preset !== undefined
     && preset.caveman === cavemanDefault
     && preset.rtk === rtkDefault
     && preset.ponytail === ponytailDefault
     && preset.pstack === pstackDefault;
-  const level = isPreset ? comboDefault.toUpperCase() : 'CUSTOM';
-  const rtk = rtkDefault ? 'ON' : 'OFF';
-  return `🧩 COMBO ${level}: 🪨 caveman=${cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk} | 🧠 ponytail=${ponytailDefault.toUpperCase()} | 🥔 pstack=${pstackDefault.toUpperCase()}`;
+  return matches ? comboDefault : 'custom';
+}
+
+/** The status line the extensions print, read from the persisted profile. */
+export function formatCliStatus(profile: Profile): string {
+  const level = comboLevelOf(profile);
+  if (level === 'off') return '🧩 COMBO OFF';
+  const rtk = profile.rtkDefault ? 'ON' : 'OFF';
+  return `🧩 COMBO ${level.toUpperCase()}: 🪨 caveman=${profile.cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk} | 🧠 ponytail=${profile.ponytailDefault.toUpperCase()} | 🥔 pstack=${profile.pstackDefault.toUpperCase()}`;
 }

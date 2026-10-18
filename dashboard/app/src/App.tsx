@@ -4,6 +4,7 @@ import { useTheme } from "@/components/theme-provider";
 import { isFileExport, useFx, useAgentData } from "@/lib/data";
 import type { AgentRequestRow, AgentView } from "@/lib/data";
 import { useHashRoute } from "@/lib/route";
+import { useUpdate } from "@/lib/update-watch";
 import { EmptyState } from "@/components/common";
 import { Page, PageHeader, PageSkeleton } from "@/components/charts";
 import { Shell, useShortcuts } from "./components/agents/shell";
@@ -109,6 +110,7 @@ function useModeState(): readonly [ModeState | null, () => void] {
         if (!alive.current || !d || typeof d.comboDefault !== "string") return;
         setModes({
           comboDefault: d.comboDefault,
+          comboLevel: typeof d.comboLevel === "string" ? d.comboLevel : d.comboDefault,
           cavemanDefault: typeof d.cavemanDefault === "string" ? d.cavemanDefault : "off",
           rtkDefault: d.rtkDefault === true,
           ponytailDefault: typeof d.ponytailDefault === "string" ? d.ponytailDefault : "off",
@@ -135,6 +137,8 @@ function Dashboard() {
   const [requestOffset, setRequestOffset] = useState(0);
   const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The watcher runs on every page, so an available release is offered wherever the operator is.
+  const update = useUpdate();
   const [shareOpen, setShareOpen] = useState(false);
   const [request, setRequest] = useState<AgentRequestRow | null>(null);
   // The session-start modes the navbar's banner names, reloaded when Settings closes.
@@ -246,6 +250,7 @@ function Dashboard() {
       )}
       <SettingsDialog
         open={settingsOpen}
+        update={update}
         onClose={() => {
           setSettingsOpen(false);
           reloadModes();

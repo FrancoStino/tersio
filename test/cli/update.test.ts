@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { cliEnv, fakeExecutable } from "../helpers/env.ts";
+import { cliEnv } from "../helpers/env.ts";
+import { registryUrl } from "../helpers/registry.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -104,6 +105,9 @@ test("parseChecksum returns null for malformed content and different asset", () 
   expect(parseChecksum(mismatched, "ponytail-1.2.3.tgz")).toBe(null);
 });
 
+/** A registry that cannot answer, so the target falls back to `@latest` with nothing on the wire. */
+const deadRegistry = { TERSIO_UPDATE_URL: "http://127.0.0.1:1/latest" };
+
 test("/ai-addons update ponytail reports the bundled copy without touching npm", async () => {
   const execCalls: { cmd: string; args: string[]; opts: { cwd: string } }[] = [];
   const execMock: ExecMock = async (cmd, args, opts) => {
@@ -151,20 +155,14 @@ const PROBE = "import('" + updateJs + "').then(async (m) => {"
 
 type Env = Record<string, string | undefined>;
 
-function setup(fakeNpmBody: string, cache: unknown): { dir: string; env: Env } {
+function setup(registryUrl: string, cache: unknown): { dir: string; env: Env } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-update-check-"));
-  const bin = path.join(dir, "bin");
-  mkdirSync(bin, { recursive: true });
-  // A shebang script on POSIX, a `.cmd` batch file on Windows, where the script cannot run.
-  // The batch body carries the same answer, so a registry probe reads the same on both.
-  const answered = /echo\s+9\.9\.9/.test(fakeNpmBody);
-  const npm = fakeExecutable(bin, "npm", fakeNpmBody, answered ? "echo 9.9.9" : "exit /b 1");
   const home = path.join(dir, "home");
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   if (cache !== null) {
     writeFileSync(path.join(home, ".omp", "plugins", "tersio-update-check.json"), JSON.stringify(cache), "utf8");
   }
-  const env: Env = cliEnv(home, { PATH: bin + path.delimiter + (process.env.PATH || "") });
+  const env: Env = cliEnv(home, { TERSIO_UPDATE_URL: registryUrl });
   return { dir, env };
 }
 
@@ -177,7 +175,7 @@ function probe(env: Env): Record<string, unknown> {
 }
 
 test("explicit check bypasses a fresh stale cache", () => {
-  const { dir, env } = setup("#!/bin/sh\necho 9.9.9\n", { latest: "2.8.0", lastCheck: Date.now() });
+  const { dir, env } = setup(registryUrl("9.9.9"), { latest: "2.8.0", lastCheck: Date.now() });
   try {
     const out = probe(env);
     expect(out.cached).toBe(null);
@@ -188,7 +186,7 @@ test("explicit check bypasses a fresh stale cache", () => {
 });
 
 test("unreachable registry reports unknown, never latest", () => {
-  const { dir, env } = setup("#!/bin/sh\nexit 1\n", null);
+  const { dir, env } = setup(deadRegistry.TERSIO_UPDATE_URL, null);
   try {
     const out = probe(env);
     expect(out.cached).toBe("unknown");
@@ -227,6 +225,8 @@ test("update refreshes the globally installed CLI before delegating", () => {
         env: {
           ...process.env,
           ...deadPricesEnv(),
+          // A newer release is what makes the plan stale, which is what this test is about.
+          TERSIO_UPDATE_URL: registryUrl("99.0.0"),
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
         },
         timeout: 10000,
@@ -235,7 +235,7 @@ test("update refreshes the globally installed CLI before delegating", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Checking for updates:/);
-    expect(result.stdout).toMatch(/fake-npm exec --yes --prefer-online --package=@krtclcdy\/tersio@latest/);
+    expect(result.stdout).toMatch(/fake-npm exec --yes --prefer-online --package=@krtclcdy\/tersio@99\.0\.0/);
     expect(result.stdout).toMatch(/Done — tersio .* and add-ons updated\./);
     expect(result.stdout).not.toMatch(/Restart OMP/);
   } finally {
@@ -263,6 +263,7 @@ test("update dry-run previews the global CLI refresh without running npm -g", ()
         encoding: "utf8",
         env: {
           ...process.env,
+          ...deadRegistry,
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
         },
         timeout: 10000,
@@ -299,6 +300,7 @@ test("update delegates to the latest package non-interactively", () => {
         encoding: "utf8",
         env: {
           ...process.env,
+          ...deadRegistry,
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
         },
         timeout: 10000,
@@ -320,11 +322,11 @@ test("update aborts before the global install when the payload fails its smoke c
 
   try {
     if (process.platform === "win32") {
-      writeFileSync(npm, '@echo off\r\necho %* | findstr /C:"--version" >nul\r\nif not errorlevel 1 (echo ERR_MODULE_NOT_FOUND 1>&2 & exit /b 1)\r\necho %* | findstr /C:"view" >nul\r\nif not errorlevel 1 (echo 9.9.9) else (echo fake-npm %*)\r\n', "utf8");
+      writeFileSync(npm, '@echo off\r\necho %* | findstr /C:"--version" >nul\r\nif not errorlevel 1 (echo ERR_MODULE_NOT_FOUND 1>&2 & exit /b 1)\r\necho fake-npm %*\r\n', "utf8");
     } else {
       writeFileSync(
         npm,
-        '#!/bin/sh\nif [ "$1" = "view" ]; then echo "9.9.9"; else for a in "$@"; do if [ "$a" = "--version" ]; then echo "ERR_MODULE_NOT_FOUND" >&2; exit 1; fi; done; printf \'fake-npm %s\\n\' "$*"; fi\n',
+        '#!/bin/sh\nfor a in "$@"; do if [ "$a" = "--version" ]; then echo "ERR_MODULE_NOT_FOUND" >&2; exit 1; fi; done; printf \'fake-npm %s\\n\' "$*"\n',
         "utf8"
       );
       chmodSync(npm, 0o755);
@@ -339,6 +341,7 @@ test("update aborts before the global install when the payload fails its smoke c
         env: {
           ...process.env,
           ...deadPricesEnv(),
+          ...deadRegistry,
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
           HOME: home,
         },
@@ -363,9 +366,9 @@ test("update pins the resolved version instead of trusting @latest", () => {
 
   try {
     if (process.platform === "win32") {
-      writeFileSync(npm, '@echo off\r\nif "%1"=="view" (echo 9.9.9) else (echo fake-npm %*)\r\n', "utf8");
+      writeFileSync(npm, '@echo off\r\necho fake-npm %*\r\n', "utf8");
     } else {
-      writeFileSync(npm, '#!/bin/sh\nif [ "$1" = "view" ]; then echo "9.9.9"; else printf \'fake-npm %s\\n\' "$*"; fi\n', "utf8");
+      writeFileSync(npm, '#!/bin/sh\nprintf \'fake-npm %s\\n\' "$*"\n', "utf8");
       chmodSync(npm, 0o755);
     }
 
@@ -377,6 +380,7 @@ test("update pins the resolved version instead of trusting @latest", () => {
         encoding: "utf8",
         env: {
           ...process.env,
+          TERSIO_UPDATE_URL: registryUrl("9.9.9"),
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
           HOME: home,
         },

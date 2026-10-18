@@ -807,3 +807,76 @@ export async function postReset(): Promise<boolean> {
     return false;
   }
 }
+
+export type UpdateSchedule = "off" | "daily" | "weekly" | "monthly";
+export type UpdateStatus = "idle" | "checking" | "applying";
+
+/** Mirrors the server's view in cli/dashboard-update.ts: one payload the toast and the About pane share. */
+export interface UpdateView {
+  current: string;
+  /** The version the running build carries, behind `current` until the page reloads. */
+  running: string;
+  latest: string | null;
+  available: boolean;
+  prompt: boolean;
+  schedule: UpdateSchedule;
+  lastCheck: number | null;
+  dueIn: number | null;
+  snoozeIn: number | null;
+  skipped: string | null;
+  status: UpdateStatus;
+  log: string[];
+  error: string | null;
+}
+
+export async function fetchUpdate(): Promise<UpdateView | null> {
+  // A static export has no server, so it also has no update state to report.
+  if (isFileExport()) return null;
+  try {
+    return await getJSON<UpdateView>("api/update");
+  } catch {
+    return null;
+  }
+}
+
+/** The version baked into a static export, which cannot ask a server for one. */
+export function snapshotVersion(): string | null {
+  return snap()?.health?.tersio ?? null;
+}
+
+export async function postUpdateCheck(): Promise<UpdateView | null> {
+  try {
+    const res = await fetch("api/update/check", { method: "POST" });
+    return (await res.json()) as UpdateView;
+  } catch {
+    return null;
+  }
+}
+
+export async function postUpdateApply(): Promise<UpdateView | null> {
+  try {
+    const res = await fetch("api/update/apply", { method: "POST" });
+    return (await res.json()) as UpdateView;
+  } catch {
+    return null;
+  }
+}
+
+export interface UpdatePrefs {
+  schedule?: UpdateSchedule;
+  action?: "snooze" | "now" | "skip";
+  version?: string;
+}
+
+export async function postUpdatePrefs(prefs: UpdatePrefs): Promise<UpdateView | null> {
+  try {
+    const res = await fetch("api/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(prefs),
+    });
+    return (await res.json()) as UpdateView;
+  } catch {
+    return null;
+  }
+}

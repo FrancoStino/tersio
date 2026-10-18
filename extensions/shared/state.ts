@@ -6,6 +6,12 @@ import { tersioHome } from './utils.ts';
 export interface TersioState {
   reset?: number;
   updateCheck?: { latest?: string; lastCheck?: number };
+  /** Cadence of the dashboard's background check. Off leaves it to an explicit click. */
+  updateSchedule?: 'off' | 'daily' | 'weekly' | 'monthly';
+  /** A release the operator skipped, so the prompt stops naming it. */
+  updateSkip?: string;
+  /** Epoch ms until which the prompt stays hidden. */
+  updateSnoozeUntil?: number;
   rtkEligible?: { version?: string; heads?: string[] };
   diag?: unknown;
 }

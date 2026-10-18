@@ -19,16 +19,19 @@ import {
   isFileExport,
   postDoctorFix,
   postDoctorSchedule,
+  snapshotVersion,
 } from "@/lib/data";
-import type { DoctorReport, HealthReport } from "@/lib/data";
+import type { DoctorReport, HealthReport, UpdateSchedule } from "@/lib/data";
+import type { UpdateFeed } from "@/lib/update-watch";
 import { useToast } from "./toaster";
 import { cn } from "cn";
 import { HoverTip } from "./common";
+import { SocialLinks } from "./brand";
 import { Icon } from "./icon";
 import { OmpLogo, OpencodeLogo, PiLogo } from "./agent-logos";
 import { Card } from "./charts/stats";
 
-type Pane = "general" | "connection" | "data" | "diagnosis";
+type Pane = "general" | "connection" | "data" | "diagnosis" | "about";
 
 interface AgentRowProps {
   name: string;
@@ -646,6 +649,7 @@ const PANES: Array<{ id: Pane; label: string; icon: string }> = [
   { id: "connection", label: "Connection", icon: "plug" },
   { id: "data", label: "Data", icon: "database" },
   { id: "diagnosis", label: "Diagnosis", icon: "stethoscope" },
+  { id: "about", label: "About", icon: "info" },
 ];
 
 const TITLES: Record<Pane, string> = {
@@ -653,6 +657,7 @@ const TITLES: Record<Pane, string> = {
   connection: "Connection",
   data: "Data",
   diagnosis: "Doctor",
+  about: "About",
 };
 
 const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
@@ -665,6 +670,10 @@ const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
   { pane: "diagnosis", label: "Auto-check schedule", terms: "diagnosis system health auto-check schedule manual daily weekly monthly" },
   { pane: "diagnosis", label: "Scan", terms: "diagnosis scan check" },
   { pane: "diagnosis", label: "Fix issues", terms: "diagnosis repair fix issues" },
+  { pane: "about", label: "Version", terms: "about version build release which installed node platform rtk binary" },
+  { pane: "about", label: "Updates", terms: "about update upgrade check latest new version install schedule daily weekly monthly automatic remember remind skip" },
+  { pane: "about", label: "Resources", terms: "about resources links github repository npm package changelog docs architecture issues socials follow" },
+  { pane: "about", label: "Credits", terms: "about credits licence license authors upstream caveman rtk ponytail pstack port" },
 ];
 
 function HighlightMatch({ text, query, fullWhenAlias = false }: { text: string; query: string; fullWhenAlias?: boolean }) {
@@ -693,27 +702,32 @@ function HighlightMatch({ text, query, fullWhenAlias = false }: { text: string; 
 
 interface DefaultsPayload {
   comboDefault: string;
+  /** `custom` when the four modes no longer match the named preset. */
+  comboLevel: string;
   cavemanDefault: string;
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
 }
 
-const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint: string; options: Array<{ id: string; label: string }> }> = [
+const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyph: string; hint: string; options: Array<{ id: string; label: string }> }> = [
   {
     field: "comboDefault",
     label: "Combo preset",
+    glyph: "🧩",
     hint: "Sets caveman, RTK, Ponytail and pstack together.",
     options: [
       { id: "off", label: "Off" },
       { id: "medium", label: "Medium" },
       { id: "balanced", label: "Balanced (Recommended)" },
       { id: "max", label: "Max" },
+      { id: "custom", label: "Custom" },
     ],
   },
   {
     field: "cavemanDefault",
     label: "Caveman",
+    glyph: "🪨",
     hint: "Terse-reply mode for a new or resumed session.",
     options: [
       { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
@@ -725,12 +739,14 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
   {
     field: "rtkDefault",
     label: "RTK",
+    glyph: "🗜️",
     hint: "Rewrite eligible Bash calls through rtk.",
     options: [{ id: "on", label: "On" }, { id: "off", label: "Off" }],
   },
   {
     field: "ponytailDefault",
     label: "Ponytail",
+    glyph: "🧠",
     hint: "Lazy-code mode for a new or resumed session.",
     options: [
       { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
@@ -740,6 +756,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
   {
     field: "pstackDefault",
     label: "pstack",
+    glyph: "🥔",
     hint: "Rigor mode. The medium, balanced, and max presets turn it on.",
     options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
   },
@@ -749,19 +766,20 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; hint
 function DefaultModes() {
   const toast = useToast();
   const [current, setCurrent] = useState<DefaultsPayload>({
-    comboDefault: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off",
+    comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off",
   });
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
+  const load = useCallback(() => {
     fetch("/settings")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: Partial<DefaultsPayload> | null) => { if (alive && d) setCurrent((c) => ({ ...c, ...d })); })
-      .catch(() => { /* keep the defaults; the rows still save */ })
-      .finally(() => { if (alive) setLoaded(true); });
-    return () => { alive = false; };
+      .then((d: Partial<DefaultsPayload> | null) => { if (d) setCurrent((c) => ({ ...c, ...d })); })
+      .catch(() => { /* keep what is on screen; the rows still save */ })
+      .finally(() => setLoaded(true));
   }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const save = (row: (typeof DEFAULT_ROWS_UI)[number], id: string): void => {
     const value: string | boolean = row.field === "rtkDefault" ? id === "on" : id;
@@ -773,8 +791,14 @@ function DefaultModes() {
     })
       .then((r) => r.json())
       .then((d: { ok?: boolean; error?: string }) => {
-        if (d?.ok) toast(`${row.label} saved`, `${id} applies to new sessions`, "check");
-        else toast("Could not save", d?.error ?? "Unknown level", "circle-alert");
+        if (d?.ok) {
+          // One row writes more than its own field: a preset rewrites all four modes, and the
+          // combo row reads the level derived from them. Read the saved state back.
+          load();
+          toast(`${row.label} saved`, `${id} applies to new sessions`, "check");
+        } else {
+          toast("Could not save", d?.error ?? "Unknown level", "circle-alert");
+        }
       })
       .catch(() => toast("Could not save", "The dashboard server did not answer.", "circle-alert"));
   };
@@ -784,15 +808,20 @@ function DefaultModes() {
       {DEFAULT_ROWS_UI.map((row) => {
         const raw = current[row.field];
         const isRtk = row.field === "rtkDefault";
-        const value = isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // A live preset writes all four modes, so they are inert; Off makes them the only input.
-        const presetOn = current.comboDefault !== "off";
+        const value = row.field === "comboDefault"
+          ? (current.comboLevel || current.comboDefault)
+          : isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
+        // A live preset writes all four modes, so they are inert. A custom mix is the operator's
+        // own, so those rows stay live and the preset row says so.
+        const presetOn = current.comboLevel !== "off" && current.comboLevel !== "custom";
         const locked = !loaded || (presetOn && row.field !== "comboDefault");
         if (isRtk) {
           return (
             <div key={row.field} className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="m-0 text-[13px] font-semibold">{row.label}</p>
+                <p className="m-0 text-[13px] font-semibold">
+                  <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
+                </p>
                 <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
               </div>
               <Switch
@@ -808,7 +837,9 @@ function DefaultModes() {
         return (
           <div key={row.field} className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="m-0 text-[13px] font-semibold">{row.label}</p>
+              <p className="m-0 text-[13px] font-semibold">
+                <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
+              </p>
               <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
             </div>
             <Select value={value} onValueChange={(v) => save(row, v ?? "off")} disabled={locked}>
@@ -818,8 +849,9 @@ function DefaultModes() {
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
+                  {/* Custom is what the four modes say, never a level to pick. */}
                   {row.options.map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
+                    <SelectItem key={o.id} value={o.id} disabled={o.id === "custom"}>
                       {o.label}
                     </SelectItem>
                   ))}
@@ -875,7 +907,6 @@ function CurrencyPicker({ cur, onPick, id }: { cur: string; onPick: (code: strin
   const toast = useToast();
   return (
     <div className="flex items-center gap-2">
-      <span className="text-xs text-dim">Currency</span>
       <Select value={cur} onValueChange={(next) => { if (next !== cur) { onPick(next as string); toast(`Currency set to ${next}`, "Cost figures update across the dashboard.", "check"); } }}>
         <SelectTrigger size="sm" aria-label="Display currency" className="text-xs">
           <SelectValue />
@@ -898,20 +929,197 @@ function CurrencyPicker({ cur, onPick, id }: { cur: string; onPick: (code: strin
   );
 }
 
+/** A wait, not an age: `6h`, `2d`. */
+function untilText(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "under an hour";
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+/** A momentary action beside the status it belongs to, so it costs no control of its own. */
+function TextAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-[13px] font-semibold text-accent underline-offset-4 hover:underline"
+    >
+      {children}
+    </button>
+  );
+}
+
+function LinkRow({ label, hint, href, glyph }: { label: string; hint: string; href: string; glyph?: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-3 px-1 py-2.5 text-[13px] [transition:background_.2s] hover:bg-track"
+    >
+      <span className="min-w-0">
+        <span className="block font-medium">
+          {glyph ? <span aria-hidden="true" className="mr-1.5">{glyph}</span> : null}
+          {label}
+        </span>
+        <span className="mono block truncate text-[11px] text-dim">{hint}</span>
+      </span>
+      <Icon name="arrow-up-right" className="ml-auto size-3.5 shrink-0 text-dim" />
+    </a>
+  );
+}
+
+/** The cadence the server honours, named the way the check itself is. */
+const UPDATE_SCHEDULES: ReadonlyArray<{ id: UpdateSchedule; label: string; hint: string }> = [
+  { id: "off", label: "Off", hint: "only when you ask" },
+  { id: "daily", label: "Daily", hint: "one a day" },
+  { id: "weekly", label: "Weekly", hint: "one a week" },
+  { id: "monthly", label: "Monthly", hint: "one a month" },
+];
+
+/** Every mode is a port. The licences here are the upstream repos' own declarations. */
+const CREDITS: ReadonlyArray<{ label: string; hint: string; href: string; glyph: string }> = [
+  { label: "Caveman", glyph: "🪨", hint: "Julius Brussee, Apache-2.0", href: "https://github.com/JuliusBrussee/caveman" },
+  { label: "RTK", glyph: "🗜️", hint: "rtk-ai, Apache-2.0", href: "https://github.com/rtk-ai/rtk" },
+  { label: "Ponytail", glyph: "🧠", hint: "Dietrich Gebert, MIT", href: "https://github.com/DietrichGebert/ponytail" },
+  { label: "pstack", glyph: "🥔", hint: "Lauren Tan, ported from cursor/plugins", href: "https://github.com/cursor/plugins" },
+];
+
+/** Two settings and the moment's action: how often the dashboard asks, and whether it installs alone. */
+function AboutPane({ update }: { update: UpdateFeed }) {
+  const toast = useToast();
+  const view = update.view;
+  const checking = view?.status === "checking";
+  const installing = view?.status === "applying";
+  const schedule = UPDATE_SCHEDULES.find((entry) => entry.id === view?.schedule) ?? UPDATE_SCHEDULES[1];
+
+  const status: ReactNode = !view ? (
+    <span className="text-dim">A static export cannot reach the registry, so updates stay manual here.</span>
+  ) : installing ? (
+    <span className="text-dim">Installing the release. The log below is the installer's own output.</span>
+  ) : checking ? (
+    <span className="text-dim">Asking the npm registry.</span>
+  ) : view.available && view.latest ? (
+    <span>
+      Version <span className="mono font-semibold">{view.latest}</span> is available. You run <span className="mono">{view.current}</span>.
+    </span>
+  ) : (
+    <span className="text-dim">
+      Up to date at <span className="mono text-ink">{view.current}</span>.
+    </span>
+  );
+
+  return (
+    <section aria-label="About" className="grid gap-7">
+      <div>
+        <div className="divide-y divide-line border-y border-line">
+          <div className="flex items-center justify-between gap-3 py-3">
+            <div className="min-w-0">
+              <p className="m-0 text-[13px] font-semibold">Check for updates</p>
+              <p className="mt-0.5 mb-0 text-xs text-dim">
+                {schedule.id === "off" ? "Only when you ask." : `Asked ${schedule.hint}, while the dashboard is open.`}
+              </p>
+            </div>
+            <Select
+              value={view?.schedule ?? "daily"}
+              onValueChange={(next) => {
+                const picked = UPDATE_SCHEDULES.find((entry) => entry.id === (next ?? "daily")) ?? UPDATE_SCHEDULES[1];
+                update.setSchedule(picked.id);
+                toast(
+                  `Update check set to ${picked.label}`,
+                  picked.id === "off" ? "Only when you ask from now on." : `Asked ${picked.hint}, while the dashboard is open.`,
+                  "refresh-cw",
+                );
+              }}
+              disabled={!view}
+            >
+              <SelectTrigger size="sm" className="w-[118px] shrink-0" aria-label="Update check schedule">
+                <SelectValue placeholder={schedule.label}>{schedule.label}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {UPDATE_SCHEDULES.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="m-0 text-[13px]">{status}</p>
+          {view && !checking && !installing && (
+            view.available && view.latest ? (
+              <Button type="button" size="sm" onClick={update.apply}>
+                {`Update to ${view.latest}`}
+              </Button>
+            ) : (
+              <TextAction onClick={update.check}>Check now</TextAction>
+            )
+          )}
+          {view && view.available && view.latest && view.prompt && (
+            <TextAction onClick={update.skip}>Skip this version</TextAction>
+          )}
+        </div>
+        {view && (
+          <p className="mt-1.5 mb-0 text-xs text-dim">
+            {view.lastCheck ? `Last checked ${relAge(view.lastCheck)}` : "Never checked"}
+            {view.dueIn !== null ? `, next in ${untilText(view.dueIn)}` : ""}
+            {view.snoozeIn ? `, quiet for ${untilText(view.snoozeIn)}` : ""}.
+          </p>
+        )}
+        {view?.error && (
+          <p className="mt-2 mb-0 flex items-start gap-2 text-xs text-danger">
+            <Icon name="circle-alert" className="mt-px size-3.5 shrink-0" />
+            <span>{view.error}</span>
+          </p>
+        )}
+        {view && view.log.length > 0 && (
+          <ScrollArea className="mt-3 max-h-[168px] rounded-xl border border-line bg-track/40">
+            <pre aria-live="polite" className="mono m-0 p-3 text-[11px] leading-relaxed whitespace-pre-wrap break-words text-dim">
+              {view.log.join("\n")}
+            </pre>
+          </ScrollArea>
+        )}
+      </div>
+
+      <div>
+        <div className="border-b border-line pb-4">
+          <p className="m-0 text-[13px] font-semibold">Credits</p>
+          <p className="mt-0.5 mb-0 text-xs text-dim">Tersio is MIT licensed. Every mode is a port, and each keeps its author named.</p>
+        </div>
+        <div className="divide-y divide-line">
+          {CREDITS.map((row) => (
+            <LinkRow key={row.label} {...row} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function SettingsDialog({
   open,
   onClose,
   cur,
   onCurrency,
+  update,
 }: {
   open: boolean;
   onClose: () => void;
   cur: string;
   onCurrency: (code: string) => void;
+  update: UpdateFeed;
 }) {
   const toast = useToast();
   const { theme, setTheme, accent, setAccent } = useTheme();
   const [pane, setPane] = useState<Pane>("general");
+  // The footer carries the version whether or not a server answered, so the export keeps it too.
+  const version = update.view?.current ?? snapshotVersion();
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
   const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
@@ -930,7 +1138,7 @@ export function SettingsDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="block h-[min(88vh,800px)] max-h-[calc(100dvh-2rem)] w-[min(920px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] sm:max-w-[920px] gap-0 overflow-hidden rounded-2xl border border-line bg-panel p-0 text-ink shadow-[0_16px_48px_rgba(0,0,0,.35)]" showCloseButton={false} aria-describedby={undefined}>
-        <div className="grid h-full min-h-0 max-h-full grid-cols-[240px_minmax(0,1fr)] max-sm:grid-cols-1">
+        <div className="grid h-full min-h-0 max-h-full grid-cols-[276px_minmax(0,1fr)] max-sm:grid-cols-1">
           <aside className="flex min-h-0 flex-col gap-2.5 border-r border-line bg-panel px-3 py-4 max-sm:border-r-0 max-sm:border-b" aria-label="Settings sections">
             <div className="flex items-center gap-2 rounded-[10px] border border-line px-2.5 py-2 text-dim">
               <Icon name="search" className="size-4" />
@@ -985,7 +1193,10 @@ export function SettingsDialog({
                 <p className="px-2.5 py-3 text-xs text-dim">No matching settings</p>
               )}
             </nav>
-            <p className="mono mt-auto px-2.5 text-[11px] text-dim">Tersio dashboard</p>
+            <div className="mono mt-auto flex items-center justify-between gap-2 px-2.5 text-[11px] text-dim">
+              <span className="min-w-0 truncate">{version ? `v${version}` : "Tersio"}</span>
+              <SocialLinks className="flex shrink-0 items-center gap-0.5" />
+            </div>
           </aside>
           <div className="relative flex min-h-0 min-w-0 flex-col">
             <div className="flex items-center justify-between gap-3 px-5 pt-4">
@@ -1078,6 +1289,7 @@ export function SettingsDialog({
                   <DoctorPane />
                 </section>
               )}
+              {pane === "about" && <AboutPane update={update} />}
             </div>
           </div>
         </div>
