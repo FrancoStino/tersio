@@ -1,3 +1,8 @@
+## v2.25.11
+
+### Fixed
+ - The OMP plugin package is pinned to the exact version of the CLI that manages it. A range let npm hand omp a release the tree writer never wrote, so the tree held two releases and an extension failed to load with "Export named 'ruleDir' not found". The doctor now names the mismatch, and `tersio install --host omp` rewrites the tree.
+
 ## v2.25.10
 
 ### Fixed
