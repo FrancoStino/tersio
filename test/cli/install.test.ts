@@ -414,6 +414,27 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
   }
 });
 
+// The plugin package and this CLI are one build, or the tree holds two releases and fails to load.
+test("the plugin package is pinned to this build, and a skewed tree is rewritten", () => {
+  const home = tempHome();
+  try {
+    pluginPresent(home);
+    const pkgDir = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
+    writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: "99.0.0" }), "utf8");
+    mkdirSync(path.join(pkgDir, "extensions", "shared"), { recursive: true });
+    writeFileSync(path.join(pkgDir, "extensions", "shared", "utils.ts"), "// an older release\n", "utf8");
+    const stub = mkdtempSync(path.join(os.tmpdir(), "tersio-omp-npm-"));
+    fakeExecutable(stub, "npm", "exit 0", "exit /b 0");
+    const result = runOmpInstall(home, { PATH: [stub, process.env.PATH || ""].join(path.delimiter) }, "--yes");
+    expect(result.status, result.stderr).toBe(0);
+    const pkg = JSON.parse(readFileSync(path.join(home, ".omp", "plugins", "package.json"), "utf8"));
+    expect(pkg.dependencies["@krtclcdy/tersio"], "the plugin package is pinned to this build").toBe(PACKAGE_VERSION);
+    expectTreeByteIdentical(pluginExt(home), treeFilesFor("opencode"));
+  } finally {
+    rmTree(home);
+  }
+});
+
 test("without the plugin the agent tree is the fallback and keeps its copies", () => {
   const home = tempHome();
   try {

@@ -2,6 +2,7 @@
 
 ### Fixed
  - The npm package now matches the release. `2.25.9` was published without moving the `latest` tag, so `npm install` kept fetching `2.25.8`. This version carries every note under `2.25.9`, plus the bench, the gateway record, and the persisted Developer tools switch built after that tarball.
+ - The OMP plugin package is pinned to the exact version of the CLI that manages it. A range let npm install a release the tree writer never wrote, so the tree held two and an extension failed to load with "Export named 'ruleDir' not found". The doctor names the mismatch; `tersio install --host omp` rewrites the tree.
 
 ## v2.25.9
 

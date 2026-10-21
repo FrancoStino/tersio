@@ -241,6 +241,12 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     check(host.label, true, `${kind} ${PACKAGE_NAME}${host.version ? ` ${host.version}` : ''}`);
   }
 
+  // A version apart means omp can load a tree of two releases, and an extension then fails to load.
+  const ompHost = hosts.find((host) => host.id === 'omp');
+  if (ompHost?.version && ompHost.version !== PACKAGE_VERSION) {
+    warnLine('OMP plugin package', `v${ompHost.version} while this CLI is v${PACKAGE_VERSION} — run: tersio install --host omp`);
+  }
+
   // A healthy service adds no row: the host row already names the install, and this row only shows when the manager's report and the live process disagree.
   if (opencodeService) {
     const running = serviceRunning(opencodeService.status);

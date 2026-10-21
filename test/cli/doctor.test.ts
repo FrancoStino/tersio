@@ -667,6 +667,22 @@ test("doctor reports an omp package older than the running CLI", () => {
   }
 });
 
+// A package from another release: the tree beside it can hold two.
+test("doctor warns when the omp plugin package is not this build", () => {
+  const home = missingHome();
+  try {
+    const pkg = seedPluginPackage(home);
+    writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: "99.0.0" }), "utf8");
+    const result = runDoctor(home, path.join(home, "empty-bin"));
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/OMP plugin package/);
+    expect(result.stdout).toMatch(/99\.0\.0/);
+    expect(result.stdout).toMatch(/tersio install --host omp/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // A tree that loses the OpenCode entry reports it missing, not orphan: omp's manifest names that file.
 test("doctor reports the package tree missing the OpenCode entry", () => {
   const home = missingHome();
