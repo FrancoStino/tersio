@@ -667,8 +667,7 @@ test("doctor reports an omp package older than the running CLI", () => {
   }
 });
 
-// The plugin package and the CLI write the same tree, so a version apart means omp can load a tree of
-// two releases: an extension imports a name the older file lacks, and the extension fails to load.
+// A package from another release: the tree beside it can hold two.
 test("doctor warns when the omp plugin package is not this build", () => {
   const home = missingHome();
   try {

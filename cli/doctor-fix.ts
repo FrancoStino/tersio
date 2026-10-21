@@ -231,7 +231,7 @@ async function fixRegistrations(agentDir: string, pluginsDir: string): Promise<v
   await removeExtensionFromConfig(configPath, path.join(extDir, 'shared', 'mode-reinforcement.ts'), 'retired mode reinforcement', { dryRun, verbose });
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  // The exact version, always: a range lets npm hand omp a release the tree writer never wrote.
+  // The exact version: a range lets npm install a release this CLI never wrote.
   if (pkg.dependencies[PACKAGE_NAME] !== PACKAGE_VERSION) {
     pkg.dependencies[PACKAGE_NAME] = PACKAGE_VERSION;
     if (dryRun) sayTagged(`  [dry-run] would register ${PACKAGE_NAME} in ${pkgPath}`);
@@ -301,7 +301,7 @@ async function fixPonytail(pluginsDir: string): Promise<void> {
   await fs.mkdir(pluginsDir, { recursive: true });
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  // The exact version, always: a range lets npm hand omp a release the tree writer never wrote.
+  // The exact version, always.
   pkg.dependencies[PACKAGE_NAME] = PACKAGE_VERSION;
   const hadEntry = PONYTAIL_PKG in pkg.dependencies;
   delete pkg.dependencies[PONYTAIL_PKG];
