@@ -504,14 +504,14 @@ test("parent Combo max is inherited by separately instantiated marked children",
   expect(ponytail.startsWith(await upstreamPonytail("ultra"))).toBe(true);
 });
 
-test("medium maps to Caveman lite, RTK on, and Ponytail lite", async () => {
+test("lite maps to Caveman lite, RTK on, and Ponytail lite", async () => {
   resetSharedComboState();
   const parent = instantiate(comboToggleExtension);
-  await command(parent, "combo", "medium", context([], true));
+  await command(parent, "combo", "lite", context([], true));
   const prompt = ["System instructions.", OMP_SUBAGENT_MARKER];
 
   expect(getSharedComboState()).toEqual({
-    level: "medium", caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on",
+    level: "lite", caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on",
   });
   expect(instruction(await inject(instantiate(cavemanSessionExtension), prompt))).toMatch(/Caveman lite active/);
   expect(instruction(await inject(instantiate(rtkSessionExtension), prompt))).toMatch(/RTK guidance active/);
@@ -719,8 +719,8 @@ test("Combo status names the preset, and a later mode entry moves it to CUSTOM",
   const combo = instantiate(comboToggleExtension, entries);
   const ctx = context(entries, true);
 
-  await command(combo, "combo", "medium", ctx);
-  expect(status(ctx.notifications)).toBe("🧩 COMBO MEDIUM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON");
+  await command(combo, "combo", "lite", ctx);
+  expect(status(ctx.notifications)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON");
 
   entries.push({ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } });
   await command(combo, "combo", "status", ctx);
@@ -730,7 +730,7 @@ test("Combo status names the preset, and a later mode entry moves it to CUSTOM",
 test("Combo does not duplicate existing Ponytail guidance", async () => {
   resetSharedComboState();
   const parent = instantiate(comboToggleExtension);
-  await command(parent, "combo", "medium", context([], true));
+  await command(parent, "combo", "lite", context([], true));
   const prompt = [OMP_SUBAGENT_MARKER, "PONYTAIL MODE ACTIVE — level: lite"];
 
   expect(await inject(instantiate(comboToggleExtension), prompt)).toBe(undefined);
@@ -850,7 +850,7 @@ test("a malformed marker setting falls back to the default", () => {
 test("caveman and rtk do not re-inject into a prompt that already carries them", async () => {
   resetSharedComboState();
   const parent = instantiate(comboToggleExtension);
-  await command(parent, "combo", "medium", context([], true));
+  await command(parent, "combo", "lite", context([], true));
 
   for (const [factory, expected] of [
     [cavemanSessionExtension, /Caveman lite active/],
@@ -1356,7 +1356,7 @@ test("existing marked install does not prompt", async () => {
     mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
     writeFileSync(
       path.join(home, ".omp", "plugins", "omp-plugins.lock.json"),
-      JSON.stringify({ plugins: {}, settings: { "@krtclcdy/tersio": { comboDefault: "medium", comboSetupComplete: true } } }),
+      JSON.stringify({ plugins: {}, settings: { "@krtclcdy/tersio": { comboDefault: "lite", comboSetupComplete: true } } }),
       "utf8",
     );
     const h = firstRunHarness("balanced");
@@ -1612,14 +1612,14 @@ test("the status survives compaction and still matches the live state", async ()
   const entries: SessionEntry[] = [];
   const pi = statusInstantiate(comboToggleExtension, entries);
   const ctx = statusContext(entries);
-  await pi.commands.get("combo")!("medium", ctx);
+  await pi.commands.get("combo")!("lite", ctx);
 
   const afterCompact = statusContext(entries);
   const worker = statusInstantiate(comboToggleExtension, entries);
   await statusFire(worker, "session_compact", afterCompact);
 
   expect(statuses(afterCompact.notifications)).toEqual([
-    "🧩 COMBO MEDIUM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON",
+    "🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON",
   ]);
   expect(formatStatus(getSharedComboState())).toBe(statuses(afterCompact.notifications)[0]);
 });

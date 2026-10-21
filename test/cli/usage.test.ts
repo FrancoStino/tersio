@@ -1805,6 +1805,27 @@ describe('omp stats', () => {
       expect(omp.overall.costMix.total).toBeCloseTo(0.3, 12);
     });
 
+    test('the stored gateway wins over the model id prefix', () => {
+      // `deepseek/deepseek-v4.1-flash` was served by commandcode; the model id alone would say deepseek.
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'tersio-gateway-'));
+      const session = sessionPath(dir, '-proj-a', 'gw.jsonl');
+      process.env.TERSIO_AGENT_STATS_DB = writeUsageStore(path.join(dir, 'usage.db'), {
+        messages: [
+          { session, entry: 'g1', model: 'deepseek/deepseek-v4.1-flash', gateway: 'commandcode', ts: Date.now() - HOUR, input: 10, output: 5 },
+          { session, entry: 'g2', model: 'magpie/free-model', ts: Date.now() - HOUR, input: 10, output: 5 },
+        ],
+      });
+      try {
+        const byModel = readAgentStats('all').byModel;
+        const routed = byModel.find((row) => row.key === 'deepseek/deepseek-v4.1-flash');
+        expect(routed?.provider).toBe('commandcode');
+        // A row with no stored gateway still reads from its model id.
+        expect(byModel.find((row) => row.key === 'magpie/free-model')?.provider).toBe('magpie');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test('groups by model and provider, by provider, by project, and by agent type', () => {
       seed();
       const omp = readAgentStats('all');

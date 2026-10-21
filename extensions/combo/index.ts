@@ -1,4 +1,4 @@
-// /combo session toggle: off | medium | balanced | max.
+// /combo session toggle: off | lite | balanced | max.
 
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
@@ -142,7 +142,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   }
 
   pi.registerCommand?.('combo', {
-    description: 'Toggle all four Tersio modes at once. Usage: /combo <off|medium|balanced|max|status>',
+    description: 'Toggle all four Tersio modes at once. Usage: /combo <off|lite|balanced|max|status>',
     handler: async (args, ctx) => {
       listen(ctx);
       const arg = String(args || '').trim().toLowerCase();
@@ -156,7 +156,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
       if (arg === 'help') {
         ctx?.ui?.notify?.(
           '/combo off      — disables every mode (caveman, rtk, ponytail, pstack)\n' +
-          '/combo medium   — light: caveman=lite, rtk=on, ponytail=lite, pstack=on\n' +
+          '/combo lite     — light: caveman=lite, rtk=on, ponytail=lite, pstack=on\n' +
           '/combo balanced — middle: caveman=full, rtk=on, ponytail=full, pstack=on\n' +
           '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra, pstack=on',
           'info'
@@ -167,7 +167,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
       const level = normalizeComboLevel(arg);
       if (!level) {
         ctx?.ui?.notify?.(
-          `Unknown combo level: ${arg}. Use: off | medium | balanced | max`,
+          `Unknown combo level: ${arg}. Use: off | lite | balanced | max`,
           'warning'
         );
         return;
@@ -205,7 +205,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     setupPrompted = true;
     const choice = await hostSelect(pi, ctx.ui, 'Session-start defaults — Combo preset', [
       { label: 'off', description: 'Keep every Tersio mode inactive' },
-      { label: 'medium', description: 'caveman=lite, rtk=on, ponytail=lite, pstack=on' },
+      { label: 'lite', description: 'caveman=lite, rtk=on, ponytail=lite, pstack=on' },
       { label: 'balanced', description: 'caveman=full, rtk=on, ponytail=full, pstack=on' },
       { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra, pstack=on' },
     ], { selectionMarker: 'radio', helpText: 'You can change this later with /tersio settings.' });

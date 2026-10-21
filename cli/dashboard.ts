@@ -459,6 +459,10 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
     profile.rtkDefault = body.rtkDefault;
   }
+  if (body.devTools !== undefined) {
+    if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
+    profile.devTools = body.devTools;
+  }
   await writePluginSettings(profile, {});
   return {
     ok: true,
@@ -469,6 +473,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       ponytailDefault: profile.ponytailDefault,
       pstackDefault: profile.pstackDefault,
       backupSchedule: profile.backupSchedule,
+      devTools: profile.devTools,
     },
   };
 }
@@ -632,6 +637,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           pstackDefault: profile.pstackDefault,
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
+          devTools: profile.devTools,
           currency: options.currency,
         }));
       });

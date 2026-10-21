@@ -48,11 +48,13 @@ const RTK_DEFAULTS = new Set(['on', 'off']);
 // Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all four modes.
 const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
   off: { caveman: 'off', rtk: false, ponytail: 'off', pstack: 'off' },
-  medium: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'on' },
+  lite: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'on' },
   balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'on' },
   max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'on' },
 };
 const COMBO_DEFAULTS = new Set(Object.keys(COMBO_PRESET_MODES));
+// The retired name for the lite preset, so a scripted `--combo-default medium` keeps working.
+const COMBO_RETIRED = new Set(['medium']);
 
 function parseEnum(value: string | undefined, valid: Set<string>, flag: string): string | undefined {
   if (value === undefined) return undefined;
@@ -109,7 +111,10 @@ if (legacyScope !== null && legacyScope !== 'user') {
 }
 // --- Profile selection (session-start mode defaults) ---
 
-const comboDefaultFlag = parseEnum(flagValue('--combo-default'), COMBO_DEFAULTS, '--combo-default');
+// `medium` is the retired name for `lite`, so a scripted flag written before the rename still lands.
+// It is accepted by the parser and mapped after, because parseEnum exits on an unknown value.
+const rawComboFlag = parseEnum(flagValue('--combo-default'), new Set([...COMBO_DEFAULTS, ...COMBO_RETIRED]), '--combo-default');
+const comboDefaultFlag = rawComboFlag && COMBO_RETIRED.has(rawComboFlag) ? 'lite' : rawComboFlag;
 const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEFAULTS, '--caveman-default');
 const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
 const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');

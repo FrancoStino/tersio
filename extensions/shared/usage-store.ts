@@ -90,7 +90,7 @@ const SCHEMA_SQL =
   `CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);` +
   `CREATE TABLE IF NOT EXISTS messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,` +
   ` i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,` +
-  ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT);` +
+  ` usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT, p TEXT);` +
   // Every read filters or orders by one of these three; without them each sync and read scans the table.
   `CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_id);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_t ON messages(t);` +
@@ -282,6 +282,27 @@ function addToolFactsColumn(db: string): boolean {
   return !canAddToolFacts(db);
 }
 
+// v14 adds the named gateway; the model id cannot show it, so a bare ALTER plus one re-read fills it.
+function canAddGateway(db: string): boolean {
+  try {
+    const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
+    return names.includes('file_id') && !names.includes('p');
+  } catch {
+    return false;
+  }
+}
+
+function addGatewayColumn(db: string): boolean {
+  try {
+    run(db, `ALTER TABLE messages ADD COLUMN p TEXT;`);
+  } catch {
+    return false;
+  }
+  if (canAddGateway(db)) return false;
+  markTranscriptsDirty(db);
+  return true;
+}
+
 function ttftBackfilled(db: string): boolean {
   try {
     const rows = query(db, `SELECT v FROM meta WHERE k='ttft_backfill';`);
@@ -362,6 +383,7 @@ function addAdditiveColumns(db: string): boolean {
   if (canAddAgent(db) && addAgentColumn(db)) added = true;
   if (canAddTtft(db) && addTtftColumn(db)) added = true;
   if (canAddToolFacts(db) && addToolFactsColumn(db)) added = true;
+  if (canAddGateway(db) && addGatewayColumn(db)) added = true;
   return added;
 }
 
@@ -430,6 +452,8 @@ interface StoredRow {
   /** `main` or `subagent`; null on a row written before the store carried it. */
   agent?: string | null;
   id?: string;
+  /** The gateway the transcript named, e.g. `commandcode`. Null on rows written before it was kept. */
+  gateway?: string;
 }
 
 // OpenCode rows carry only tokens, msg id, and tools; they record as the main agent, so no NULL kind.
@@ -538,6 +562,7 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
         host,
         agent,
         id: rid,
+        gateway: parsed.provider,
       });
     } catch { /* skip corrupt lines */ }
   }
@@ -545,11 +570,11 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
 }
 
 function insertSql(file: string, r: StoredRow): string {
-  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id, tc) VALUES (` +
+  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id, tc, p) VALUES (` +
     `(SELECT id FROM files WHERE path=${esc(file)}),${r.t === null ? 'NULL' : String(r.t)},${esc(r.model)},${r.i},${r.o},` +
     `${nullNum(r.d)},${nullNum(r.tf)},${r.cr},${r.cw},${nullNum(r.usd)},${esc(r.st)},` +
     `${nullNum(r.code)},${nullStr(r.note)},${esc(JSON.stringify(r.tools))},${nullStr(r.host)},${nullStr(r.agent ?? undefined)},${nullStr(r.id)},` +
-    `${r.toolFacts && r.toolFacts.length > 0 ? esc(JSON.stringify(r.toolFacts)) : 'NULL'});`;
+    `${r.toolFacts && r.toolFacts.length > 0 ? esc(JSON.stringify(r.toolFacts)) : 'NULL'},${nullStr(r.gateway)});`;
 }
 
 // Unchanged transcripts are skipped via mtime+size; rows for deleted ones are kept so rotation never erases history.

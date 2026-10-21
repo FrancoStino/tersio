@@ -123,11 +123,12 @@ export function VendorMark({ model, small, tiny, row }: { model: string; small?:
   );
 }
 
-/** A bare masked mark, for a spot that is not a tile: the footer links. */
-export function MarkGlyph({ slug, className }: { slug: string; className: string }) {
+/** A bare masked mark, for a spot that is not a tile: the footer links.
+ * `color` overrides the theme ink, for a mark whose own brand color is the point. */
+export function MarkGlyph({ slug, className, color }: { slug: string; className: string; color?: string }) {
   const src = maskMark(slug);
   if (!src) return null;
-  return <MaskedGlyph className={className} src={src} />;
+  return <MaskedGlyph className={className} src={src} color={color} />;
 }
 
 export function BrandSilhouette({ model }: { model: string }) {

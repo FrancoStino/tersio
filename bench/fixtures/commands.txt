@@ -1,0 +1,12 @@
+ls -la .
+git status
+find . -name '*.test.ts'
+grep -rn pattern src/
+cat README.md
+bun run test
+tsc --noEmit
+gh pr list
+rtk read src/main.ts --level aggressive
+rtk err bun run build
+git diff --stat
+npm test

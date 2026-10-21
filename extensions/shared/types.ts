@@ -8,7 +8,7 @@ export interface ComboState {
   pstack: string;
 }
 
-export type ComboLevel = 'off' | 'medium' | 'balanced' | 'max' | 'custom';
+export type ComboLevel = 'off' | 'lite' | 'balanced' | 'max' | 'custom';
 
 export type SessionEntry = {
   type: string;

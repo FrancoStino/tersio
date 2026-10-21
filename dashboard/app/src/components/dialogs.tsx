@@ -733,7 +733,7 @@ const TITLES: Record<Pane, string> = {
 };
 
 const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
-  { pane: "general", label: "Combo preset", terms: "general default mode combo preset balanced max medium off new session resume start caveman rtk ponytail pstack poteto rigor" },
+  { pane: "general", label: "Combo preset", terms: "general default mode combo preset balanced max lite off new session resume start caveman rtk ponytail pstack poteto rigor" },
   { pane: "general", label: "Theme", terms: "general appearance theme light dark system color scheme mode" },
   { pane: "general", label: "Accent color", terms: "general appearance accent color tint buttons links highlights palette emerald violet slate cyan rose amber orange charts background" },
   { pane: "general", label: "Currency", terms: "currency display cost usd euro" },
@@ -790,7 +790,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     hint: "Sets caveman, RTK, Ponytail and pstack together.",
     options: [
       { id: "off", label: "Off" },
-      { id: "medium", label: "Medium" },
+      { id: "lite", label: "Lite" },
       { id: "balanced", label: "Balanced (Recommended)" },
       { id: "max", label: "Max" },
       { id: "custom", label: "Custom" },
@@ -829,7 +829,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     field: "pstackDefault",
     label: "pstack",
     glyph: "🥔",
-    hint: "Rigor mode. The medium, balanced, and max presets turn it on.",
+    hint: "Rigor mode. The lite, balanced, and max presets turn it on.",
     options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
   },
 ];

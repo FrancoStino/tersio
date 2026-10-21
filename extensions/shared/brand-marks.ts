@@ -5,6 +5,8 @@ const SIMPLE_ICONS = "https://cdn.jsdelivr.net/npm/simple-icons@16/icons";
 export const REMOTE_MARKS: Readonly<Record<string, string>> = {
   // Simple Icons, CC0-1.0.
   anthropic: `${SIMPLE_ICONS}/anthropic.svg`,
+  // Claude Code ships its own mark; the Anthropic wordmark is a different product.
+  claudecode: `${SIMPLE_ICONS}/claudecode.svg`,
   google: `${SIMPLE_ICONS}/google.svg`,
   meta: `${SIMPLE_ICONS}/meta.svg`,
   deepseek: `${SIMPLE_ICONS}/deepseek.svg`,
@@ -59,6 +61,7 @@ export const REMOTE_MARKS: Readonly<Record<string, string>> = {
 export const MARK_BG: Readonly<Record<string, string>> = {
   // Simple Icons marks: the vendor's brand color, taken from its own brand page.
   anthropic: "#d97757",
+  claudecode: "#d97757",
   meta: "#0082fb",
   google: "#4285f4",
   deepseek: "#4d6bfe",

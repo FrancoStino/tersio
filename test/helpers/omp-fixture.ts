@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS messages (file_id INTEGER NOT NULL REFERENCES files(id), t REAL, model TEXT NOT NULL,
   i INTEGER NOT NULL, o INTEGER NOT NULL, d REAL, tf REAL, cr INTEGER NOT NULL, cw INTEGER NOT NULL,
-  usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT);
+  usd REAL, st TEXT NOT NULL, code REAL, note TEXT, tools TEXT NOT NULL DEFAULT '[]', h TEXT, a TEXT, id TEXT, tc TEXT, p TEXT);
 CREATE INDEX idx_messages_file ON messages(file_id);
 CREATE INDEX idx_messages_t ON messages(t);
 CREATE INDEX idx_messages_h_t ON messages(h, t);
@@ -33,8 +33,10 @@ export interface MessageFixture {
   session: string;
   /** The store's row id. */
   entry: string;
-  /** Full model id. Its first segment names the gateway, which is how the aggregate reads provider. */
+  /** Full model id. Its first segment names the gateway only when the row carries no `gateway`. */
   model: string;
+  /** The gateway the transcript named, which the model id cannot show. */
+  gateway?: string;
   ts: number;
   stop?: string;
   error?: string | null;
@@ -92,13 +94,14 @@ export function writeUsageStore(file: string, fixture: { messages: MessageFixtur
   const script = [STORE_SCHEMA,
     insert('files', ['path', 'mtime', 'size'], paths.map((p) => [p, 0, 0])),
     ...paths.map((p, index) => insert('messages',
-      ['file_id', 't', 'model', 'i', 'o', 'd', 'tf', 'cr', 'cw', 'usd', 'st', 'note', 'tools', 'h', 'a', 'id', 'tc'],
+      ['file_id', 't', 'model', 'i', 'o', 'd', 'tf', 'cr', 'cw', 'usd', 'st', 'note', 'tools', 'h', 'a', 'id', 'tc', 'p'],
       fixture.messages.filter((m) => m.session === p).map((m) => [
         index + 1, m.ts, m.model,
         m.input ?? 0, m.output ?? 0, m.duration ?? null, m.ttft ?? null, m.cacheRead ?? 0, m.cacheWrite ?? 0,
         m.cost ?? null, m.stop === 'stop' || m.stop === undefined ? 'completed' : m.stop, m.error ?? null,
         JSON.stringify(m.tools ?? []), 'omp', m.agentType ?? 'main', m.entry,
         m.toolFacts ? JSON.stringify(m.toolFacts) : null,
+        m.gateway ?? null,
       ]))),
   ];
   sqliteExec(file, script.join('\n'));

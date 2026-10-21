@@ -9,7 +9,7 @@ export const OMP_SUBAGENT_MARKER = 'Worker agent: delegated tasks.';
 // Every level above off turns pstack on with the other three; off is the one level without it.
 export const COMBO_LEVELS: Record<string, Readonly<ComboState>> = Object.freeze({
   off: Object.freeze({ level: 'off', caveman: 'off', rtk: 'off', ponytail: 'off', pstack: 'off' }),
-  medium: Object.freeze({ level: 'medium', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'on' }),
+  lite: Object.freeze({ level: 'lite', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'on' }),
   balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full', pstack: 'on' }),
   max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra', pstack: 'on' }),
 });
@@ -116,8 +116,9 @@ export function isOmpSubagentPrompt(systemPrompt: string | string[]): boolean {
   return markers.some((marker) => systemPromptIncludes(systemPrompt, marker));
 }
 
-// ultra maps to max, lite/full to nearest, rather than erroring.
-const COMBO_ALIASES: Record<string, ComboLevel> = { ultra: 'max', lite: 'medium', full: 'balanced' };
+// ultra maps to max and full to balanced, rather than erroring. `medium` is the retired name for
+// `lite`, kept here so a settings file written before the rename still resolves.
+const COMBO_ALIASES: Record<string, ComboLevel> = { ultra: 'max', full: 'balanced', medium: 'lite' };
 
 export function normalizeComboLevel(value: unknown): ComboLevel | null {
   const level = String(value || '').trim().toLowerCase();

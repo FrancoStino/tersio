@@ -44,7 +44,9 @@ export function readPluginSettings(): Record<string, unknown> {
   return readSettingsFile() ?? legacyOmpSettings() ?? {};
 }
 
-const COMBO_LEVELS = new Set(['off', 'medium', 'balanced', 'max']);
+const COMBO_LEVELS = new Set(['off', 'lite', 'balanced', 'max']);
+// A settings file written before the rename still names the preset `medium`.
+const RETIRED_COMBO_LEVELS = new Set(['medium']);
 const CAVEMAN_MODES = new Set(['off', 'lite', 'full', 'ultra', 'megacave', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'wenyan', 'wenyan-lite', 'wenyan-full', 'wenyan-ultra']);
 const PONYTAIL_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 // Opt-in only: no combo preset writes this, so it never reaches a user who did not ask for it.
@@ -56,7 +58,10 @@ function readStringDefault(key: string, valid: Set<string>): string {
 }
 
 export function readComboDefault(): string {
-  return readStringDefault('comboDefault', COMBO_LEVELS);
+  const raw = readStringDefault('comboDefault', COMBO_LEVELS);
+  if (raw !== 'off') return raw;
+  const stored = readPluginSettings().comboDefault;
+  return typeof stored === 'string' && RETIRED_COMBO_LEVELS.has(stored) ? 'lite' : raw;
 }
 
 export function readCavemanDefault(): string {
@@ -82,7 +87,7 @@ export function isComboSetupComplete(): boolean {
 
 const COMBO_MODE_DEFAULTS = {
   off: { cavemanDefault: 'off', rtkDefault: false, ponytailDefault: 'off', pstackDefault: 'off' },
-  medium: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite', pstackDefault: 'on' },
+  lite: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite', pstackDefault: 'on' },
   balanced: { cavemanDefault: 'full', rtkDefault: true, ponytailDefault: 'full', pstackDefault: 'on' },
   max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra', pstackDefault: 'on' },
 } as const;

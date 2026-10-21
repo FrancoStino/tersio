@@ -55,7 +55,7 @@
         "description": "Session-start default (no saved state)",
         "values": [
           "off",
-          "medium",
+          "lite",
           "balanced",
           "max"
         ],
@@ -150,7 +150,8 @@
     "lint": "oxlint cli extensions test tersio.ts",
     "lint:dashboard": "bun run --cwd dashboard/app lint",
     "lint:fix": "oxlint cli extensions test tersio.ts --fix",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bench": "vitest bench"
   },
   "engines": {
     "node": ">=20.12.0"

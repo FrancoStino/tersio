@@ -23,8 +23,12 @@
  - `tersio settings` is gone, and the session-start defaults, the display currency, and the diagnosis schedule are set in the dashboard, which already carried all three. The installer still takes `--combo-default`, `--caveman-default`, `--rtk-default`, `--ponytail-default`, and `--pstack-default`, so a scripted install keeps working. The `--diag-schedule` and `--subagent-marker` flags go with the command.
  - Reset statistics lives in the dashboard now: the Data pane names the rows a reset would clear and holds the button, and its confirmation is a dialog. The snapshot Restore and Delete confirmations are dialogs as well, naming the snapshot and the files at stake. `tersio reset` and its picker row are gone.
  - `docs/BENCHMARK_GUIDE.md` opens with a ten-minute quick run on your own repo, and the full protocol behind it is tighter: one results table per surface kind, six command rows, and the same fixed prompts, quality gates, and metrics.
+ - The `medium` Combo preset is renamed `lite`, so the preset ladder reads `off`, `lite`, `balanced`, `max` and matches the Caveman and Ponytail levels it sets. A settings file or `--combo-default` written before the rename still resolves to `lite`, and `/combo medium` keeps working.
 
 ### Fixed
+ - The Developer tools switch in Settings > About saves to `~/.tersio/settings.json`. It lived in browser storage, and the dashboard binds a new port each run, so the switch reset on every launch.
+ - A request row reports the gateway the transcript named. A model served by Command Code now reads `commandcode` rather than the `deepseek` its model id implies, and rows written before the name was kept fall back to the model id. The store gained a `p` column, migrated in place.
+ - The connection list and the Sources table draw Claude Code with its own mark in Claude's terracotta, and Codex with the Codex mark rather than the OpenAI knot.
  - Savings and scorecard numbers could read zero on a busy database, and a snapshot could miss rows still in flight or keep a damaged one. All three read the committed state now: on this machine a plain copy held 7,194 rows where the database held 7,207, and the prune pass reads six snapshots in 18 ms.
  - The Tools page shows real result sizes, call arguments, and error counts instead of zeros. Measured here: 711.1K result characters and 29 failed calls in 24 hours, where both read 0.
  - Settings left every mode row at its old level after you picked a Combo preset: each row updated only itself, while a preset writes all four. The dialog shows what was saved now.

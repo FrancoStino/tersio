@@ -28,6 +28,9 @@ interface Profile {
   pstackDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
+  // The dashboard's Developer tools switch. It lives here, not in browser storage, so it survives a
+  // new port and a new browser: the dashboard binds a fresh origin each run.
+  devTools: boolean;
   // Empty means the built-in default.
   subagentMarkers: string[];
 }
@@ -44,6 +47,7 @@ function defaultProfile(): Profile {
     pstackDefault: 'off',
     currency: DEFAULT_CURRENCY,
     backupSchedule: 'monthly',
+    devTools: false,
     subagentMarkers: [],
   };
 }
@@ -56,6 +60,7 @@ interface StoredSettings {
   pstackDefault?: unknown;
   currency?: unknown;
   backupSchedule?: unknown;
+  devTools?: unknown;
   subagentMarkers?: unknown;
 }
 
@@ -80,6 +85,7 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   if (typeof stored.backupSchedule === 'string' && BACKUP_SCHEDULES.has(stored.backupSchedule)) {
     base.backupSchedule = stored.backupSchedule as BackupSchedule;
   }
+  if (typeof stored.devTools === 'boolean') base.devTools = stored.devTools;
   if (Array.isArray(stored.subagentMarkers)) {
     // An empty marker would match every turn.
     base.subagentMarkers = stored.subagentMarkers.filter((m): m is string => typeof m === 'string' && m.trim() !== '');
@@ -147,6 +153,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     pstackDefault: profile.pstackDefault,
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
+    devTools: profile.devTools,
     ...(profile.subagentMarkers.length > 0 ? { subagentMarkers: profile.subagentMarkers } : {}),
   };
   if (options.dryRun) {

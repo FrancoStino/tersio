@@ -11,6 +11,7 @@ import {
   deriveLevel,
   getSharedComboState,
   isComboPresetActive,
+  normalizeComboLevel,
   OMP_SUBAGENT_MARKER,
   resetSharedComboState,
   setSharedComboLevel,
@@ -663,9 +664,16 @@ test("a combo preset turns pstack on, so the level matches its modes", async () 
 
 test("deriveLevel maps every preset back to its level, including balanced", () => {
   expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "off" })).toBe("off");
-  expect(deriveLevel({ caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on" })).toBe("medium");
+  expect(deriveLevel({ caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on" })).toBe("lite");
   expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "full", pstack: "on" })).toBe("balanced");
   expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on" })).toBe("max");
+});
+
+test("the retired `medium` name still resolves to lite", () => {
+  // A settings file or command written before the rename must keep working.
+  expect(normalizeComboLevel("medium")).toBe("lite");
+  expect(normalizeComboLevel("lite")).toBe("lite");
+  expect(normalizeComboLevel("ultra")).toBe("max");
 });
 
 test("deriveLevel returns custom for mixed modes", () => {
@@ -680,7 +688,7 @@ test("deriveLevel returns custom when a mode is changed by hand", () => {
 
 test("isComboPresetActive is true for presets, false for off", () => {
   try {
-    for (const level of ["medium", "balanced", "max"]) {
+    for (const level of ["lite", "balanced", "max"]) {
       setSharedComboLevel(level);
       expect(isComboPresetActive()).toBe(true);
     }

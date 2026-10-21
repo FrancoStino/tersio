@@ -114,14 +114,20 @@ const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   devin: 'cognition',
 };
 
-/** SQL: the gateway a model id names, from its first segment. Empty when the id carries none, not a guess. */
-function providerExpr(model: string): string {
+/**
+ * SQL: the gateway that served the row. The transcript names it, and that name wins, because a model id
+ * cannot show it: `deepseek/deepseek-v4.1-flash` was served by `commandcode`. Rows written before the
+ * name was kept fall back to the model id's first segment, which is the best those rows can say.
+ */
+function providerExpr(model: string, named?: string): string {
   const seg = `substr(${model}, 1, instr(${model} || '/', '/') - 1)`;
-  const named = `ltrim(${seg}, '~')`;
+  const alias = `ltrim(${seg}, '~')`;
   const cases = Object.entries(PROVIDER_ALIASES)
     .map(([from, to]) => `WHEN '${from}' THEN '${to}'`)
     .join(' ');
-  return `CASE WHEN instr(${model}, '/') = 0 THEN '' ELSE CASE ${named} ${cases} ELSE ${named} END END`;
+  const fromModel = `CASE WHEN instr(${model}, '/') = 0 THEN '' ELSE CASE ${alias} ${cases} ELSE ${alias} END END`;
+  if (!named) return fromModel;
+  return `CASE WHEN ${named} IS NULL OR ${named} = '' THEN ${fromModel} ELSE ${named} END`;
 }
 
 /** SQL: the project from a transcript's session folder; the separator follows the stored path, since a Windows run stores `\`. */
@@ -145,7 +151,7 @@ const COL = {
   entry: `COALESCE(m.id, '')`,
   folder: projectExpr(FILE_KEY),
   model: 'm.model',
-  provider: providerExpr('m.model'),
+  provider: providerExpr('m.model', 'm.p'),
   /** No route name is stored, and the Requests page reads one. */
   api: "''",
   timestamp: 'm.t',

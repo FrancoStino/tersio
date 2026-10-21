@@ -211,7 +211,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   const selected = detectHosts().find((h) => h.id === host) as HostEntry;
   if (host === 'pi') {
     const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed);
-    if (removed) console.log('\nDone. Restart pi, then /combo medium.');
+    if (removed) console.log('\nDone. Restart pi, then /combo lite.');
     closeRL();
     return removed;
   }

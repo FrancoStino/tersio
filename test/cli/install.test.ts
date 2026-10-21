@@ -60,14 +60,14 @@ test("readPluginSettings seeds from the OMP lock an older install wrote", () => 
 
 test("readPluginSettings prefers ~/.tersio/settings.json over the lock file", () => {
   withHome((home) => {
-    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "medium" } });
+    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "lite" } });
     const dir = path.join(home, ".omp", "plugins");
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "omp-plugins.lock.json"), JSON.stringify({
       plugins: {},
       settings: { "@krtclcdy/tersio": { comboDefault: "max" } },
     }), "utf8");
-    expect(readComboDefault()).toBe("medium");
+    expect(readComboDefault()).toBe("lite");
   });
 });
 
@@ -126,11 +126,17 @@ function run(...args: string[]): RunResult {
 }
 
 test("installer accepts session-default flags and reports them", () => {
-  const result = run("install", "--dry-run", "--yes", "--combo-default", "medium");
+  const result = run("install", "--dry-run", "--yes", "--combo-default", "lite");
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Defaults: combo=medium/);
+  expect(result.stdout).toMatch(/Defaults: combo=lite/);
   expect(result.stdout).toMatch(/RTK session — install session mode/);
   expect(result.stdout).toMatch(/Tersio commands — install \/tersio root command/);
+
+  // A scripted flag written before the rename still lands on the lite preset.
+  const retired = run("install", "--dry-run", "--yes", "--combo-default", "medium");
+  expect(retired.status, retired.stderr).toBe(0);
+  expect(retired.stdout).toMatch(/Defaults: combo=lite/);
+  expect(retired.stdout).not.toMatch(/Invalid --combo-default/);
 });
 
 test("installer rejects invalid default values", () => {
@@ -217,7 +223,7 @@ test("package manifest declares always-on extensions plus updater feature and se
 
   const combo = settings.comboDefault as { type?: string; values?: string[]; default?: string };
   expect(combo.type).toBe("enum");
-  expect(combo.values).toEqual(["off", "medium", "balanced", "max"]);
+  expect(combo.values).toEqual(["off", "lite", "balanced", "max"]);
   expect(combo.default).toBe("off");
 
   const rtk = settings.rtkDefault as { type?: string; default?: boolean };

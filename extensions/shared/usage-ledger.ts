@@ -500,6 +500,7 @@ export interface SessionLineRow {
   message?: {
     role?: unknown;
     model?: unknown;
+    provider?: unknown;
     usage?: Record<string, unknown>;
     duration?: unknown;
     ttft?: unknown;
@@ -563,7 +564,9 @@ export function classifySessionLine(row: SessionLineRow, results?: ToolResults):
     const result = typeof part.id === 'string' ? results?.get(part.id) : undefined;
     toolFacts.push({ n: name, a: jsonChars(part.arguments), r: result?.chars ?? 0, e: result?.error ? 1 : 0 });
   }
-  return { kind: 'assistant_row', model, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, ttftMs: typeof msg.ttft === 'number' ? msg.ttft : undefined, run: statusOf(msg), tools, toolFacts };
+  // The gateway that served the turn: `commandcode` for `deepseek/...`, which the model id cannot show.
+  const provider = typeof msg.provider === 'string' && msg.provider ? msg.provider : undefined;
+  return { kind: 'assistant_row', model, provider, usage: msg.usage, durMs: typeof msg.duration === 'number' ? msg.duration : computedDur, ttftMs: typeof msg.ttft === 'number' ? msg.ttft : undefined, run: statusOf(msg), tools, toolFacts };
 }
 // True when at least one token bucket holds a positive finite count.
 export function hasPositiveUsage(usage: Record<string, unknown>): boolean {

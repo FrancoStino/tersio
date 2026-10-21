@@ -44,7 +44,7 @@ Each host loads its extensions from one place, so the same file never loads twic
 
 Restart the host. Backend defaults come from `~/.tersio/settings.json`; override per session anytime.
 
-The first interactive launch asks for a session-start Combo preset once (`off`, `medium`, `balanced`, `max`) and remembers it. Defaults apply to fresh sessions only; `/combo`, `/caveman`, or `/rtk` wins within that session. Set it ahead of time instead:
+The first interactive launch asks for a session-start Combo preset once (`off`, `lite`, `balanced`, `max`) and remembers it. Defaults apply to fresh sessions only; `/combo`, `/caveman`, or `/rtk` wins within that session. Set it ahead of time instead:
 
 ```bash
 tersio install --combo-default balanced --caveman-default lite --rtk-default on

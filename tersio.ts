@@ -30,7 +30,7 @@ Options:
   --host omp|pi|opencode (install|uninstall|update: target agent; a terminal asks instead)
   --keep-ponytail (uninstall: keep the bundled Ponytail copy — removed by default)
   --remove-rtk (uninstall: also remove the RTK binary; its OMP wiring always goes)
-  --combo-default off|medium|balanced|max (implies caveman, rtk, ponytail)
+  --combo-default off|lite|balanced|max (implies caveman, rtk, ponytail)
   --caveman-default off|lite|full|ultra|megacave-lite|megacave-full|megacave-ultra (override; default follows combo)
   --ponytail-default off|lite|full|ultra (override; default follows combo)
   --rtk-default on|off (override; default follows combo)

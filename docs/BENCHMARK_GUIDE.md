@@ -1,85 +1,229 @@
 # Tersio Benchmark Guide
 
-This guide shows how to measure Tersio on any AI coding agent. Tersio works with many agents. Use the same steps for each agent, and report the agent and model you used.
+How to measure Tersio on any agent. Report the agent, the model, and the versions you used.
 
 The method follows how the upstream projects test their own tools:
 
-- **Caveman:** Compare replies on fixed prompts. Add a control prompt, `Answer concisely.`, so the gain is not just from a short-answer instruction. Count the prompt overhead separately. Report losses.
-- **Ponytail:** Run the same agent with and without the skill. Repeat each task 5 times. Check quality with tests, injected bugs, and security tasks.
-- **RTK:** Measure command output only. Check that failure details survive compression. Report percentages, not bill savings.
+- **Caveman**: compare replies on fixed prompts, with a control prompt `Answer concisely.` so the gain is not just a short-answer instruction. Count prompt overhead separately, and report losses.
+- **Ponytail**: run the same tasks with and without the mode, five times each, and check quality with tests and injected bugs.
+- **RTK**: measure command output only. Check that failure details survive. Report percentages, not bill savings.
 
-## 1. Modes
+## Quick run
 
-Base means all modes are off. Every result is compared to base.
+A first pass on your own repo, in about ten minutes. It answers "does this save me tokens" without the full protocol below.
 
-| Mode | Setting | What it changes |
+1. Run `tersio install`, then `tersio doctor`. Both must pass.
+2. Set one mode in the dashboard's General pane. Start with `Combo balanced`.
+3. Open a fresh session and ask one question you ask often. Save the reply.
+4. Turn every mode `off` in the same pane. Open another fresh session and ask the same question.
+5. Compare the reply tokens and read Δ Net, not Δ Tokens alone.
+
+The full protocol below turns that first pass into a number two people can reproduce.
+
+## 1. Modes and levels
+
+Base means every mode is off, and every result is compared to base. This is the complete matrix. A
+result file that skips a row is incomplete, so two people running this guide produce the same tables.
+
+| Mode | Every level | What it changes |
 |---|---|---|
-| Base | `off` | Nothing. This is the baseline. |
-| Control | `Answer concisely.` | A plain instruction. Used only as a reference. |
-| Caveman | `lite`, `full`, `ultra` | Shorter replies. |
-| RTK | `on` | Shorter shell command output. |
-| Ponytail | `lite`, `full`, `ultra` | Smaller code changes. |
+| Base | `off` | Nothing. The baseline. |
+| Control | the prompt `Answer concisely.` | A plain instruction, used only as a reference. |
+| Caveman | `lite`, `full`, `ultra`, `megacave-lite`, `megacave-full`, `megacave-ultra` | Shorter replies. Six levels. |
+| Ponytail | `lite`, `full`, `ultra` | Smaller code changes. Three levels. |
 | pstack | `on` | Design and verification rules. Scored on quality only. |
-| Combo | `medium`, `balanced`, `max` | Presets that set Caveman, RTK, Ponytail, and pstack together. |
+| RTK | `on` | Shorter shell command output. Measured by the bench, not by a session. |
+| Combo | `lite`, `balanced`, `max` | Presets. `lite` is lite/lite, `balanced` is full/full, `max` is ultra/ultra, and all three turn RTK and pstack on. |
 
-Set modes through saved defaults. Do not use a command prefix. Some modes add text at session start, and a prefix can skip that step.
+There are two ways to turn a mode on, and they are measured separately:
+
+- **Saved default.** The mode is set before the session starts. Its block is in the system prompt from turn one.
+- **Slash command.** The command is issued mid-session. The block is appended when it runs, after context has already grown.
+
+Both paths inject the same text. They differ in *when* it is paid for. Do not mix the two paths in
+one comparison. Pick one, state it in the result file, and keep it for every run of that case.
+
+### The level bodies
+
+Each level injects its own body, so each level is its own measurement. Static sizes, in characters,
+so a reader can sanity-check the growth against them:
+
+| Caveman level | File | Chars |
+|---|---|---:|
+| `lite` | `extensions/caveman/rule-lite.md` | 4,210 |
+| `full` | `extensions/caveman/rule.md` | 4,708 |
+| `ultra` | `extensions/caveman/rule-ultra.md` | 2,513 |
+| `megacave-lite` | `extensions/caveman/rule-megacave-lite.md` | 3,122 |
+| `megacave-full` | `extensions/caveman/rule-megacave.md` | 2,858 |
+| `megacave-ultra` | `extensions/caveman/rule-megacave-ultra.md` | 2,931 |
+
+Ponytail ships one body for all three levels and states the level in its header, so the three levels
+differ by that line rather than by size.
+
+### Command surface
+
+Run this surface when the question is "what does the command cost", not "what does the mode cost".
+One row per command **and level**, so `/caveman` alone is six rows.
+
+| Command | Every level to measure |
+|---|---|
+| `/caveman` | `lite`, `full`, `ultra`, `megacave-lite`, `megacave-full`, `megacave-ultra` |
+| `/ponytail` | `lite`, `full`, `ultra` |
+| `/pstack` | `on` |
+| `/combo` | `lite`, `balanced`, `max` |
+
+Procedure for one command case:
+
+1. Start a fresh session with every mode `off`.
+2. In the same session, issue the command, then ask prompt P1.
+3. Record P1's reply and the whole session's totals.
+4. The difference against a base session that asked P1 with no command is the command's cost.
+
+A command and its prompt go in one session, so the command's block lands on the turn that answers
+the prompt. Most harnesses accept a command and a prompt together in one non-interactive call, so
+this surface needs no interactive session. If your harness does not, use its interactive mode and
+read the totals from the session record.
+
+The block is injected once, so the command costs its body and not its body times the turns. Expect
+the session growth to land near the static size of the body.
+
+`/combo` is the expensive case by construction: it injects four blocks at once. Measure it, but
+report it separately from the single-mode commands, because it is a preset and not a mode.
 
 ## 2. Setup
 
-1. Install Tersio for your agent. Run the health check and confirm it passes.
-2. Record the agent version, model, thinking level, and temperature. Keep them fixed for all runs.
-3. Write benchmark output to a separate folder. Do not change your live settings.
-4. Use a fixed test repository with a passing test suite and at least 200 files.
-5. Make a copy with exactly one failing test. Use it for the agentic and RTK tests.
-6. Pin the repository to one commit. Do not change it during the test.
+1. Install Tersio for your agent, then run the health check and confirm it passes.
+2. Record the agent version, the model, the thinking level, and the temperature. Keep them fixed.
+3. Write benchmark output to a separate folder, and leave your live settings alone.
+4. Use a fixed repository with a passing test suite and at least 200 files, pinned to one commit.
+5. Copy it and inject exactly one failing test. Use that copy for the agentic runs.
 
-## 3. Test Surfaces
+### The fixture repo
 
-Run each mode on each surface. Do not combine results from different surfaces.
+Step 5 is yours to build, and it takes five minutes. The guide cannot ship one, because the agent
+has to fail on something it did not write.
 
-| Surface | Task | What is counted |
-|---|---|---|
-| Prose | 3 prompts, each asking for a three-sentence explanation. | Reply tokens |
-| Code | 3 prompts, each asking for TypeScript functions. | Reply tokens |
-| Agentic | Run the test suite. Fix the failing test. Stop when it passes. | Total tokens, time, pass rate |
-| Command output | Run 4 shell commands with and without RTK. | Output tokens, time, fidelity |
-| Prompt overhead | Count the text each mode adds to every turn. | Block |
+Put the bug in the source, not in the test. The test states the correct expectation, the source
+disagrees, and the agent fixes the source. A bug inside the test file forces the agent to edit a
+test to go green, which is exactly what the agentic gate forbids, so the gate stops meaning
+anything.
+
+```bash
+# A copy of the repository under test, with its own history.
+git clone --quiet --local /path/to/repo /tmp/bench-fixture
+cd /tmp/bench-fixture
+bun install --frozen-lockfile
+bun run build
+bun run test          # green before the bug goes in
+```
+
+Then add the bug and the test that catches it, as two files:
+
+```ts
+// extensions/shared/invoice.ts
+export function invoiceTotal(invoice: Invoice): number {
+  return invoice.lines.reduce((sum, line) => sum + line.price, 0); // ignores qty
+}
+```
+
+```ts
+// test/shared/invoice.test.ts
+test("the invoice total multiplies price by quantity", () => {
+  expect(invoiceTotal({ lines: [{ price: 10, qty: 2 }, { price: 5, qty: 3 }] })).toBe(35);
+});
+```
+
+Check the state before you measure: the suite must report exactly one failure, and the rest must
+pass. Then commit both files, so every run starts from the same injected bug. Reset between runs
+with `git checkout -- .`.
+
+Keep the copy out of your working repository. An agent that can see your project will read it, and
+on a code surface it will find functions that already exist and decline to write anything.
+
+### Isolating the run
+
+Do not edit your live settings for a benchmark. Point the extension tree at a scratch home, so the
+mode state is per-condition and your real `~/.tersio` never changes:
+
+```bash
+export TERSIO_HOME=/tmp/bench-home/base      # a folder holding settings.json
+```
+
+Write one `settings.json` per condition, with the four keys the session reads. This is how a
+condition is set without touching the dashboard:
+
+```json
+{ "comboDefault": "off", "cavemanDefault": "off", "rtkDefault": false, "ponytailDefault": "off", "pstackDefault": "off" }
+```
+
+For `Combo balanced`, use `"comboDefault": "balanced"` with caveman `full`, rtk `true`, ponytail
+`full`, and pstack `on`. For a single mode, set `comboDefault` to `custom` and set only that mode.
+
+## 3. Surfaces
+
+Run every mode and level on every surface that applies to it, and never mix results across
+surfaces. The matrix below is the full scope.
+
+| Surface | Applies to | Task | Counted |
+|---|---|---|---|
+| Prose | Caveman (6 levels), Control, Combo (3) | 3 prompts, each asking for a three-sentence explanation. | Reply tokens |
+| Code | Ponytail (3 levels) | 3 prompts, each asking for TypeScript functions. | Reply tokens |
+| Agentic | Combo (3), pstack, RTK | Run the suite. Fix the failing test. Stop when it passes. | Total tokens, time, pass rate |
+| Command output | RTK | Run `bun run bench` over the committed fixtures. | Output bytes, time, fidelity |
+| Command surface | Every command and level | Issue one slash command, then ask P1. | Reply tokens, total tokens, quality |
+
+The prompt overhead of a mode is inside the Total median column, because a mode's block lands in the
+system prompt of every turn. Read it as the difference between the two columns, and read the static
+body sizes in section 1 to check it.
+
+RTK has no session-level row of its own on the prose or code surfaces. Its effect is command
+output, and the bench measures it exactly. On the agentic surface it does have a row, because the
+task runs shell commands, and there the RTK row answers a different question: whether condensing
+the suite output changes how the agent fixes the bug.
 
 ## 4. Procedure
 
-1. Set all modes to `off`. Run the base case.
-2. Set one mode or preset. Run it on the same prompts.
-3. Start a new session for each run.
-4. Run each case **5 times**. Record every result. Do not drop slow or failed runs.
-5. Interleave the modes. For example: base, mode A, mode B, base, mode A, mode B.
-6. Run the control prompt `Answer concisely.` on the prose surface.
+1. Set every mode to `off` and run the base case.
+2. Start a new session for each run, and run each case **5 times**.
+3. Keep every result. Do not drop slow or failed runs.
+4. Interleave the cases: base, A, B, base, A, B.
+5. Run the control prompt on the prose surface.
+6. Run every level listed in section 1. A skipped level is a hole in the result file.
 
 ## 5. Metrics
 
 | Symbol | Name | Formula |
 |---|---|---|
-| **Block** | Prompt overhead | Tokens the mode adds to each turn. Base is 0. |
+| **Reply median** | Median reply | Median reply tokens of the case. Base is the reference. |
 | **Δ Tokens** | Reply change | Median reply tokens − base median. Negative is a saving. |
-| **Δ Net** | First-turn effect | Block + Δ Tokens. Negative means the mode saves overall. |
-| **Δ Time** | Time change | Median time − base median. |
 | **Δ%** | Relative change | Δ ÷ base median × 100. |
-| **Quality** | Pass rate | Passing runs out of 5. |
+| **Total median** | Session cost | Median tokens of the whole session, prompt and reply. |
+| **Δ Net** | Session change | Median total session tokens − base median. Negative is a saving. |
+| **Δ Time** | Time change | Median time − base median. |
+| **Quality** | Pass rate | Passing runs out of N. |
 
-Always read Δ Net next to Δ Tokens. A mode can cut reply tokens and still cost more overall.
+Reply tokens are the assistant's generated text. A harness that reports thinking tokens as a
+separate number counts them out, and the result file says which it counted.
 
-## 6. Quality Checks
+Read Δ Net next to Δ Tokens. A mode can cut reply tokens and still cost more overall, because Δ Net
+carries the mode's block on every turn of the session.
 
-A saving only counts if the output is still correct.
+## 6. Quality gates
 
-- **Code:** Passes a strict type check. Passes a fixed test file. Contains every requested function.
-- **Prose:** Exactly three sentences. Contains the required keywords for each prompt.
-- **Agentic:** The test suite passes. No test file was edited.
-- **Command output:** The failing test name, assertion message, file, and line remain. The exit code matches the plain command.
-- **pstack:** Score the agentic pass rate, the number of review rounds, and wrong turns. A green suite with a wrong turn counts as a failure.
+A saving counts only when the output stays correct.
 
-### The fixed prompts and keyword lists
+- **Code**: passes a strict type check and a fixed test file, and contains every requested function.
+- **Prose**: exactly three sentences, with every required keyword.
+- **Agentic**: the suite passes, and no test file was edited.
+- **Command output**: the failing test name, its assertion, its file, and its line remain, and the exit code matches.
+- **Command surface**: the reply after the command passes the same gate as the same prompt without it, and the session records which path was used.
+- **pstack**: score the agentic pass rate, the review rounds, and the wrong turns. A green suite with a wrong turn is a failure.
 
-Two people running this guide must measure the same thing, so the prompts and the keyword groups are fixed here. A group matches when the reply contains any of its terms as a substring, so `quer` covers `query` and `queries`, and `concurren` covers `concurrent` and `concurrency`.
+Do not publish a saving for any mode whose pass rate is below base.
+
+## 7. Fixed prompts
+
+Two people running this guide must measure the same thing. The keyword test is lexical: a group matches when the reply contains any of its terms as a substring, so `quer` covers `query` and `queries`.
 
 | Prompt | Text | Keyword groups, all required |
 |---|---|---|
@@ -90,99 +234,193 @@ Two people running this guide must measure the same thing, so the prompts and th
 | Code prompt | Text | Required names |
 |---|---|---|
 | C1 | Write a TypeScript function `chunk<T>(items: T[], size: number): T[][]` that splits an array into fixed-size chunks, and `chunkLazy` that yields chunks from an iterable without materializing the whole array. | `chunk`, `chunkLazy` |
-| C2 | Write a TypeScript function `debounce` and a function `throttle`, both with the signature `(fn: (...args: T) => void, ms: number)`. | `debounce`, `throttle` |
-| C3 | Write a TypeScript function `groupBy<T, K extends PropertyKey>(items: T[], key: (item: T) => K): Record<K, T[]>` and `countBy` with the same inputs returning `Record<K, number>`. | `groupBy`, `countBy` |
+| C2 | Write a TypeScript `debounce` and a `throttle`, both with the signature `(fn: (...args: T) => void, ms: number)`. | `debounce`, `throttle` |
+| C3 | Write a TypeScript `groupBy<T, K extends PropertyKey>(items: T[], key: (item: T) => K): Record<K, T[]>` and `countBy` with the same inputs returning `Record<K, number>`. | `groupBy`, `countBy` |
 
-| Agentic | Text |
-|---|---|
-| A | In the fixture repo, run the test suite. Fix the failing test. Stop when all tests pass. |
+Agentic task: in the fixture repo, run the suite, fix the failing test, and stop when all tests pass. The
+fixture is the one from section 2, and the failure is in the source, so a correct run edits a source
+file and leaves every test file alone.
 
-The keyword test is lexical, so a reply that explains the right idea in another word misses the group and fails. Read the reply before recording a miss as a quality failure, and compare every mode against base on the same prompt: a group the base model also misses measures the gate, not the mode.
+Read a miss before you record it, and compare each mode against base on the same prompt: a keyword the base model also misses measures the gate, not the mode.
 
-Do not publish a saving for any mode with a lower pass rate than base.
+## 8. Results
 
-## 7. Results Template
+The result file has one table per surface, in the order below, and every table has exactly the
+columns given. Leave a cell blank until it is measured. Keep every row, including the levels that
+measured nothing useful, because a skipped row is a hole in the file.
 
-Leave cells blank until measured.
+Reply median and Total median are the two numbers a reader compares across agents. Δ Tokens and
+Δ Net are the two deltas against base. pstack is scored on quality and review rounds only, so its
+session columns stay `n/a`.
 
-### Prose Surface
+### Prose
 
-| Mode | Block | Δ Tokens | Δ% | Δ Net | Quality | Median Tokens |
+| Case | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
 |---|---:|---:|---:|---:|---:|---:|
-| Base (`off`) | 0 | 0 | 0% | 0 | ___/5 | ___ |
-| Control (`Answer concisely.`) | ___ | ___ | ___% | ___ | ___/5 | ___ |
-| Caveman `lite` | ___ | ___ | ___% | ___ | ___/5 | ___ |
-| Caveman `full` | ___ | ___ | ___% | ___ | ___/5 | ___ |
-| Caveman `ultra` | ___ | ___ | ___% | ___ | ___/5 | ___ |
+| Base (`off`) | ___ | 0 | 0% | ___ | 0 | ___/15 |
+| Control (`Answer concisely.`) | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `lite` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `full` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `ultra` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `megacave-lite` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `megacave-full` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Caveman `megacave-ultra` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Combo `lite` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Combo `balanced` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Combo `max` | ___ | ___ | ___% | ___ | ___ | ___/15 |
 
-### Code Surface
+### Code
 
-| Mode | Block | Δ Tokens | Δ% | Δ Net | Quality | Median Tokens |
+| Case | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
 |---|---:|---:|---:|---:|---:|---:|
-| Base (`off`) | 0 | 0 | 0% | 0 | ___/5 | ___ |
-| Ponytail `lite` | ___ | ___ | ___% | ___ | ___/5 | ___ |
-| Ponytail `full` | ___ | ___ | ___% | ___ | ___/5 | ___ |
-| Ponytail `ultra` | ___ | ___ | ___% | ___ | ___/5 | ___ |
+| Base (`off`) | ___ | 0 | 0% | ___ | 0 | ___/15 |
+| Ponytail `lite` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Ponytail `full` | ___ | ___ | ___% | ___ | ___ | ___/15 |
+| Ponytail `ultra` | ___ | ___ | ___% | ___ | ___ | ___/15 |
 
-### Agentic Surface
+### Agentic
 
-| Mode | Block | Δ Tokens | Δ% | Δ Net | Δ Time | Quality |
+The Agentic rows count the whole session: total tokens, wall time, and the pass rate. A row also
+records whether any test file was edited, in the text under the table, because the gate forbids it.
+
+| Case | Reply median | Total median | Δ Net | Δ% | Wall median | Pass |
 |---|---:|---:|---:|---:|---:|---:|
-| Base (`off`) | 0 | 0 | 0% | 0 | 0 | ___/5 |
-| RTK `on` | ___ | ___ | ___% | ___ | ___ | ___/5 |
-| Combo `medium` | ___ | ___ | ___% | ___ | ___ | ___/5 |
-| Combo `balanced` | ___ | ___ | ___% | ___ | ___ | ___/5 |
-| Combo `max` | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| Base (`off`) | ___ | ___ | 0 | 0% | ___ | ___/5 |
+| RTK `on` | ___ | ___ | ___ | ___% | ___ | ___/5 |
 | pstack `on` | ___ | n/a | n/a | n/a | ___ | ___/5 |
+| Combo `lite` | ___ | ___ | ___ | ___% | ___ | ___/5 |
+| Combo `balanced` | ___ | ___ | ___ | ___% | ___ | ___/5 |
+| Combo `max` | ___ | ___ | ___ | ___% | ___ | ___/5 |
 
-pstack is scored on quality and review rounds only. Its token columns are not used.
+The base row's wall time is the baseline every other row subtracts from.
 
-### Command Output (RTK)
+### Command surface
 
-| Command | Base Tokens | RTK Tokens | Δ | Δ% | Δ Time | Fidelity |
-|---|---:|---:|---:|---:|---:|---:|
-| `bun run test` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `find . -name '*.test.ts'` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `ls -la .` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `git status` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `grep -rn pattern src/` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `cat README.md` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `gh pr list` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `tsc --noEmit` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `rtk read src/main.ts --level aggressive` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
-| `rtk err <build command>` | ___ | ___ | ___ | ___% | ___ | Pass / Fail |
+One row per command **and level**. Keep the path column filled in, because a saved default and a
+slash command are not comparable.
 
-RTK token counts use a bytes ÷ 4 estimate. Use the percentages for comparison. Do not treat the token counts as exact.
+| Command | Level | Path | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| (none) | — | — | ___ | 0 | 0% | ___ | 0 | ___/5 |
+| `/caveman` | `lite` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/caveman` | `full` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/caveman` | `ultra` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/caveman` | `megacave-lite` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/caveman` | `megacave-full` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/caveman` | `megacave-ultra` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/ponytail` | `lite` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/ponytail` | `full` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/ponytail` | `ultra` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/pstack` | `on` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/combo` | `lite` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/combo` | `balanced` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
+| `/combo` | `max` | slash | ___ | ___ | ___% | ___ | ___ | ___/5 |
 
-Use real commands from the repo under test. Placeholder paths such as `src/` measure nothing. A clean `tsc` or an empty `gh pr list` prints almost nothing, so those rows need a repo with output. The read row measures the direct call, because `cat` rewrites to `rtk read` at the default level, which keeps the full body and saves nothing.
+Report `/combo` rows separately from the single-mode commands. A preset injects every block at
+once, so its Δ Net is not comparable to one mode's.
 
-For every row, check that the condensed output still carries what the task needs. A failing test keeps its name, its assertion, and its file and line. A search keeps its matches. A read at `--level aggressive` keeps signatures and imports, not full bodies.
+### Command output
 
-Measured on the Tersio repo, 2026-10-15, rtk 1.0.1, for scale:
+Tersio routes three things through rtk: `grep` tool output, `find`/`glob` tool output, and one `rtk rewrite` lookup before every Bash call. Nothing else goes through a filter, so nothing else belongs in this table.
 
-| Command | Δ% | Note |
-|---|---:|---|
-| `find . -name '*.test.ts'` | 99.2% | 51,787 B to 416 B |
-| `rtk err bun run build` | 94.4% | 846 B to 47 B |
-| `ls -la .` | 72.5% | 2,155 B to 592 B |
-| `git status` | 19.2% | low here because 136 staged files are listed |
-| `rtk read <file> --level aggressive` | 66–76% | on 8 KB to 47 KB sources |
-| `rtk read <file> --level minimal` | 9–14% | keeps most of the body |
-| `rtk read <file> --max-lines 60` | 58–96% | structural preview |
-| `bun run test` | 0% | the summary is already 198 B |
+Run the bench instead of timing commands by hand:
 
-Fidelity held on every row tested: 22 of 22 grep matches survived at identical size, a failing test kept its name, its assertion, and its `file:line`, and `rtk err` kept the exact failure text and exit code.
+```bash
+bun run bench
+```
 
-## 8. Reporting
+It reads the committed fixtures in `bench/fixtures/`, pipes each through `rtk pipe -f <filter>`, and prints ops/sec and percentiles. It also asserts fidelity, so a filter that starts dropping matches fails the run.
 
-Include these items with every result:
+| Case | Fixture | What fidelity means |
+|---|---|---|
+| `find` condense | 260 paths, 46 dirs | the header counts every file and dir, and no printed name is invented |
+| `grep` condense | 240 matches | every match line survives with its `file:line` |
+| `rewrite` | 12 commands | every command gets an answer or a clean "no equivalent" |
 
-- Agent name and version.
-- Model, thinking level, and temperature.
-- Tersio, RTK, Ponytail, and Caveman versions.
-- Test repository and commit.
-- Number of runs (N), the date, and the surface.
+Fill this table from your own `bun run bench` output:
 
-Show the median, min, and max for each value. Write verdicts with the limits. For example: "Lower reply tokens in this sample. Quality unchanged on 5 of 5 runs."
+| Case | Bytes in | Bytes out | Δ% | Mean |
+|---|---:|---:|---:|---:|
+| `find` | ___ | ___ | ___% | ___ ms |
+| `grep` | ___ | ___ | ___% | ___ ms |
+| `rewrite`, 12 commands | — | — | — | ___ ms |
 
-Do not claim total bill savings. The tests measure reply tokens, prompt overhead, or command output. Rerun the tests when you change the agent, model, or Tersio version. Do not compare results across different setups.
+The reduction is a byte ratio, so it reproduces across machines. The timings do not: a slow machine shifts every number, so compare percentages and ignore the milliseconds.
+
+Two numbers explain the design. The `find` filter folds a directory after a few children, so it saves most of its bytes. The `grep` filter keeps every match line, so a dense result saves little. The rewrite lookup runs before every Bash call, which is why `MIN_FILTER_BYTES` is 1200: below that, the spawn costs more than the filter saves.
+
+The bench does not measure Caveman, Ponytail, or pstack. Those change prompt text, and only a live session produces the reply tokens to compare. The protocol above is the only way to measure them.
+
+## 9. Reporting
+
+Write each run to its own file, named for the agent: `BENCHMARK_OMP.md`, `BENCHMARK_PI.md`, `BENCHMARK_OPENCODE.md`, `BENCHMARK_CLAUDECODE.md`, `BENCHMARK_CODEX.md`, and so on. Use the uppercase agent name with no spaces. Keep the file beside the guide, so a reader can compare agents without mixing their numbers.
+
+Start each file with this header, then paste the results tables from section 8 with the blanks
+filled in. Keep every row, including the levels that measured nothing useful, and keep the path
+column: a saved default and a slash command are different measurements.
+
+The file has these sections, in this order, and no others:
+
+```md
+# Tersio benchmark: <agent>
+
+- Agent: <name and version>
+- Model: <provider/model>, thinking effort <level>, temperature <not reported by the harness>
+- Tersio, RTK, Ponytail, Caveman: <versions>
+- Repository and commit: <repo> at <commit>. <where each surface ran>
+- Runs (N), date, surface: <N per case>, <date>
+- Path: saved defaults for the token protocol, slash commands for the command surface.
+
+<one paragraph: how it was measured, and the harness it ran under>
+
+<one paragraph: what Δ Tokens and Δ Net count, and any limit on this run>
+
+## Bench (`bun run bench`)
+
+| Case | Bytes in | Bytes out | Δ% | Mean |
+
+## Token protocol
+
+### Prose
+
+| Case | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
+
+### Code
+
+| Case | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
+
+### Agentic
+
+| Case | Reply median | Total median | Δ Net | Δ% | Wall median | Pass |
+
+## Command surface
+
+| Command | Level | Path | Reply median | Δ Tokens | Δ% | Total median | Δ Net | Quality |
+
+## What the numbers say
+
+- <findings>
+
+## Gates
+
+- <gates>
+```
+
+`BENCHMARK_OMP.md` is the reference file for this shape.
+
+Include with every result:
+
+- The agent name and version.
+- The model, the thinking level, and the temperature.
+- The Tersio, RTK, Ponytail, and Caveman versions.
+- The test repository and commit.
+- The number of runs (N), the date, and the surface.
+
+A run that breaks a rule of this guide says so in the file, in the paragraph under the header. A
+short run, a skipped level, a reworded prompt, and a harness limitation each get one sentence.
+
+Show the median for each value, and state the min and the max in the text when the spread matters,
+because a median alone hides a bimodal sample. Write verdicts with their limits: "Lower reply
+tokens in this sample. Quality unchanged on 5 of 5 runs."
+
+Do not claim total bill savings. These tests measure reply tokens, prompt overhead, or command output. Rerun after any change to the agent, the model, or the Tersio version, and do not compare results across different setups.
