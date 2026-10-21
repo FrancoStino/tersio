@@ -80,7 +80,9 @@ async function stepSelfPlugin(pluginsDir: string, options: InstallOptions): Prom
   if (!options.quiet) console.log('  Tersio — register plugin');
   const pkgPath = path.join(pluginsDir, 'package.json');
   const pkg = await readPluginsPackage(pkgPath);
-  pkg.dependencies[PACKAGE_NAME] = `^${PACKAGE_VERSION}`;
+  // The plugin package and this CLI are one build. A range lets npm hand omp a different release than
+  // the tree writer, and a tree of two releases fails to load: an extension imports a name the older file lacks.
+  pkg.dependencies[PACKAGE_NAME] = PACKAGE_VERSION;
   for (const legacy of ['oh-my-pi-token-saver', 'tersio-omp']) {
     if (legacy in pkg.dependencies) {
       delete pkg.dependencies[legacy];
@@ -89,7 +91,7 @@ async function stepSelfPlugin(pluginsDir: string, options: InstallOptions): Prom
   }
 
   if (options.dryRun) {
-    if (verbose && !options.quiet) sayTagged(`  [dry-run] would add ${PACKAGE_NAME}@^${PACKAGE_VERSION} to ${pkgPath}`);
+    if (verbose && !options.quiet) sayTagged(`  [dry-run] would add ${PACKAGE_NAME}@${PACKAGE_VERSION} to ${pkgPath}`);
     if (verbose && !options.quiet) sayTagged(`  [dry-run] would run: npm install --no-audit --no-fund (in ${pluginsDir})`);
     return false;
   }
