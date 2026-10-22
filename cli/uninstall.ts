@@ -358,7 +358,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
 
   await clearSessionDefaults(shouldDryRun);
 
-  console.log('\nDone. Restart OMP for changes to take effect.');
+  console.log(`\nDone. Restart ${detectHosts().find((h) => h.id === host)?.label ?? host} for changes to take effect.`);
   return true;
 }
 

@@ -1,3 +1,9 @@
+## v2.25.12
+
+### Fixed
+ - Updating no longer loops. If you installed Tersio with bun, `tersio update` refreshed the npm copy instead, so the old version stayed on your path and offered the same update every time. It now refreshes whichever copy is running, and says which one it used.
+ - The closing line names your agent instead of always saying OMP. Tersio installs into OMP, pi, and OpenCode, so the uninstall message now names the one you removed.
+
 ## v2.25.11
 
 ### Changed

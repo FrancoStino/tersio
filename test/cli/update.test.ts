@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cliEnv } from "../helpers/env.ts";
 import { registryUrl, releasesUrl } from "../helpers/registry.ts";
+import { installerManager } from "../../cli/update.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -328,6 +329,21 @@ test("update dry-run previews the global CLI refresh without running npm -g", ()
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
   }
+});
+
+// A bun global install lives at ~/.bun/install/global; refreshing only the npm copy leaves the old CLI
+// on PATH, and the next run offers the same update again.
+test("update refreshes the manager that installed this copy", () => {
+  const home = process.env.HOME || "";
+  const bunSelf = path.join(home, ".bun", "install", "global", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
+  const npmSelf = path.join(home, ".nvm", "versions", "node", "v20", "lib", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
+
+  const bun = installerManager(bunSelf);
+  expect(bun.label, "a copy under ~/.bun refreshes through bun").toBe("bun");
+  expect(bun.args("@2.0.0")).toContain("@krtclcdy/tersio@2.0.0");
+
+  const npm = installerManager(npmSelf);
+  expect(npm.label, "a copy anywhere else refreshes through npm").toBe("npm");
 });
 
 test("update delegates to the latest package non-interactively", () => {

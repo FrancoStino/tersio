@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  IS_WINDOWS, OMP_PLUGINS_DIR,
+  BUN_BIN, BUN_BIN_DIR, IS_WINDOWS, NPM_BIN, OMP_PLUGINS_DIR,
   PACKAGE_BIN, PACKAGE_NAME, PACKAGE_VERSION,
   args, dryRun, execP, parseJsonObject, verbose,
 } from './common.ts';
@@ -123,6 +123,25 @@ async function execInherit(cmd: string, args: string[]): Promise<void> {
   if (code !== 0) throw new Error(`${cmd} exited with code ${code}`);
 }
 
+/**
+ * The package manager that installed the running CLI. `bun install -g` writes to `~/.bun`, npm to its
+ * own prefix, and each keeps its own copy, so updating the wrong one leaves the old CLI in place and the
+ * update prompt comes back on the next run.
+ */
+export function installerManager(self = path.resolve(process.argv[1] ?? '')): { cmd: string; args: (target: string) => string[]; label: string } {
+  const bunRoot = path.join(BUN_BIN_DIR, '..', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/'));
+  if (self.startsWith(path.resolve(bunRoot))) {
+    return { cmd: BUN_BIN, args: (target) => ['install', '-g', `${PACKAGE_NAME}${target}`], label: 'bun' };
+  }
+  return {
+    cmd: IS_WINDOWS ? process.env.ComSpec || 'cmd.exe' : NPM_BIN,
+    args: (target) => (IS_WINDOWS
+      ? ['/d', '/s', '/c', NPM_BIN, 'install', '-g', `${PACKAGE_NAME}${target}`, '--no-audit', '--no-fund', '--prefer-online']
+      : ['install', '-g', `${PACKAGE_NAME}${target}`, '--no-audit', '--no-fund', '--prefer-online']),
+    label: 'npm',
+  };
+}
+
 interface UpdatePlan {
   cli: string | null;
   cliSource: 'npm' | 'github' | null;
@@ -214,6 +233,8 @@ async function runLatestUpdate(): Promise<void> {
   if (pinned) forwardedArgs.push('--host', pinned);
 
   const npmCommand = IS_WINDOWS ? process.env.ComSpec || 'cmd.exe' : 'npm';
+  // Refresh the copy that is actually running, or the old CLI stays on PATH and offers this again.
+  const manager = installerManager();
 
   // `--prefer-online` beats the local cache, so a stale @latest cannot pin down.
   const release = await latestRelease();
@@ -224,7 +245,7 @@ async function runLatestUpdate(): Promise<void> {
   const { stale, status } = planLines(plan);
   if (dryRun) {
     console.log(`tersio update (dry-run):\n  ${status.join('\n  ')}`);
-    sayTagged(`  [dry-run] would run: npm install -g ${PACKAGE_NAME}${target} --no-audit --no-fund --prefer-online`);
+    sayTagged(`  [dry-run] would run: ${manager.label} install -g ${PACKAGE_NAME}${target}`);
     sayTagged(`  [dry-run] would delegate: npm exec --yes --prefer-online --package=${PACKAGE_NAME}${target} -- tersio --apply-update ${forwardedArgs.join(' ')}`);
     return;
   }
@@ -255,22 +276,19 @@ async function runLatestUpdate(): Promise<void> {
     return;
   }
 
-  // The npx delegation below only refreshes the OMP-side files; the global CLI keeps its old version until npm -g runs.
-  const globalArgs = IS_WINDOWS
-    ? ['/d', '/s', '/c', 'npm', 'install', '-g', `${PACKAGE_NAME}${target}`, '--no-audit', '--no-fund', '--prefer-online']
-    : ['install', '-g', `${PACKAGE_NAME}${target}`, '--no-audit', '--no-fund', '--prefer-online'];
+  // The npx delegation below only refreshes the host-side files; the global CLI keeps its old version until this runs.
   try {
-    const globalResult = await execNetwork(`Updating global Tersio CLI to ${PACKAGE_NAME}${target}`, npmCommand, globalArgs, {
+    const globalResult = await execNetwork(`Updating global Tersio CLI to ${PACKAGE_NAME}${target}`, manager.cmd, manager.args(target), {
       timeout: 300000,
       maxBuffer: 10 * 1024 * 1024,
       windowsHide: true,
       shell: false,
     });
-    // npm -g echoes its own added/changed summary; only failures surface here.
+    // The package manager echoes its own added/changed summary; only failures surface here.
     if (globalResult.stderr) process.stderr.write(globalResult.stderr);
   } catch (e) {
     sayTagged(`  [warn] Global CLI update skipped: ${(e as Error).message}`);
-    sayTagged(`  [hint] Manual: npm install -g ${PACKAGE_NAME}${target} --no-audit --no-fund --prefer-online`);
+    sayTagged(`  [hint] Manual: ${manager.label} install -g ${PACKAGE_NAME}${target}`);
   }
 
   const npmArgs = [
