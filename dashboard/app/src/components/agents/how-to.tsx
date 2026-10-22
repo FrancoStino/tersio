@@ -1,16 +1,10 @@
 // How does it work?: the pipeline as one canvas, drawn the way a workflow tool lays it out.
 // Everything here mirrors docs/ARCHITECTURE.md: the hosts, the bridge, the block order, and the rtk loop.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card, Page, PageHeader } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
-import { HoverTip } from "@/components/common";
 import { fetchHealth } from "@/lib/data";
-import type { HealthReport } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { cn } from "cn";
 
@@ -233,11 +227,19 @@ const STEPS = [
   },
 ] as const;
 
+/** `/health` reports `omp/18.12.6` and `opencode/opencode v2.1.3`, so the node keeps only the version. */
+function versionOf(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const tail = raw.split("/").pop() ?? raw;
+  const version = tail.replace(/^(omp|pi|opencode)\s+/i, "").trim();
+  return version || null;
+}
+
 /** The three hosts, in the order the installer writes them. */
 const HOSTS = [
-  { id: "omp", label: "Oh My Pi", note: "CLI + plugin" },
-  { id: "pi", label: "pi", note: "CLI + plugin" },
-  { id: "opencode", label: "OpenCode", note: "plugin only" },
+  { id: "omp", label: "Oh My Pi" },
+  { id: "pi", label: "pi" },
+  { id: "opencode", label: "OpenCode" },
 ] as const;
 
 const MODES = [
@@ -273,7 +275,7 @@ function Port({ x, y }: { x: number; y: number }) {
   return <circle cx={x} cy={y} r={3} fill="var(--panel)" stroke="var(--dim)" strokeWidth={1.5} />;
 }
 
-function PipelineCanvas({ modes, hosts }: { modes: ModeState | null; hosts: Record<string, boolean> | null }) {
+function PipelineCanvas({ modes, hosts, versions }: { modes: ModeState | null; hosts: Record<string, boolean> | null; versions: Record<string, string | null> | null }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<{ key: keyof typeof LAYOUTS; scale: number }>({ key: "wide", scale: 1 });
 
@@ -320,15 +322,18 @@ function PipelineCanvas({ modes, hosts }: { modes: ModeState | null; hosts: Reco
     if (id === "hosts") {
       return (
         <>
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            {HOSTS.map((host) => (
-              <span key={host.id} className={cn("flex items-center gap-1.5", isOff(lit(host.id)) && "opacity-45")}>
-                <AgentLogo host={host.id} className="size-3.5 shrink-0" />
-                <span className="text-[12px] font-semibold">{host.label}</span>
+          {HOSTS.map((host) => {
+            const off = isOff(lit(host.id));
+            return (
+              <span key={host.id} className={cn("flex min-w-0 items-center gap-1.5", off && "opacity-45")}>
+                <AgentLogo host={host.id} className="size-3 shrink-0" />
+                <span className="min-w-0 truncate text-[11px] font-semibold">{host.label}</span>
+                <span className="mono ml-auto shrink-0 text-[9px] text-dim">
+                  {off ? "not installed" : versionOf(versions?.[host.id]) ?? "installed"}
+                </span>
               </span>
-            ))}
-          </span>
-          <span className="mono text-[10px] text-dim">same extensions in all three</span>
+            );
+          })}
         </>
       );
     }
@@ -342,7 +347,9 @@ function PipelineCanvas({ modes, hosts }: { modes: ModeState | null; hosts: Reco
             <AgentLogo host={host.id} className="size-4 shrink-0" />
             <span className="truncate text-[13px] font-semibold">{host.label}</span>
           </span>
-          <span className="mono text-[10px] text-dim">{off ? "not installed" : host.note}</span>
+          <span className="mono text-[10px] text-dim">
+            {off ? "not installed" : versionOf(versions?.[host.id]) ?? "installed"}
+          </span>
         </>
       );
     }
@@ -362,7 +369,7 @@ function PipelineCanvas({ modes, hosts }: { modes: ModeState | null; hosts: Reco
         <>
           <span className="text-[13px] font-semibold">Session start</span>
           <span className="mono text-[10px] leading-snug text-dim">
-            restore defaults, publish the shared bridge
+            restore defaults, share the mode state
           </span>
         </>
       );
@@ -518,145 +525,9 @@ function PipelineCanvas({ modes, hosts }: { modes: ModeState | null; hosts: Reco
   );
 }
 
-/** One host row: what is on the machine, where it lives, and where its docs are. */
-function AgentRow({
-  name,
-  version,
-  binPath,
-  dirPath,
-  bin,
-  docs,
-  available,
-  unavailable,
-  logo,
-}: {
-  name: string;
-  version: string | null;
-  binPath: string | null;
-  dirPath: string | null;
-  bin: string;
-  docs: string;
-  available: boolean;
-  unavailable: boolean;
-  logo: ReactNode;
-}) {
-  const status = unavailable ? "Unavailable" : available ? "Available" : "Not detected on PATH";
-  return (
-    <a
-      href={docs}
-      target="_blank"
-      rel="noreferrer"
-      className="group flex min-w-0 items-center gap-3 py-2.5 transition-colors hover:bg-track/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-      aria-label={`Open ${name}`}
-    >
-      <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-track p-1 text-ink transition-transform duration-500 ease-out group-hover:scale-105">
-        {logo}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <span className="truncate text-sm font-semibold">{name}</span>
-          {version && <span className="mono text-xs whitespace-nowrap text-dim">{version}</span>}
-        </div>
-        <div className="mt-0.5 min-w-0 text-xs text-dim">
-          {dirPath ? (
-            <HoverTip content={dirPath}>
-              <span className="mono block truncate">{dirPath}</span>
-            </HoverTip>
-          ) : binPath ? (
-            <HoverTip content={binPath}>
-              <span className="mono block truncate">{binPath}</span>
-            </HoverTip>
-          ) : available ? (
-            <span>Available as {bin} on PATH.</span>
-          ) : unavailable ? (
-            <span>Health information is unavailable.</span>
-          ) : (
-            <span>Not detected on PATH as {bin}.</span>
-          )}
-        </div>
-      </div>
-      <Badge
-        variant={available ? "secondary" : unavailable ? "destructive" : "outline"}
-        className="ml-auto shrink-0 gap-1.5 px-2 py-0.5 text-xs whitespace-nowrap"
-      >
-        <span className={cn("size-1.5 rounded-full", available ? "bg-accent" : unavailable ? "bg-danger" : "bg-track")} />
-        {status}
-      </Badge>
-      <Icon name="chevron-right" className="size-4 shrink-0 text-dim" />
-    </a>
-  );
-}
-
-/** What the agents are on this machine: the check the Settings dialog used to hold. */
-function AgentList() {
-  const [health, setHealth] = useState<HealthReport | null | undefined>(undefined);
-  const [refreshing, setRefreshing] = useState(false);
-  const [checkedAt, setCheckedAt] = useState<number | null>(null);
-  // The first read happens in the effect and only writes state once the answer arrives.
-  useEffect(() => {
-    let alive = true;
-    void fetchHealth().then((report) => {
-      if (!alive) return;
-      setHealth(report);
-      if (report) setCheckedAt(Date.now());
-    });
-    return () => { alive = false; };
-  }, []);
-  const refresh = useCallback(() => {
-    setRefreshing(true);
-    void fetchHealth().then((report) => {
-      setHealth(report);
-      if (report) setCheckedAt(Date.now());
-      setRefreshing(false);
-    });
-  }, []);
-
-  const unavailable = health === null;
-  const rows = [
-    { name: "Oh My Pi", version: health?.omp ?? null, binPath: health?.ompPath ?? null, dirPath: health?.ompDir ?? null, bin: "omp", docs: "https://omp.sh", available: !!health?.omp, logo: <AgentLogo host="omp" className="size-5" /> },
-    { name: "Pi", version: health?.pi ?? null, binPath: health?.piPath ?? null, dirPath: health?.piDir ?? null, bin: "pi", docs: "https://pi.dev", available: !!health?.pi, logo: <AgentLogo host="pi" className="size-5" /> },
-    { name: "OpenCode", version: health?.opencode ?? null, binPath: health?.opencodePath ?? null, dirPath: health?.opencodeDir ?? null, bin: "opencode", docs: "https://opencode.ai", available: !!health?.opencode, logo: <AgentLogo host="opencode" className="size-5" /> },
-  ];
-
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-3">
-        <p className="m-0 max-w-[60ch] text-[11px] leading-relaxed text-dim">
-          Manage the AI agent CLIs installed on this computer. The diagram above lights a host once Tersio is installed into it.
-        </p>
-        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={refreshing} aria-label="Refresh coding agent status">
-          {refreshing ? <Spinner /> : <Icon name="refresh-cw" />}
-          Refresh
-        </Button>
-      </div>
-      {health === undefined ? (
-        <div className="mt-2 flex items-center gap-4 border-t border-line py-4" role="status">
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-track">
-            <Spinner />
-          </span>
-          <div className="grid gap-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-48" />
-          </div>
-        </div>
-      ) : (
-        <div className="mt-2 divide-y divide-line border-t border-line">
-          {rows.map((row) => (
-            <AgentRow key={row.name} {...row} unavailable={unavailable} />
-          ))}
-        </div>
-      )}
-      {checkedAt && (
-        <p className="mt-2.5 text-[11px] text-dim" role="status">
-          Checked just now
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function HowToPage({ modes }: { modes: ModeState | null }) {
   const [hosts, setHosts] = useState<Record<string, boolean> | null>(null);
+  const [versions, setVersions] = useState<Record<string, string | null> | null>(null);
   useEffect(() => {
     // An exported file has no server, so a failed read leaves the hosts unknown and every node lit.
     fetch("/api/hosts")
@@ -665,6 +536,10 @@ export function HowToPage({ modes }: { modes: ModeState | null }) {
         if (rows) setHosts(Object.fromEntries(rows.map((row) => [row.id, row.installed])));
       })
       .catch(() => { /* keep them unknown */ });
+    void fetchHealth().then((report) => {
+      if (!report) return;
+      setVersions({ omp: versionOf(report.omp), pi: versionOf(report.pi), opencode: versionOf(report.opencode) });
+    });
   }, []);
 
   return (
@@ -679,11 +554,7 @@ export function HowToPage({ modes }: { modes: ModeState | null }) {
         icon="workflow"
         description="The host loads the extensions. Each mode appends one block to the prompt, then RTK rewrites and filters what the model runs. A dimmed node is off, or not installed."
       >
-        <PipelineCanvas modes={modes} hosts={hosts} />
-      </Card>
-
-      <Card title="Agents on this machine" icon="plug" description="The CLIs Tersio can install into, with the version and path each one reports.">
-        <AgentList />
+        <PipelineCanvas modes={modes} hosts={hosts} versions={versions} />
       </Card>
 
       <Card title="Start here" icon="list-ordered" description="Four steps from a fresh machine to a session that reports itself.">
