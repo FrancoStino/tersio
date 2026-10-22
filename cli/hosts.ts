@@ -141,6 +141,11 @@ export function hostHint(host: HostEntry): string {
   return host.installCmd;
 }
 
+/** The rows a host menu draws: the agent, its state, and what a run would touch. */
+export function hostOptions(hosts: HostEntry[]): Array<{ value: string; label: string; hint?: string }> {
+  return hosts.map((host) => ({ value: host.id, label: hostLabel(host), hint: hostHint(host) }));
+}
+
 // `--host omp|pi` from raw argv, undefined when absent; throws on an unknown value so the caller exits(1).
 export function parseHostArg(argv: string[]): HostId | undefined {
   const i = argv.indexOf('--host');

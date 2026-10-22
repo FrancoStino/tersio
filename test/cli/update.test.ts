@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -334,26 +334,35 @@ test("update dry-run previews the global CLI refresh without running npm -g", ()
 // A bun global install lives at ~/.bun/install/global; refreshing only the npm copy leaves the old CLI
 // on PATH, and the next run offers the same update again.
 test("update refreshes the manager that installed this copy", () => {
-  const home = process.env.HOME || "";
-  const bunSelf = path.join(home, ".bun", "install", "global", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
-  const npmSelf = path.join(home, ".nvm", "versions", "node", "v20", "lib", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
-
-  const bun = installerManager(bunSelf);
-  expect(bun.label, "a copy under ~/.bun refreshes through bun").toBe("bun");
-  expect(bun.args("@2.0.0")).toContain("@krtclcdy/tersio@2.0.0");
-
-  const npm = installerManager(npmSelf);
-  expect(npm.label, "a copy anywhere else refreshes through npm").toBe("npm");
-
-  // The bin is a symlink into the global tree, and that is the path the process sees.
-  const link = path.join(home, ".bun", "bin", "tersio");
-  mkdirSync(path.dirname(link), { recursive: true });
-  try { rmSync(link); } catch { /* first run */ }
+  // A temp home, with the installed copy really on disk: CI has no ~/.bun, and a dangling symlink
+  // made realpath fail there while a developer machine's real install made the same test pass.
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-manager-"));
   try {
-    symlinkSync(bunSelf, link);
-    expect(installerManager(link).label, "a symlinked bin resolves to its install").toBe("bun");
+    const bunSelf = path.join(home, ".bun", "install", "global", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
+    const npmSelf = path.join(home, ".nvm", "versions", "node", "v20", "lib", "node_modules", "@krtclcdy", "tersio", "dist", "tersio.js");
+    mkdirSync(path.dirname(bunSelf), { recursive: true });
+    writeFileSync(bunSelf, "// installed copy\n");
+
+    const bun = installerManager(bunSelf, home);
+    expect(bun.label, "a copy under ~/.bun refreshes through bun").toBe("bun");
+    expect(bun.args("@2.0.0")).toContain("@krtclcdy/tersio@2.0.0");
+
+    const npm = installerManager(npmSelf, home);
+    expect(npm.label, "a copy anywhere else refreshes through npm").toBe("npm");
+
+    // The bin is a symlink into the global tree, and that is the path the process sees.
+    const link = path.join(home, ".bun", "bin", "tersio");
+    mkdirSync(path.dirname(link), { recursive: true });
+    try {
+      symlinkSync(bunSelf, link);
+    } catch (e) {
+      // A Windows runner may not grant the symlink privilege; the path check above still covers the rule.
+      if ((e as NodeJS.ErrnoException).code === "EPERM") return;
+      throw e;
+    }
+    expect(installerManager(link, home).label, "a symlinked bin resolves to its install").toBe("bun");
   } finally {
-    rmSync(link, { force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -477,4 +486,99 @@ test("update pins the resolved version instead of trusting @latest", () => {
     rmSync(fakeBin, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// `tersio update` used to default to OMP and never ask, while the help said a terminal asks.
+// Piped stdin is a script: no prompt, and no --host, so the child keeps its own default.
+test("a piped update asks nothing and forwards no host", () => {
+  const fakeBin = mkdtempSync(path.join(os.tmpdir(), "tersio-update-nohost-"));
+  const npm = path.join(fakeBin, process.platform === "win32" ? "npm.cmd" : "npm");
+  try {
+    if (process.platform === "win32") writeFileSync(npm, "@echo off\r\necho fake-npm %*\r\n", "utf8");
+    else {
+      writeFileSync(npm, "#!/bin/sh\nprintf 'fake-npm %s\\n' \"$*\"\n", "utf8");
+      chmodSync(npm, 0o755);
+    }
+    const result = spawnSync(process.execPath, [installer, "update", "--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, ...deadRegistry, ...deadReleases, PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}` },
+      timeout: 15000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/Update which agent\?/);
+    expect(result.stdout).not.toMatch(/--host/);
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+  }
+});
+
+test("--host still pins the agent, and no prompt appears when stdin is a pipe", () => {
+  const result = spawnSync(process.execPath, [installer, "update", "--dry-run", "--host", "pi"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, ...deadRegistry, ...deadReleases },
+    timeout: 15000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).not.toMatch(/Update which agent\?/);
+  expect(result.stdout).toMatch(/--host pi/);
+});
+
+// The prompt is Clack's, so only a real terminal proves it appears. Select the second row (pi) with
+// an arrow key and Enter, then read what the delegated command was told.
+const PROMPT_PY = [
+  "import os, pty, select, fcntl, termios, struct, time, sys",
+  "argv = sys.argv[1:]",
+  "pid, fd = pty.fork()",
+  "if pid == 0:",
+  '    os.environ["TERM"] = "xterm-256color"',
+  "    os.execvp(argv[0], argv)",
+  "fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 140, 0, 0))",
+  "buf = b''",
+  "def pump(seconds):",
+  "    global buf",
+  "    end = time.time() + seconds",
+  "    while time.time() < end:",
+  "        r, _, _ = select.select([fd], [], [], 0.1)",
+  "        if not r: continue",
+  "        try: d = os.read(fd, 65536)",
+  "        except OSError: return False",
+  "        if not d: return False",
+  "        buf += d",
+  "    return True",
+  "pump(4)",
+  "os.write(fd, b'\\x1b[B')",
+  "time.sleep(0.4)",
+  "os.write(fd, b'\\r')",
+  "pump(6)",
+  "try: os.write(fd, b'\\x03')",
+  "except OSError: pass",
+  "sys.stdout.write(buf.decode('utf8', 'replace'))",
+].join("\n");
+
+describe.skipIf(process.platform === "win32")("the update host prompt", () => {
+  test("a terminal asks which agent, and the choice is forwarded", () => {
+    // An empty HOME: no agent has Tersio, so the menu opens on OMP and one Down lands on pi.
+    const home = mkdtempSync(path.join(os.tmpdir(), "tersio-update-prompt-"));
+    try {
+      const result = spawnSync("python3", ["-c", PROMPT_PY, process.execPath, installer, "update", "--dry-run"], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 30000,
+        env: { ...cliEnv(home), ...deadRegistry, ...deadReleases, TERM: "xterm-256color" },
+      });
+
+      expect(result.error, "python3 with pty is available").toBeUndefined();
+      const screen = result.stdout;
+      expect(screen, `prompt shown; screen:\n${screen}`).toMatch(/Update which agent\?/);
+      // The menu names the agents and their state, not just the ids.
+      expect(screen).toMatch(/Oh My Pi/);
+      expect(screen).toMatch(/--host pi/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 40000);
 });

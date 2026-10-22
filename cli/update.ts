@@ -3,11 +3,11 @@ import { promises as fs, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  BUN_BIN, BUN_BIN_DIR, IS_WINDOWS, NPM_BIN, OMP_PLUGINS_DIR,
+  BUN_BIN, HOME, IS_WINDOWS, NPM_BIN, OMP_PLUGINS_DIR,
   PACKAGE_BIN, PACKAGE_NAME, PACKAGE_VERSION,
-  args, dryRun, execP, parseJsonObject, verbose,
+  args, assumeYes, dryRun, execP, parseJsonObject, verbose,
 } from './common.ts';
-import { execNetwork, sayTagged } from './interactive.ts';
+import { askInteractiveChoice, closeRL, execNetwork, sayTagged, tty } from './interactive.ts';
 import { readTextIfExists, resolveRtkBinary, tersioDataPath } from '../extensions/shared/utils.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { refreshPrices } from '../extensions/shared/pricing.ts';
@@ -20,7 +20,7 @@ import {
   httpsGet, normalizeRtkVersion, sha256Hex,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease } from '../extensions/shared/utils.ts';
-import { parseHostArg } from './hosts.ts';
+import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 
 const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 /** How long one source gets before the check gives up on it. */
@@ -123,16 +123,22 @@ async function execInherit(cmd: string, args: string[]): Promise<void> {
   if (code !== 0) throw new Error(`${cmd} exited with code ${code}`);
 }
 
+/** The real path when the file exists, else the resolved one: both sides of the prefix test must agree on symlinks. */
+function realOrResolved(target: string): string {
+  const resolved = path.resolve(target);
+  try { return realpathSync(resolved); } catch { return resolved; }
+}
+
 /**
  * The package manager that installed the running CLI. `bun install -g` writes to `~/.bun`, npm to its
  * own prefix, and each keeps its own copy, so updating the wrong one leaves the old CLI in place and the
  * update prompt comes back on the next run.
  */
-export function installerManager(self = process.argv[1] ?? ''): { cmd: string; args: (target: string) => string[]; label: string } {
-  const bunRoot = path.resolve(path.join(BUN_BIN_DIR, '..', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/')));
+export function installerManager(self = process.argv[1] ?? '', home = HOME): { cmd: string; args: (target: string) => string[]; label: string } {
+  // `home` is a seam for tests: a runner has no installed copy, so the symlink there must be judged by the same rule.
+  const bunRoot = path.join(realOrResolved(home), '.bun', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/'));
   // The bin is a symlink into the global tree, so argv[1] is the link path; the target is what says who installed it.
-  let real = path.resolve(self);
-  try { real = realpathSync(real); } catch { /* not on disk: fall back to the resolved path */ }
+  const real = realOrResolved(self);
   if (real.startsWith(bunRoot)) {
     return { cmd: BUN_BIN, args: (target) => ['install', '-g', `${PACKAGE_NAME}${target}`], label: 'bun' };
   }
@@ -224,7 +230,6 @@ async function runLatestUpdate(): Promise<void> {
   const forwardedArgs = ['--yes'];
   if (dryRun) forwardedArgs.push('--dry-run');
   if (verbose) forwardedArgs.push('--verbose');
-  // A pinned host refreshes that host's tree; bare update keeps the OMP default.
   let pinned: string | undefined;
   try {
     pinned = parseHostArg(args);
@@ -232,6 +237,19 @@ async function runLatestUpdate(): Promise<void> {
     console.error(`[fail] ${(e as Error).message}`);
     process.exitCode = 1;
     return;
+  }
+  // A bare `tersio update` asks which agent to refresh: `--host` pins it, and --yes keeps the default for scripts.
+  if (!pinned && tty() && !assumeYes) {
+    const installed = detectHosts();
+    // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
+    const initial = installed.find((host) => host.installed)?.id ?? 'omp';
+    const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
+    if (choice.status !== 'selected') {
+      closeRL();
+      process.exitCode = 130;
+      return;
+    }
+    pinned = choice.value;
   }
   if (pinned) forwardedArgs.push('--host', pinned);
 
