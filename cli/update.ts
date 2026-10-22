@@ -1,5 +1,5 @@
 // cli/update.ts — update check, per-add-on plan, latest-installer run.
-import { promises as fs } from 'node:fs';
+import { promises as fs, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
@@ -128,9 +128,12 @@ async function execInherit(cmd: string, args: string[]): Promise<void> {
  * own prefix, and each keeps its own copy, so updating the wrong one leaves the old CLI in place and the
  * update prompt comes back on the next run.
  */
-export function installerManager(self = path.resolve(process.argv[1] ?? '')): { cmd: string; args: (target: string) => string[]; label: string } {
-  const bunRoot = path.join(BUN_BIN_DIR, '..', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/'));
-  if (self.startsWith(path.resolve(bunRoot))) {
+export function installerManager(self = process.argv[1] ?? ''): { cmd: string; args: (target: string) => string[]; label: string } {
+  const bunRoot = path.resolve(path.join(BUN_BIN_DIR, '..', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/')));
+  // The bin is a symlink into the global tree, so argv[1] is the link path; the target is what says who installed it.
+  let real = path.resolve(self);
+  try { real = realpathSync(real); } catch { /* not on disk: fall back to the resolved path */ }
+  if (real.startsWith(bunRoot)) {
     return { cmd: BUN_BIN, args: (target) => ['install', '-g', `${PACKAGE_NAME}${target}`], label: 'bun' };
   }
   return {

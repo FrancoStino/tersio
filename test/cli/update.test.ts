@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -344,6 +344,17 @@ test("update refreshes the manager that installed this copy", () => {
 
   const npm = installerManager(npmSelf);
   expect(npm.label, "a copy anywhere else refreshes through npm").toBe("npm");
+
+  // The bin is a symlink into the global tree, and that is the path the process sees.
+  const link = path.join(home, ".bun", "bin", "tersio");
+  mkdirSync(path.dirname(link), { recursive: true });
+  try { rmSync(link); } catch { /* first run */ }
+  try {
+    symlinkSync(bunSelf, link);
+    expect(installerManager(link).label, "a symlinked bin resolves to its install").toBe("bun");
+  } finally {
+    rmSync(link, { force: true });
+  }
 });
 
 test("update delegates to the latest package non-interactively", () => {
