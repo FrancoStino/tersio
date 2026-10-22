@@ -6,12 +6,14 @@ const BRIDGE_KEY = Symbol.for('tersio/combo-session-state');
 // A verbatim sentence from omp's subagent prompt, so it can drift; read from the installed omp binary on 2026-10-01.
 export const OMP_SUBAGENT_MARKER = 'Worker agent: delegated tasks.';
 
-// Every level above off turns pstack on with the other three; off is the one level without it.
-export const COMBO_LEVELS: Record<string, Readonly<ComboState>> = Object.freeze({
-  off: Object.freeze({ level: 'off', caveman: 'off', rtk: 'off', ponytail: 'off', pstack: 'off' }),
-  lite: Object.freeze({ level: 'lite', caveman: 'lite', rtk: 'on', ponytail: 'lite', pstack: 'on' }),
-  balanced: Object.freeze({ level: 'balanced', caveman: 'full', rtk: 'on', ponytail: 'full', pstack: 'on' }),
-  max: Object.freeze({ level: 'max', caveman: 'ultra', rtk: 'on', ponytail: 'ultra', pstack: 'on' }),
+/** The three modes a preset owns. pstack is opt-in, so a preset never turns it on or off. */
+type PresetModes = Readonly<Pick<ComboState, 'caveman' | 'rtk' | 'ponytail'>>;
+
+export const COMBO_LEVELS: Record<string, PresetModes> = Object.freeze({
+  off: Object.freeze({ caveman: 'off', rtk: 'off', ponytail: 'off' }),
+  lite: Object.freeze({ caveman: 'lite', rtk: 'on', ponytail: 'lite' }),
+  balanced: Object.freeze({ caveman: 'full', rtk: 'on', ponytail: 'full' }),
+  max: Object.freeze({ caveman: 'ultra', rtk: 'on', ponytail: 'ultra' }),
 });
 
 const MODE_VALUES: Record<string, Set<string>> = {
@@ -55,9 +57,10 @@ export function normalizeMode(name: ModeName, value: unknown): string | null {
 }
 
 export function deriveLevel(modes: Modes | null | undefined): ComboLevel {
+  // pstack is not part of a preset, so a level reads the three modes a preset owns and leaves pstack alone.
   for (const level of Object.keys(COMBO_LEVELS) as ComboLevel[]) {
     const preset = COMBO_LEVELS[level];
-    if (preset.caveman === modes?.caveman && preset.rtk === modes?.rtk && preset.ponytail === modes?.ponytail && preset.pstack === modes?.pstack) return level;
+    if (preset.caveman === modes?.caveman && preset.rtk === modes?.rtk && preset.ponytail === modes?.ponytail) return level;
   }
   return 'custom';
 }
@@ -83,7 +86,7 @@ function normalizedState(modes: Partial<Modes> | null | undefined, level: ComboL
 function bridge(): Bridge {
   const existing = (globalThis as Record<symbol, unknown>)[BRIDGE_KEY] as Bridge | undefined;
   if (existing?.state) return existing;
-  const initial = normalizedState((existing || COMBO_LEVELS.off) as Partial<Modes>);
+  const initial = normalizedState({ ...COMBO_LEVELS.off, pstack: 'off' });
   return ((globalThis as Record<symbol, unknown>)[BRIDGE_KEY] = { state: initial, listeners: new Map() });
 }
 
@@ -154,7 +157,8 @@ export function isComboPresetActive(): boolean {
 
 export function setSharedComboLevel(value: unknown): Readonly<ComboState> {
   const level = normalizeComboLevel(value) || 'off';
-  return publish(normalizedState(COMBO_LEVELS[level] as Partial<Modes>, level));
+  // A preset writes the three modes it owns and leaves pstack where the session already had it.
+  return publish(normalizedState({ ...COMBO_LEVELS[level], pstack: getSharedComboState().pstack }, level));
 }
 
 export function setSharedComboMode(name: ModeName, value: unknown): Readonly<ComboState> {
@@ -175,13 +179,14 @@ export function setSharedComboModes(modes: { caveman?: unknown; rtk?: unknown; p
 }
 
 export function reconcileSharedComboEntries(entries: SessionEntry[] | null | undefined): Readonly<ComboState> {
-  let modes: Modes = { ...COMBO_LEVELS.off };
+  let modes: Modes = { ...COMBO_LEVELS.off, pstack: 'off' };
   if (Array.isArray(entries)) {
     for (const entry of entries) {
       if (entry?.type !== 'custom') continue;
       if (entry.customType === 'combo-level') {
         const preset = normalizeComboLevel(entry?.data?.level);
-        if (preset) modes = { ...COMBO_LEVELS[preset] };
+        // A preset entry never names pstack, so it keeps the pstack the entries around it set.
+        if (preset) modes = { ...modes, ...COMBO_LEVELS[preset] };
         continue;
       }
       const name = MODE_ENTRY_TYPES[entry.customType ?? ''] ?? null;
@@ -191,7 +196,7 @@ export function reconcileSharedComboEntries(entries: SessionEntry[] | null | und
       if (mode) modes[name] = mode;
     }
   }
-  // The level reflects the final quartet, not write order, so a preset followed by the same values reconciles back.
+  // The level reflects the final three modes, not write order, so a preset followed by the same values reconciles back.
   return publish(normalizedState(modes));
 }
 
@@ -206,5 +211,6 @@ export function setSharedComboListener(key: string, listener: (state: Readonly<C
 }
 
 export function resetSharedComboState(): Readonly<ComboState> {
-  return setSharedComboLevel('off');
+  // A preset keeps pstack, but a reset clears the bridge, so it writes all four modes off.
+  return publish(normalizedState({ ...COMBO_LEVELS.off, pstack: 'off' }, 'off'));
 }

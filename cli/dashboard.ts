@@ -21,6 +21,7 @@ import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
+import { detectHosts } from './hosts.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
@@ -434,7 +435,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   const profile = await storedProfile();
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
-    // A preset level only: `custom` is what the four modes say, never a level to write.
+    // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
     Object.assign(profile, applyComboPreset(profile, level));
   }
@@ -627,6 +628,17 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       }
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+      return;
+    }
+    if (req.url === '/api/hosts' && req.method === 'GET') {
+      // What the guide draws as connected: the host directories an install writes, read from disk.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(detectHosts().map((host) => ({
+        id: host.id,
+        label: host.label,
+        installed: host.installed,
+        version: host.version,
+      }))));
       return;
     }
     if (req.url === '/settings' && req.method === 'GET') {

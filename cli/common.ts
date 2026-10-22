@@ -45,12 +45,12 @@ const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 
-// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all four modes.
-const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
-  off: { caveman: 'off', rtk: false, ponytail: 'off', pstack: 'off' },
-  lite: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'on' },
-  balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'on' },
-  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'on' },
+// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts: a preset owns three modes, and pstack stays opt-in.
+const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string }> = {
+  off: { caveman: 'off', rtk: false, ponytail: 'off' },
+  lite: { caveman: 'lite', rtk: true, ponytail: 'lite' },
+  balanced: { caveman: 'full', rtk: true, ponytail: 'full' },
+  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra' },
 };
 const COMBO_DEFAULTS = new Set(Object.keys(COMBO_PRESET_MODES));
 // The retired name for the lite preset, so a scripted `--combo-default medium` keeps working.
@@ -84,7 +84,9 @@ const showVersion = command === 'version' || args.includes('--version') || args.
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
 const applyUpdate = args.includes('--apply-update');
 const dryRun = args.includes('--dry-run');
-const yes = args.includes('--yes') || args.includes('-y') || install || update || applyUpdate;
+const assumeYes = args.includes('--yes') || args.includes('-y');
+// `yes` also quiets the commands that never prompt on their own; `assumeYes` is the operator saying so.
+const yes = assumeYes || install || update || applyUpdate;
 const verbose = args.includes('--verbose');
 // Off by default: an unverified RTK binary runs with the user's privileges.
 const allowUnverified = args.includes('--allow-unverified');
@@ -395,7 +397,7 @@ export {
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand,
   install, update, showVersion, showHelp, applyUpdate, args,
-  dryRun, yes, verbose, doctor, fix, uninstall, dashboard, upstream,
+  dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,

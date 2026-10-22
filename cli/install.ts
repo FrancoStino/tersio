@@ -33,7 +33,7 @@ import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings 
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
-import { detectHosts, hostHint, hostLabel, parseHostArg, piTersioSource } from './hosts.ts';
+import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 
 
@@ -521,13 +521,12 @@ async function resolveProfile(opts: { quiet?: boolean } = {}): Promise<Profile> 
 
   // Explicit flags always win over the Combo preset.
   if (comboDefaultFlag !== undefined) profile.comboDefault = comboDefaultFlag;
-  // A stored per-mode choice survives installs and updates; only a chosen preset rewrites it.
+  // A stored per-mode choice survives installs and updates; only a chosen preset rewrites it. pstack stays opt-in, so a preset never touches it.
   if (comboChosen) {
     const preset = COMBO_PRESET_MODES[profile.comboDefault] ?? COMBO_PRESET_MODES.off;
     profile.cavemanDefault = preset.caveman;
     profile.rtkDefault = preset.rtk;
     profile.ponytailDefault = preset.ponytail;
-    profile.pstackDefault = preset.pstack;
   }
   if (cavemanDefaultFlag !== undefined) profile.cavemanDefault = cavemanDefaultFlag;
   if (rtkDefaultFlag !== undefined) profile.rtkDefault = rtkDefaultFlag === 'on';
@@ -630,11 +629,7 @@ const SOON_HOSTS = [
 
 async function chooseHost(title: string, only?: HostId[]): Promise<HostId> {
   const hosts = detectHosts().filter((host) => !only || only.includes(host.id));
-  const options: Array<{ value: string; label: string; hint?: string; disabled?: boolean }> = hosts.map((host) => ({
-    value: host.id,
-    label: hostLabel(host),
-    hint: hostHint(host),
-  }));
+  const options: Array<{ value: string; label: string; hint?: string; disabled?: boolean }> = hostOptions(hosts);
   // A scoped menu (uninstall --host) lists only real hosts.
   if (!only) options.push(...SOON_HOSTS.map((h) => ({ ...h, disabled: true })));
   const choice = await askInteractiveChoice(title, options, targetHost);

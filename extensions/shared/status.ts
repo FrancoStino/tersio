@@ -14,7 +14,8 @@ export interface StatusState {
 export function formatStatus(state: StatusState): string {
   const { level, caveman, rtk, ponytail, pstack } = state;
   if (level === 'off' && caveman === 'off' && rtk === 'off' && ponytail === 'off' && pstack === 'off') return '🧩 COMBO OFF';
-  const label = level === 'custom' ? 'CUSTOM' : level.toUpperCase();
+  // A preset owns three modes, so pstack on its own is no preset: the line says CUSTOM rather than OFF.
+  const label = level === 'off' || level === 'custom' ? 'CUSTOM' : level.toUpperCase();
   return `🧩 COMBO ${label}: 🪨 caveman=${caveman.toUpperCase()} | 🗜️ rtk=${rtk.toUpperCase()} | 🧠 ponytail=${ponytail.toUpperCase()} | 🥔 pstack=${pstack.toUpperCase()}`;
 }
 
