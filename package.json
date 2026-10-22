@@ -36,6 +36,9 @@
       "./extensions/combo/index.ts",
       "./extensions/commands/index.ts",
       "./extensions/updater/index.ts"
+    ],
+    "skills": [
+      "./extensions/ponytail/skills"
     ]
   },
   "omp": {

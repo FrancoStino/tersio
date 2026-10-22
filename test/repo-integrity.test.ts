@@ -1,7 +1,7 @@
 // An import target must be git-tracked, not merely on disk, or a fresh checkout fails at `tsc`.
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,13 +91,22 @@ test("package exports a loadable opencode server entrypoint", () => {
 // `pi` manifest (prevents fallback to `extensions/*.ts` -> error "does not export a valid factory function")
 test("package declares a pi manifest that omits the OpenCode entry", () => {
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
-    pi?: { extensions?: string[] };
+    pi?: { extensions?: string[]; skills?: string[] };
   };
   const entries = pkg.pi?.extensions;
   expect(entries, "pi.extensions must exist so pi does not conventionally discover extensions/").toBeDefined();
   expect(entries, "the OpenCode entry must not be a pi extension").not.toContain("./extensions/server.ts");
   const missing = (entries as string[]).filter((e) => !existsSync(path.join(root, e.slice(2))));
   expect(missing, `declared pi extensions must exist:\n${missing.join("\n")}`).toEqual([]);
+  // Without a skills entry pi offers no skill bodies at all, so the Ponytail skills would ship unread.
+  const skills = pkg.pi?.skills;
+  expect(skills, "pi.skills must exist so the bundled skills reach a pi install").toBeDefined();
+  const skillDirs = (skills as string[]).flatMap((s) => {
+    const dir = path.join(root, s.slice(2));
+    if (!existsSync(dir)) return [dir];
+    return readdirSync(dir).filter((n) => existsSync(path.join(dir, n, "SKILL.md"))).map((n) => path.join(dir, n));
+  });
+  expect(skillDirs.length, "at least one skill body must resolve under pi.skills").toBeGreaterThan(0);
 });
 
 // Recharts animates in JS on mount, so a byte comparison of two captures drifts; the entrance stays off.
