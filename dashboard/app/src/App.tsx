@@ -24,6 +24,7 @@ import { TracesPage } from "./components/agents/traces";
 import { ToolsPage } from "./components/agents/tools";
 import { ProjectsPage } from "./components/agents/projects";
 import { UpstreamPage } from "./components/agents/upstream";
+import { HowToPage } from "./components/agents/how-to";
 import { SettingsDialog } from "@/components/dialogs";
 import { ShareDialog } from "@/components/agents/share-dialog";
 import { ToasterProvider } from "@/components/toaster";
@@ -138,7 +139,8 @@ function Dashboard() {
   const section = route === "upstream" && !dev ? "overview" : route;
   // The smallest view still answers "is there an agent database".
   // Upstream is not an agent view: the scorecard has its own store, and the hook keeps the shell uniform.
-  const view: AgentView = section === "upstream" ? "all" : section;
+  // Neither the scorecard nor the guide is an agent view; the hook keeps the shell uniform.
+  const view: AgentView = section === "upstream" || section === "how-to" ? "all" : section;
   // Only the request log pages through the range; every other view wants the newest rows.
   const [requestOffset, setRequestOffset] = useState(0);
   const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
@@ -168,7 +170,8 @@ function Dashboard() {
     if (section === "traces" && session) {
       return <SessionTrace key={session} sessionFile={session} money={money} onClose={() => setSession(null)} />;
     }
-    if (loading && !agent) return <PageSkeleton section={section} />;
+    // The guide reads no store, so it never waits on the snapshot behind the other pages.
+    if (loading && !agent && section !== "how-to") return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
       if (stale) {
@@ -225,6 +228,8 @@ function Dashboard() {
         return <ProjectsPage agent={agent} money={money} />;
       case "upstream":
         return <UpstreamPage />;
+      case "how-to":
+        return <HowToPage modes={modes} />;
       default:
         return null;
     }

@@ -58,7 +58,7 @@ export function ThemeToggle() {
 /** The five session-start mode fields the banner reads. */
 export interface ModeState {
   comboDefault: string;
-  /** The level the banner may claim: `custom` once the four modes stop matching the preset. */
+  /** The level the banner may claim: `custom` once the three modes stop matching the preset. */
   comboLevel: string;
   cavemanDefault: string;
   rtkDefault: boolean;

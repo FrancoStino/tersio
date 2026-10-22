@@ -17,165 +17,24 @@ import { ACCENTS, ACCENT_IDS, accentSwatch, type AccentId } from "@/lib/accent";
 import { FLAGS, FX_SNAPSHOT, relAge } from "@/lib/format";
 import {
   fetchDoctor,
-  fetchHealth,
   isFileExport,
   postDoctorFix,
   postDoctorSchedule,
   requestReload,
   snapshotVersion,
 } from "@/lib/data";
-import type { DoctorReport, HealthReport, UpdateSchedule } from "@/lib/data";
+import type { DoctorReport, UpdateSchedule } from "@/lib/data";
 import type { UpdateFeed } from "@/lib/update-watch";
 import { useToast } from "./toaster";
 import { cn } from "cn";
 import { HoverTip } from "./common";
 import { SocialLinks } from "./brand";
 import { Icon } from "./icon";
-import { AgentLogo } from "./agent-logos";
-import { UPCOMING_AGENTS } from "@/lib/agents";
 import { Card } from "./charts/stats";
 
-type Pane = "general" | "connection" | "data" | "diagnosis" | "about";
-
-interface AgentRowProps {
-  name: string;
-  version: string | null;
-  binPath: string | null;
-  dirPath: string | null;
-  bin: string;
-  docs: string;
-  available: boolean;
-  unavailable: boolean;
-  /** True for an agent Tersio does not install into yet: the row names the plan, not a status. */
-  soon?: boolean;
-  logo: ReactNode;
-}
-
-function AgentRow({ name, version, binPath, dirPath, bin, docs, available, unavailable, soon, logo }: AgentRowProps) {
-  const status = soon ? "Coming soon" : unavailable ? "Unavailable" : available ? "Available" : "Not detected on PATH";
-  return (
-    <a
-      href={docs}
-      target="_blank"
-      rel="noreferrer"
-      className="group flex min-w-0 items-center gap-3 py-3 transition-colors hover:bg-track/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-      aria-label={`Open ${name}`}
-    >
-      {/* text-ink keeps masked marks legible in both themes. */}
-      <span className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-track p-1 text-ink transition-transform duration-500 ease-out group-hover:scale-105">
-        {logo}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <span className="truncate text-sm font-semibold">{name}</span>
-          {version && <span className="mono text-xs whitespace-nowrap text-dim">{version}</span>}
-        </div>
-        <div className="mt-0.5 min-w-0 text-xs text-dim">
-          {/* PATH binary as secondary, config directory first when known. */}
-          {soon ? (
-            <span>Support is planned: Tersio does not install here yet.</span>
-          ) : dirPath ? (
-            <HoverTip content={dirPath}>
-              <span className="mono block truncate">{dirPath}</span>
-            </HoverTip>
-          ) : binPath ? (
-            <HoverTip content={binPath}>
-              <span className="mono block truncate">{binPath}</span>
-            </HoverTip>
-          ) : available ? (
-            <span>Available as {bin} on PATH.</span>
-          ) : unavailable ? (
-            <span>Health information is unavailable.</span>
-          ) : (
-            <span>Not detected on PATH as {bin}.</span>
-          )}
-        </div>
-      </div>
-      <Badge variant={available ? "secondary" : unavailable ? "destructive" : "outline"} className="ml-auto shrink-0 gap-1.5 px-2 py-0.5 text-xs whitespace-nowrap">
-        <span className={`size-1.5 rounded-full ${available ? "bg-accent" : unavailable ? "bg-danger" : "bg-track"}`} />
-        {status}
-      </Badge>
-      <Icon name="chevron-right" className="size-4 shrink-0 text-dim" />
-    </a>
-  );
-}
+type Pane = "general" | "data" | "diagnosis" | "about";
 
 // Share destinations live in lib/share.ts so the host guarantee is testable.
-
-function HealthPane() {
-  const [health, setHealth] = useState<HealthReport | null | undefined>(undefined);
-  const [refreshing, setRefreshing] = useState(false);
-  const [checkedAt, setCheckedAt] = useState<number | null>(null);
-  const load = useCallback(() => {
-    setRefreshing(true);
-    void fetchHealth().then((report) => {
-      setHealth(report);
-      if (report) setCheckedAt(Date.now());
-      setRefreshing(false);
-    });
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const unavailable = health === null;
-  // Absent hosts still show their binary name and lookup path.
-  const agents: AgentRowProps[] = [
-    { name: "Oh My Pi", version: health?.omp ?? null, binPath: health?.ompPath ?? null, dirPath: health?.ompDir ?? null, bin: "omp", docs: "https://omp.sh", available: !!health?.omp, unavailable, logo: <AgentLogo host="omp" className="size-5" /> },
-    { name: "Pi", version: health?.pi ?? null, binPath: health?.piPath ?? null, dirPath: health?.piDir ?? null, bin: "pi", docs: "https://pi.dev", available: !!health?.pi, unavailable, logo: <AgentLogo host="pi" className="size-5" /> },
-    { name: "OpenCode", version: health?.opencode ?? null, binPath: health?.opencodePath ?? null, dirPath: health?.opencodeDir ?? null, bin: "opencode", docs: "https://opencode.ai", available: !!health?.opencode, unavailable, logo: <AgentLogo host="opencode" className="size-5" /> },
-    // The unwired agents close the list, so the rows above stay the ones you can install into today.
-    ...UPCOMING_AGENTS.map((agent) => ({
-      name: agent.name,
-      version: null,
-      binPath: null,
-      dirPath: null,
-      bin: agent.bin,
-      docs: agent.docs,
-      available: false,
-      unavailable: false,
-      soon: true,
-      logo: <AgentLogo host={agent.id} className="size-5" />,
-    })),
-  ];
-
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
-        <div className="min-w-0">
-          <p className="m-0 text-[13px] font-semibold">Coding agents</p>
-          <p className="mt-0.5 mb-0 text-xs text-dim">Manage AI agent CLIs installed on this computer.</p>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={load} disabled={refreshing} aria-label="Refresh coding agent status">
-          {refreshing ? <Spinner /> : <Icon name="refresh-cw" />}
-          Refresh
-        </Button>
-      </div>
-      {health === undefined ? (
-        <div className="flex items-center gap-4 border-b border-line py-4" role="status">
-          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-track">
-            <Spinner />
-          </span>
-          <div className="grid gap-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-48" />
-          </div>
-        </div>
-      ) : (
-        <div className="divide-y divide-line">
-          {agents.map((agent) => (
-            <AgentRow key={agent.name} {...agent} />
-          ))}
-        </div>
-      )}
-      {checkedAt && (
-        <p className="mt-2.5 text-xs text-dim" role="status">
-          Checked just now
-        </p>
-      )}
-    </div>
-  );
-}
 
 interface DataFile {
   label: string;
@@ -718,7 +577,6 @@ function DoctorPane() {
 
 const PANES: Array<{ id: Pane; label: string; icon: string }> = [
   { id: "general", label: "General", icon: "settings" },
-  { id: "connection", label: "Connection", icon: "plug" },
   { id: "data", label: "Data", icon: "database" },
   { id: "diagnosis", label: "Diagnosis", icon: "stethoscope" },
   { id: "about", label: "About", icon: "info" },
@@ -726,7 +584,6 @@ const PANES: Array<{ id: Pane; label: string; icon: string }> = [
 
 const TITLES: Record<Pane, string> = {
   general: "Settings",
-  connection: "Connection",
   data: "Data",
   diagnosis: "Doctor",
   about: "About",
@@ -738,7 +595,6 @@ const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
   { pane: "general", label: "Accent color", terms: "general appearance accent color tint buttons links highlights palette emerald violet slate cyan rose amber orange charts background" },
   { pane: "general", label: "Currency", terms: "currency display cost usd euro" },
   { pane: "data", label: "Snapshots", terms: "data snapshot backup restore copy mirror ledger settings price cache schedule keep size" },
-  { pane: "connection", label: "Coding agents", terms: "connection provider coding agents agent oh my pi omp status path version refresh ready available" },
   { pane: "diagnosis", label: "Auto-check schedule", terms: "diagnosis system health auto-check schedule manual daily weekly monthly" },
   { pane: "diagnosis", label: "Scan", terms: "diagnosis scan check" },
   { pane: "diagnosis", label: "Fix issues", terms: "diagnosis repair fix issues" },
@@ -774,7 +630,7 @@ function HighlightMatch({ text, query, fullWhenAlias = false }: { text: string; 
 
 interface DefaultsPayload {
   comboDefault: string;
-  /** `custom` when the four modes no longer match the named preset. */
+  /** `custom` when the three modes no longer match the named preset. */
   comboLevel: string;
   cavemanDefault: string;
   rtkDefault: boolean;
@@ -787,7 +643,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     field: "comboDefault",
     label: "Combo preset",
     glyph: "🧩",
-    hint: "Sets caveman, RTK, Ponytail and pstack together.",
+    hint: "Sets caveman, RTK and Ponytail together. pstack is separate.",
     options: [
       { id: "off", label: "Off" },
       { id: "lite", label: "Lite" },
@@ -829,7 +685,7 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     field: "pstackDefault",
     label: "pstack",
     glyph: "🥔",
-    hint: "Rigor mode. The lite, balanced, and max presets turn it on.",
+    hint: "Rigor mode. Opt-in, so no preset turns it on or off.",
     options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
   },
 ];
@@ -864,8 +720,8 @@ function DefaultModes() {
       .then((r) => r.json())
       .then((d: { ok?: boolean; error?: string }) => {
         if (d?.ok) {
-          // One row writes more than its own field: a preset rewrites all four modes, and the
-          // combo row reads the level derived from them. Read the saved state back.
+          // One row writes more than its own field: a preset rewrites the three modes it owns, and
+          // the combo row reads the level derived from them. Read the saved state back.
           load();
           toast(`${row.label} saved`, `${id} applies to new sessions`, "check");
         } else {
@@ -883,10 +739,10 @@ function DefaultModes() {
         const value = row.field === "comboDefault"
           ? (current.comboLevel || current.comboDefault)
           : isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // A live preset writes all four modes, so they are inert. A custom mix is the operator's
-        // own, so those rows stay live and the preset row says so.
+        // A live preset writes the three modes it owns, so those rows are inert. A custom mix is the
+        // operator's own, so every row stays live. pstack is opt-in, so a preset never locks it.
         const presetOn = current.comboLevel !== "off" && current.comboLevel !== "custom";
-        const locked = !loaded || (presetOn && row.field !== "comboDefault");
+        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault");
         if (isRtk) {
           return (
             <div key={row.field} className="flex items-center justify-between gap-3">
@@ -1360,11 +1216,6 @@ export function SettingsDialog({
                     <p className="m-0 text-[11px] uppercase tracking-[0.14em] text-dim">Modes</p>
                     <DefaultModes />
                   </div>
-                </section>
-              )}
-              {pane === "connection" && (
-                <section aria-label="Connection">
-                  <HealthPane />
                 </section>
               )}
               {pane === "data" && (
