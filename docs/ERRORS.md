@@ -349,3 +349,21 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** The Sources page drew each agent from the provider mark catalog in `lib/marks`, with new `omp` and `pi` entries pointing at GitHub avatars. `can1357.png` is a photo of a person, and the pale `pi` mark vanished on the dark theme, so the user had to name the fix: the marks Settings already draws. `components/agent-logos.tsx` had carried `OmpLogo` (a masked inline PNG) and `PiLogo` (the pi.dev SVG) the whole time, and the added catalog entries became dead weight the moment the page used them.
 **Root cause:** The page's first draft reached for the catalog the Providers page uses, because host rows look like vendor rows. Searching by shape (`MarkGlyph`) found that catalog, never the sibling file that already answered the question.
 **Prevention rule:** Before drawing an agent mark in the dashboard, read `dashboard/app/src/components/agent-logos.tsx`; it owns the three hosts' marks and the settings list draws from it. An avatar served by a person or org page is not a brand mark.
+
+## 2026-10-23 — Host detection was derived three times, and one copy was wrong
+
+**What happened:** `extensions/shared/host.ts` decided the host in `adapterFor`, in `isPiHost`, and in `isOmpHost`. Only `adapterFor` read `hostId`; `isPiHost` tested `!pi.zod`, which is true on OpenCode, so it answered `pi` there. `rtk/filter.ts` reads that predicate to decide its audit row. The wrong branch was latent rather than live, because `extensions/server.ts` dispatches its own OpenCode hooks and never fires `tool_call`.
+**Root cause:** Three independent derivations of one fact. The predicates were written for two hosts, and adding the third updated only the adapter table.
+**Prevention rule:** Derive a host once, in one function, and have every predicate and adapter read that function. `test/extensions/session.test.ts` pins all three predicates against an explicit `hostId: 'opencode'`, including one carrying a zod stub.
+
+## 2026-10-23 — A host-specific event name was copied into every mode
+
+**What happened:** `caveman`, `pstack`, and `rtk` each registered the same five switch events, and `combo` held a sixth list. The pi `session_branch` skip lived inside the `onHostEvent` adapter, so the lists looked host-neutral while only one host honoured them.
+**Root cause:** The host difference was expressed as a filter inside one adapter method, so each caller still had to name every event.
+**Prevention rule:** A host difference belongs in the adapter as data, not as a filter the caller works around. `sessionChanges` per adapter names what each host emits, and a mode loops over `sessionChangeEvents(pi)`.
+
+## 2026-10-23 — A test passed only where tersio was installed under bun
+
+**What happened:** `test/cli/update.test.ts` symlinked a bin to `~/.bun/install/global/node_modules/@krtclcdy/tersio/dist/tersio.js` and expected the manager to read as bun. The target was never created, so on CI the symlink dangled, `realpathSync` threw, and the fallback resolved to the link path, which is not under `~/.bun`. Every CI platform failed. On a developer machine the real install made the same test pass. Windows failed earlier still: `process.env.HOME` is unset there, so the test built a relative path.
+**Root cause:** The test measured the developer's machine. It read the ambient HOME and assumed a path existed. The production function also compared a resolved path against an unresolved prefix, so a `HOME` that is itself a symlink (macOS `/tmp`, many CI homes) would have failed the same way.
+**Prevention rule:** A test that resolves a path must create every path it names, inside `mkdtemp`, and take the root as a parameter instead of reading the ambient HOME. Compare resolved paths on both sides of a prefix test. `HOME=$(mktemp -d) bun run test` reproduces the CI condition in one command; the 9 pyte layout tests skip unless pyte is installed system-wide.

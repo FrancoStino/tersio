@@ -1,6 +1,24 @@
+## Unreleased
+
+### Added
+ - A **How does it work?** page in the dashboard, first in the rail. It draws the pipeline as one canvas: the three agents loading the same extensions, the shared bridge at session start, the four prompt blocks in injection order, then the RTK rewrite and filter loop. The canvas scales to the card width and picks one of three layouts (wide, tablet, phone), so the diagram is drawn at every size instead of being replaced by a list. It reads this machine's settings and installed hosts, so a mode that is off or an agent that is not installed draws dimmed, and an active connector carries a travelling dash. It reads no usage store, so it paints before any snapshot arrives and costs no query.
+
+### Changed
+ - The Settings dialog no longer carries a Connection pane. The agent list with versions, paths, and the refresh action lives on the **How does it work?** page, which also draws the pipeline those agents feed.
+ - `tersio update` now asks which agent to refresh. It used to default to Oh My Pi and never ask, so an update on a pi or OpenCode machine refreshed the wrong tree while the help said a terminal asks. `--host` still pins the agent, and `--yes` keeps the old default for scripts.
+ - pstack is now opt-in, and no Combo preset turns it on. A preset sets Caveman, RTK, and Ponytail, and leaves pstack where you had it. This makes the preset cheaper for anyone who does not want the rigor mode, and lets you keep pstack on across a preset change. Set it on its own with `/pstack on` or the pstack row in Settings, which stays editable while a preset is active.
+ - One host derivation replaces three. `isPiHost` tested for a missing zod factory, which is also true on OpenCode, so it answered `pi` there while the adapter table answered `opencode`. Every predicate and adapter now reads the same function, and `isOpencodeHost` is new.
+ - Each host adapter now names the session events it emits, so a mode loops over that list instead of hard-coding five event names. OpenCode emits none of them, and its dead handler registrations are gone.
+
+### Fixed
+ - Update picks the right package manager when `HOME` itself is a symlink. The running copy was resolved but the `~/.bun` prefix was not, so a bun install under a symlinked home was refreshed through npm. Both sides now resolve the same way.
+ - Updating no longer loops when the command is a symlink. The bin at `~/.bun/bin/tersio` points into the bun global tree, and the update read the link's own path, so it still chose npm and the loop survived. It now resolves the link first.
+ - The RTK shell hook registers only on a host that emits `tool_call` and `tool_result`. OpenCode drives its own tool hooks, so the shared filter registered two handlers there that could never fire.
+
 ## v2.25.13
 
 ### Fixed
+ - Update picks the right package manager when `HOME` itself is a symlink. The running copy was resolved but the `~/.bun` prefix was not, so a bun install under a symlinked home was refreshed through npm. Both sides now resolve the same way.
  - Updating no longer loops when the command is a symlink. The bin at `~/.bun/bin/tersio` points into the bun global tree, and the update read the link's own path, so it still chose npm and the loop survived. It now resolves the link first.
 
 ## v2.25.12
