@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, normalizeInputCommand, normalizeMode, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
 import { dirname, join } from 'node:path';
-import { injectPromptText, onHostEvent, setExtensionLabel } from '../shared/host.ts';
+import { injectPromptText, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus, formatCavemanStatus } from '../shared/status.ts';
 import { readCavemanDefault } from '../shared/plugin-settings.ts';
 import { ruleDir } from '../shared/utils.ts';
@@ -103,21 +103,12 @@ export default function cavemanSessionExtension(pi: ExtensionApi): void {
     restoreMode(ctx);
   });
 
-  onHostEvent(pi, 'session_branch', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  pi.on('session_tree', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  onHostEvent(pi, 'session_switch', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  onHostEvent(pi, 'session_compact', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
+  // The host adapter names the switch events it emits, so this stays free of any one host's naming.
+  for (const event of sessionChangeEvents(pi)) {
+    onHostEvent(pi, event, async (_event, ctx) => {
+      restoreMode(ctx);
+    });
+  }
 
   pi.on('before_agent_start', async (event: SystemPromptEvent) => {
     const mode = isOmpSubagentPrompt(event.systemPrompt) ? getSharedComboState().caveman : currentMode;
