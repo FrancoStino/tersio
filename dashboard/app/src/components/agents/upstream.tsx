@@ -143,14 +143,15 @@ function ago(ms: number | null): string {
   return hours >= 1 ? `${hours}h ago` : "today";
 }
 
-/** Copies the value a new pin would name, so a review ends with a paste. */
+/** Copies the value a new pin would name, so a review ends with a paste. The value sits in the button, so the reader sees what a paste would set. */
 function CopyPin({ value, source }: { value: string; source: string }) {
   const toast = useToast();
   return (
     <Button
       size="xs"
       variant="outline"
-      className="mono h-5 gap-0.5 rounded-md px-1.5 text-[10px]"
+      className="mono h-6 max-w-[16rem] gap-1 rounded-md px-1.5 text-[10px]"
+      aria-label={`Copy pin ${value}`}
       title={`Copy ${value}`}
       onClick={() => {
         void navigator.clipboard.writeText(value).then(
@@ -159,9 +160,97 @@ function CopyPin({ value, source }: { value: string; source: string }) {
         );
       }}
     >
-      <Icon name="copy" className="size-2.5" />
-      <span>copy</span>
+      <Icon name="copy" className="size-3 shrink-0" />
+      <span className="truncate">copy {value.length > 12 ? value.slice(0, 7) : value}</span>
     </Button>
+  );
+}
+
+/** The three shapes of an upstream change, each with its own tone, so a scan reads the kind before the path. */
+const CHANGE_TONE: Record<string, string> = {
+  moved: "border-line text-dim",
+  new: "border-accent/40 text-accent",
+  gone: "border-[var(--danger-border)] text-[var(--danger)]",
+};
+
+/** One changed path: the kind on the left, the whole path on the right. Nothing truncates, because the tail is what differs. */
+function ChangeRow({ tag, path }: { tag: string; path: string }) {
+  return (
+    <li className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2 px-3 py-1">
+      <span className={`mono rounded border px-1 text-center text-[10px] ${CHANGE_TONE[tag] ?? "border-line text-dim"}`}>{tag}</span>
+      <span className="mono text-[11px] leading-snug text-dim [overflow-wrap:anywhere]">{path}</span>
+    </li>
+  );
+}
+
+/** The head of one moved file, folded so a long list stays a list. */
+function PreviewFold({ preview }: { preview: Preview }) {
+  return (
+    <details className="group border-t border-line first:border-t-0">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 hover:bg-track/40">
+        <Icon name="chevron-right" className="size-3 shrink-0 text-dim transition-transform group-open:rotate-90" />
+        <span className="mono min-w-0 flex-1 text-[11px] leading-snug text-dim [overflow-wrap:anywhere]">{preview.path}</span>
+        <span className="mono shrink-0 text-[10px] text-dim">{preview.lines} lines</span>
+      </summary>
+      <pre className="mono m-0 max-h-64 overflow-auto border-t border-line bg-track/40 px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {preview.head}
+      </pre>
+    </details>
+  );
+}
+
+/** One port's upstream drift: what moved, then the heads of the files behind it. */
+function MovedPort({ row }: { row: SourceRow }) {
+  const changes = [
+    ...row.moved.map((path) => ({ tag: "moved", path })),
+    ...row.appeared.map((path) => ({ tag: "new", path })),
+    ...row.gone.map((path) => ({ tag: "gone", path })),
+  ];
+  const counts = [
+    row.moved.length ? `${row.moved.length} moved` : "",
+    row.appeared.length ? `${row.appeared.length} new` : "",
+    row.gone.length ? `${row.gone.length} gone` : "",
+  ].filter(Boolean).join(" · ");
+  return (
+    <li className="overflow-hidden rounded-xl border border-line">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line px-3 py-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
+          <span aria-hidden="true">{GLYPH[row.source] ?? "•"}</span>
+          <span>{row.source}</span>
+        </span>
+        {counts ? <span className="mono text-[10px] text-dim">{counts}</span> : null}
+        <span className="ml-auto flex items-center gap-2">
+          {row.link ? (
+            <a
+              className="mono inline-flex items-center gap-1 text-[11px] text-dim underline underline-offset-2 hover:text-ink"
+              href={row.link}
+              target="_blank"
+              rel="noreferrer"
+            >
+              review the diff
+              <Icon name="arrow-up-right" className="size-3" />
+            </a>
+          ) : null}
+          {row.candidate ? <CopyPin value={row.candidate} source={row.source} /> : null}
+        </span>
+      </div>
+      {row.note ? <p className="m-0 px-3 py-2 text-[11px] leading-snug text-dim">{row.note}</p> : null}
+      {changes.length > 0 ? (
+        <ul className="m-0 grid max-h-60 list-none overflow-auto p-0 py-1">
+          {changes.map((change) => (
+            <ChangeRow key={`${change.tag}-${change.path}`} tag={change.tag} path={change.path} />
+          ))}
+        </ul>
+      ) : null}
+      {row.preview.length > 0 ? (
+        <div className="border-t border-line">
+          <p className="mono m-0 px-3 pt-2 pb-1 text-[10px] tracking-[0.14em] text-dim uppercase">Preview</p>
+          {row.preview.map((preview) => (
+            <PreviewFold key={preview.path} preview={preview} />
+          ))}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -454,34 +543,15 @@ export function UpstreamPage() {
           )}
 
           {moved.length > 0 && (
-            <Card title="Upstream moved" icon="git-branch" description="What upstream changed since the pin. Read the diff, then copy the new pin.">
-              <ul className="m-0 grid list-none gap-3 p-0">
+            <Card
+              title="Upstream moved"
+              icon="git-branch"
+              description="What upstream changed since the pin. Read the diff, then copy the new pin."
+              footer={<span className="mono text-[11px] text-dim">{moved.length} {moved.length === 1 ? "port has" : "ports have"} a newer upstream state</span>}
+            >
+              <ul className="m-0 grid list-none gap-2 p-0">
                 {moved.map((row) => (
-                  <li key={row.source} className="grid gap-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-[12px] font-semibold">{row.source}</span>
-                      {row.link ? (
-                        <a className="mono text-[11px] text-dim underline underline-offset-2" href={row.link} target="_blank" rel="noreferrer">
-                          review the diff
-                        </a>
-                      ) : null}
-                      {row.candidate ? <CopyPin value={row.candidate} source={row.source} /> : null}
-                    </span>
-                    {row.note ? <span className="text-[11px] text-dim">{row.note}</span> : null}
-                    <ul className="m-0 grid list-none gap-0.5 p-0">
-                      {[...row.moved.map((p) => `moved: ${p}`), ...row.appeared.map((p) => `new: ${p}`), ...row.gone.map((p) => `gone: ${p}`)].map((line) => (
-                        <li key={line} className="mono truncate text-[11px] text-dim">{line}</li>
-                      ))}
-                    </ul>
-                    {row.preview.map((preview) => (
-                      <pre
-                        key={preview.path}
-                        className="mono m-0 max-h-32 overflow-auto rounded-lg border border-line bg-track/40 p-3 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
-                      >
-                        {preview.head}
-                      </pre>
-                    ))}
-                  </li>
+                  <MovedPort key={row.source} row={row} />
                 ))}
               </ul>
             </Card>
@@ -493,7 +563,7 @@ export function UpstreamPage() {
                 {gaps.map(({ source, gap }) => (
                   <li key={`${source}-${gap}`} className="mono flex min-w-0 gap-2 text-[11px] text-dim">
                     <span className="shrink-0 font-semibold text-ink">{source}</span>
-                    <span className="truncate">{gap}</span>
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{gap}</span>
                   </li>
                 ))}
               </ul>
