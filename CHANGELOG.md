@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - A **How does it work?** page in the dashboard, first in the rail. It draws the pipeline as one canvas: the three agents loading the same extensions, the shared bridge at session start, the four prompt blocks in injection order, then the RTK rewrite and filter loop. The canvas scales to the card width and picks one of three layouts (wide, tablet, phone), so the diagram is drawn at every size instead of being replaced by a list. It reads this machine's settings and installed hosts, so a mode that is off or an agent that is not installed draws dimmed, and an active connector carries a travelling dash. It reads no usage store, so it paints before any snapshot arrives and costs no query.
+ - A **How does it work?** page in the dashboard, first in the rail. It draws the pipeline as one canvas: the three agents loading the same extensions, the shared bridge at session start, the four prompt blocks in injection order, then the RTK rewrite and filter loop. The canvas scales to the card width and picks one of three layouts (wide, tablet, phone), so the diagram is drawn at every size instead of being replaced by a list. It reads this machine's settings and installed hosts, so a mode that is off or an agent that is not installed draws dimmed, and an active connector carries a travelling dash. Clicking a node opens a panel with its role and the command that changes it, a mode switches from that panel, and the canvas pans and zooms. It reads no usage store, so it paints before any snapshot arrives and costs no query.
 
 ### Changed
  - The Settings dialog no longer carries a Connection pane. Each agent's CLI version now shows on its node in the pipeline, and no file path is drawn.

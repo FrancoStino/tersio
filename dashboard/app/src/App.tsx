@@ -229,7 +229,7 @@ function Dashboard() {
       case "upstream":
         return <UpstreamPage />;
       case "how-to":
-        return <HowToPage modes={modes} />;
+        return <HowToPage modes={modes} onModesChanged={reloadModes} />;
       default:
         return null;
     }
