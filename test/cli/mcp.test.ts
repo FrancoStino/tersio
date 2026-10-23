@@ -83,6 +83,9 @@ describe('the MCP HTTP endpoint', () => {
      expect(init.status).toBe(200);
      const answer = await init.json() as { result: { protocolVersion: string; serverInfo: { name: string } } };
      expect(answer.result.protocolVersion).toBe('2025-06-18');
+    const notified = await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, { Authorization: `Bearer ${token}` });
+    expect(notified.status).toBe(202);
+    expect(await notified.text()).toBe('');
      expect(answer.result.serverInfo.name).toBe('tersio');
      expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(405);
     } finally {

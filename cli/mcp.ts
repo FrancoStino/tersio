@@ -252,9 +252,15 @@ export function startMcpHttpServer(port: number): Promise<{ server: Server; url:
         queue = queue.then(() => handleMessage(message as WireMessage, send));
       }
       void queue.then(() => {
+        // A POST of only notifications wants no answer: the spec's 202, so a client never parses an empty 200 as JSON.
+        if (answers.length === 0) {
+          res.writeHead(202);
+          res.end();
+          return;
+        }
         const out = Array.isArray(payload) ? answers : answers[0];
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(out === undefined ? '' : JSON.stringify(out));
+        res.end(JSON.stringify(out));
       });
     });
   });
