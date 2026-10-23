@@ -13,17 +13,18 @@ import type { CurrencyCode } from './currency.ts';
 import {
   OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
 } from './common.ts';
-import { BACKUP_SCHEDULES, applyComboPreset, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
+import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
 import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
+import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
+import { findPackageRoot, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -164,6 +165,16 @@ interface HostJob {
 
 /** The last command run per host, so the guide can stop waiting the moment it exits. */
 const hostJobs = new Map<string, HostJob>();
+
+/** The favicon types the mark catalog uses, served as the type the bytes actually are. */
+const MARK_TYPES: Readonly<Record<string, string>> = {
+  svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon', webp: 'image/webp', jpg: 'image/jpeg', gif: 'image/gif', avif: 'image/avif',
+};
+const MARK_EXTS = Object.keys(MARK_TYPES);
+const MARK_EXT_OF_TYPE: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.entries(MARK_TYPES).map(([ext, type]) => [type, ext])),
+  'image/vnd.microsoft.icon': 'ico',
+};
 
 function spawnCli(command: 'install' | 'uninstall' | 'update', host: string): boolean {
   const entry = process.argv[1];
@@ -509,6 +520,17 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
     profile.devTools = body.devTools;
   }
+  if (body.accent !== undefined) {
+    const v = String(body.accent);
+    if (!ACCENT_DEFAULTS.has(v)) return { ok: false, error: 'unknown accent' };
+    profile.accent = v;
+    events.push(`Accent to ${v}`);
+  }
+  if (body.sidebarWidth !== undefined) {
+    if (typeof body.sidebarWidth !== 'number') return { ok: false, error: 'sidebarWidth must be a number' };
+    // A drag changes it often, so it is saved without an activity line.
+    profile.sidebarWidth = clampSidebarWidth(body.sidebarWidth);
+  }
   await writePluginSettings(profile, {});
   for (const title of events) recordActivity('mode', title, 'Applies to new sessions.');
   return {
@@ -521,6 +543,8 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       pstackDefault: profile.pstackDefault,
       backupSchedule: profile.backupSchedule,
       devTools: profile.devTools,
+      accent: profile.accent,
+      sidebarWidth: profile.sidebarWidth,
     },
   };
 }
@@ -673,6 +697,46 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
       return;
     }
+    if (req.url?.startsWith('/api/mark?') && req.method === 'GET') {
+      // Marks are CDN files. Fetch each once into ~/.tersio/marks, then serve the copy, so a reload
+      // never asks the network again and a CDN hiccup cannot blank a tile.
+      const slug = new URL(req.url, 'http://127.0.0.1').searchParams.get('slug') ?? '';
+      const remote = REMOTE_MARKS[slug];
+      if (!remote) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('unknown mark');
+        return;
+      }
+      // The catalog mixes favicon types, and a host may answer a `.png` URL with WebP; label every file by its bytes.
+      const cacheDir = path.join(tersioHome(), 'marks');
+      const cacheControl = 'public, max-age=604800, stale-while-revalidate=86400';
+      for (const tryExt of MARK_EXTS) {
+        try {
+          // Read before writing: a miss must reach the fetch below with headers unsent.
+          const bytes = await fs.readFile(path.join(cacheDir, `${slug}.${tryExt}`));
+          res.writeHead(200, { 'Content-Type': MARK_TYPES[tryExt], 'Cache-Control': cacheControl });
+          res.end(bytes);
+          return;
+        } catch { /* not cached under this type */ }
+      }
+      try {
+        const answer = await fetch(remote, { signal: AbortSignal.timeout(5000) });
+        if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+        const type = answer.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+        const saveExt = MARK_EXT_OF_TYPE[type];
+        // A redirect to a login or error page must not cache HTML as a mark.
+        if (!saveExt) throw new Error(`unexpected type ${type}`);
+        const bytes = Buffer.from(await answer.arrayBuffer());
+        await fs.mkdir(cacheDir, { recursive: true });
+        await fs.writeFile(path.join(cacheDir, `${slug}.${saveExt}`), bytes);
+        res.writeHead(200, { 'Content-Type': type, 'Cache-Control': cacheControl });
+        res.end(bytes);
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+        res.end('mark unavailable');
+      }
+      return;
+    }
     if (req.url?.startsWith('/api/logs') && req.method === 'GET') {
       const raw = new URL(req.url, 'http://127.0.0.1').searchParams.get('limit');
       const limit = Math.min(2000, Math.max(1, Number.parseInt(raw ?? '', 10) || 400));
@@ -734,6 +798,8 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           devTools: profile.devTools,
+          accent: profile.accent,
+          sidebarWidth: profile.sidebarWidth,
           currency: options.currency,
         }));
       });

@@ -236,7 +236,10 @@ const PROVIDER_MARKS: Record<string, string> = {
   openrouter: "openrouter",
   opencode: "opencode",
   "opencode-zen": "opencode",
+  "opencode-zen-free": "opencode",
   "opencode-go": "opencode",
+  // Stealth's own mark ships inline, so it needs no CDN entry, only this mapping.
+  stealth: "stealth",
   commandcode: "commandcode",
   kilo: "kilo",
   magpie: "magpie",
