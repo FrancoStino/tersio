@@ -1,10 +1,9 @@
-// How does it work?: the pipeline as one canvas, drawn the way a workflow tool lays it out.
-// Everything here mirrors docs/ARCHITECTURE.md: the hosts, the bridge, the block order, and the rtk loop.
+// Quick start: the pipeline as one canvas, drawn the way a workflow tool lays it out.
+// Everything here mirrors docs/ARCHITECTURE.md: the hosts, the block order, and the turn it produces.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card, Page, PageHeader } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
-import { Button } from "@/components/ui/button";
 import { fetchHealth } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
@@ -12,6 +11,8 @@ import { cn } from "cn";
 
 type Point = readonly [number, number];
 type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "rtk" | "ponytail";
+
+type HostAction = "install" | "uninstall" | "update";
 
 /** `null` means this page has no answer yet: an exported file reads no settings, so it draws every node as lit. */
 type Lit = boolean | null;
@@ -37,15 +38,12 @@ type NodeId =
   | "host-pi"
   | "host-opencode"
   | "combo"
-  | "session"
   | "caveman"
   | "pstack"
   | "rtk"
   | "ponytail"
-  | "model"
-  | "tool"
-  | "filtered"
-  | "reply";
+  | "output"
+  | "add-host";
 
 interface Caption {
   x: number;
@@ -59,8 +57,6 @@ interface Layout {
   h: number;
   nodes: ReadonlyArray<readonly [NodeId, Box]>;
   links: readonly Link[];
-  /** The filtered output's route back to the model, drawn dashed. */
-  loop: ReadonlyArray<Point>;
   captions: readonly Caption[];
 }
 
@@ -68,116 +64,107 @@ interface Layout {
  * Three design spaces, one per class of screen. Each is drawn at its own coordinates and then scaled to
  * the card width, so the diagram is the same diagram at every size and never clips a node.
  */
-const LAYOUTS: Record<"wide" | "medium" | "narrow", Layout> = {
-  wide: {
-    w: 1040,
-    h: 430,
-    nodes: [
-      ["host-omp", { x: 20, y: 64, w: 190, h: 58 }],
-      ["host-pi", { x: 20, y: 138, w: 190, h: 58 }],
-      ["host-opencode", { x: 20, y: 212, w: 190, h: 58 }],
-      ["combo", { x: 246, y: 24, w: 200, h: 58 }],
-      ["session", { x: 246, y: 196, w: 200, h: 76 }],
-      ["caveman", { x: 486, y: 40, w: 230, h: 62 }],
-      ["pstack", { x: 486, y: 122, w: 230, h: 62 }],
-      ["rtk", { x: 486, y: 204, w: 230, h: 62 }],
-      ["ponytail", { x: 486, y: 286, w: 230, h: 62 }],
-      ["model", { x: 752, y: 40, w: 240, h: 66 }],
-      ["tool", { x: 752, y: 140, w: 240, h: 66 }],
-      ["filtered", { x: 752, y: 240, w: 240, h: 66 }],
-      ["reply", { x: 752, y: 340, w: 240, h: 66 }],
-    ],
-    links: [
-      { p: [[210, 93], [230, 93]], k: "omp" },
-      { p: [[210, 167], [230, 167]], k: "pi" },
-      { p: [[210, 241], [230, 241]], k: "opencode" },
-      { p: [[230, 93], [230, 241]] },
-      { p: [[230, 241], [246, 241]], arrow: true },
-      { p: [[346, 82], [346, 196]], k: "combo", arrow: true },
-      { p: [[446, 234], [466, 234], [466, 71], [486, 71]], k: "caveman", arrow: true },
-      { p: [[601, 102], [601, 122]], k: "pstack", arrow: true },
-      { p: [[601, 184], [601, 204]], k: "rtk", arrow: true },
-      { p: [[601, 266], [601, 286]], k: "ponytail", arrow: true },
-      { p: [[716, 317], [734, 317], [734, 73], [752, 73]], k: "ponytail", arrow: true },
-      { p: [[872, 106], [872, 140]], k: "rtk", arrow: true },
-      { p: [[872, 206], [872, 240]], k: "rtk", arrow: true },
-      { p: [[872, 306], [872, 340]], k: "rtk", arrow: true },
-    ],
-    loop: [[992, 273], [1016, 273], [1016, 73], [992, 73]],
-    captions: [
-      { x: 486, y: 372, text: "appended in this order, one block each" },
-      { x: 1008, y: 28, text: "returns to the model", anchor: "end" },
-    ],
-  },
+type LayoutKey = "wide" | "medium" | "narrow";
+
+/** The wide canvas scales from this width; its height is fixed at 400. */
+const WIDE_W = 1040;
+
+const LAYOUTS: Record<Exclude<LayoutKey, "wide">, Layout> = {
   medium: {
     w: 780,
     h: 360,
     nodes: [
       ["hosts", { x: 16, y: 16, w: 212, h: 72 }],
-      ["session", { x: 16, y: 104, w: 212, h: 70 }],
-      ["combo", { x: 16, y: 188, w: 212, h: 56 }],
+      ["combo", { x: 16, y: 104, w: 212, h: 56 }],
+      ["add-host", { x: 16, y: 176, w: 212, h: 44 }],
       ["caveman", { x: 252, y: 16, w: 230, h: 64 }],
       ["pstack", { x: 252, y: 96, w: 230, h: 64 }],
       ["rtk", { x: 252, y: 176, w: 230, h: 64 }],
       ["ponytail", { x: 252, y: 256, w: 230, h: 64 }],
-      ["model", { x: 520, y: 16, w: 240, h: 64 }],
-      ["tool", { x: 520, y: 96, w: 240, h: 64 }],
-      ["filtered", { x: 520, y: 176, w: 240, h: 64 }],
-      ["reply", { x: 520, y: 256, w: 240, h: 64 }],
+      ["output", { x: 520, y: 136, w: 240, h: 64 }],
     ],
     links: [
-      { p: [[122, 88], [122, 104]], k: "hosts", arrow: true },
-      { p: [[122, 188], [122, 174]], k: "combo", arrow: true },
-      { p: [[228, 139], [240, 139], [240, 48], [252, 48]], k: "caveman", arrow: true },
+      { p: [[228, 52], [240, 52]], k: "hosts" },
+      { p: [[228, 132], [240, 132], [240, 52]], k: "combo" },
+      { p: [[240, 52], [252, 52]], k: "caveman", arrow: true },
       { p: [[367, 80], [367, 96]], k: "pstack", arrow: true },
       { p: [[367, 160], [367, 176]], k: "rtk", arrow: true },
       { p: [[367, 240], [367, 256]], k: "ponytail", arrow: true },
-      { p: [[482, 288], [500, 288], [500, 48], [520, 48]], k: "ponytail", arrow: true },
-      { p: [[640, 80], [640, 96]], k: "rtk", arrow: true },
-      { p: [[640, 160], [640, 176]], k: "rtk", arrow: true },
-      { p: [[640, 240], [640, 256]], k: "rtk", arrow: true },
+      { p: [[482, 288], [500, 288], [500, 168], [520, 168]], k: "ponytail", arrow: true },
     ],
-    loop: [[760, 208], [774, 208], [774, 48], [760, 48]],
-    captions: [
-      { x: 252, y: 344, text: "appended in this order, one block each" },
-      { x: 760, y: 344, text: "returns to the model", anchor: "end" },
-    ],
+    captions: [{ x: 252, y: 344, text: "appended in this order, one block each" }],
   },
   narrow: {
     w: 440,
-    h: 810,
+    h: 640,
     nodes: [
-      ["hosts", { x: 20, y: 16, w: 190, h: 88 }],
-      ["combo", { x: 230, y: 16, w: 190, h: 56 }],
-      ["session", { x: 20, y: 116, w: 400, h: 64 }],
-      ["caveman", { x: 20, y: 196, w: 400, h: 64 }],
-      ["pstack", { x: 20, y: 268, w: 400, h: 64 }],
-      ["rtk", { x: 20, y: 340, w: 400, h: 64 }],
-      ["ponytail", { x: 20, y: 412, w: 400, h: 64 }],
-      ["model", { x: 20, y: 500, w: 400, h: 64 }],
-      ["tool", { x: 20, y: 572, w: 400, h: 64 }],
-      ["filtered", { x: 20, y: 644, w: 400, h: 64 }],
-      ["reply", { x: 20, y: 716, w: 400, h: 64 }],
+      ["hosts", { x: 20, y: 48, w: 190, h: 88 }],
+      ["add-host", { x: 20, y: 144, w: 190, h: 44 }],
+      ["combo", { x: 230, y: 64, w: 190, h: 56 }],
+      ["caveman", { x: 20, y: 204, w: 400, h: 64 }],
+      ["pstack", { x: 20, y: 276, w: 400, h: 64 }],
+      ["rtk", { x: 20, y: 348, w: 400, h: 64 }],
+      ["ponytail", { x: 20, y: 420, w: 400, h: 64 }],
+      ["output", { x: 20, y: 512, w: 400, h: 64 }],
     ],
     links: [
-      { p: [[115, 104], [115, 116]], k: "hosts", arrow: true },
-      { p: [[325, 72], [325, 116]], k: "combo", arrow: true },
-      { p: [[220, 180], [220, 196]], k: "caveman", arrow: true },
-      { p: [[220, 260], [220, 268]], k: "pstack", arrow: true },
-      { p: [[220, 332], [220, 340]], k: "rtk", arrow: true },
-      { p: [[220, 404], [220, 412]], k: "ponytail", arrow: true },
-      { p: [[220, 476], [220, 500]], k: "ponytail", arrow: true },
-      { p: [[220, 564], [220, 572]], k: "rtk", arrow: true },
-      { p: [[220, 636], [220, 644]], k: "rtk", arrow: true },
-      { p: [[220, 708], [220, 716]], k: "rtk", arrow: true },
+      { p: [[210, 92], [220, 92], [220, 204]], k: "hosts", arrow: true },
+      { p: [[325, 120], [325, 204]], k: "combo", arrow: true },
+      { p: [[220, 268], [220, 276]], k: "pstack", arrow: true },
+      { p: [[220, 340], [220, 348]], k: "rtk", arrow: true },
+      { p: [[220, 412], [220, 420]], k: "ponytail", arrow: true },
+      { p: [[220, 484], [220, 512]], k: "ponytail", arrow: true },
     ],
-    loop: [[420, 676], [432, 676], [432, 532], [420, 532]],
-    captions: [
-      { x: 20, y: 190, text: "one block each, in order" },
-      { x: 420, y: 800, text: "returns to the model", anchor: "end" },
-    ],
+    captions: [{ x: 20, y: 620, text: "appended in this order, one block each" }],
   },
 };
+
+/**
+ * The wide canvas, drawn around the agents this machine actually has. An agent that is not installed
+ * leaves the column, and the preset and the bus re-centre on what remains.
+ */
+function wideLayout(hosts: ReadonlyArray<{ id: string }>): Layout {
+  const top = 48;
+  const step = 68; // 56 tall, 12 apart
+  const bottom = hosts.length ? top + (hosts.length - 1) * step + 56 : 0;
+  const addY = hosts.length ? bottom + 12 : top;
+  const center = hosts.length ? (top + bottom) / 2 : addY + 22;
+  const nodes: Array<readonly [NodeId, Box]> = hosts.map((host, i) => [
+    `host-${host.id}` as NodeId,
+    { x: 20, y: top + i * step, w: 190, h: 56 },
+  ]);
+  nodes.push(
+    ["add-host", { x: 20, y: addY, w: 190, h: 44 }],
+    ["combo", { x: 246, y: center - 29, w: 200, h: 58 }],
+    ["caveman", { x: 486, y: 24, w: 230, h: 62 }],
+    ["pstack", { x: 486, y: 102, w: 230, h: 62 }],
+    ["rtk", { x: 486, y: 180, w: 230, h: 62 }],
+    ["ponytail", { x: 486, y: 258, w: 230, h: 62 }],
+    ["output", { x: 752, y: 140, w: 240, h: 64 }],
+  );
+  const links: Link[] = hosts.map((host, i) => ({
+    p: [[210, top + i * step + 28], [230, top + i * step + 28]],
+    k: host.id as EdgeKey,
+  }));
+  if (hosts.length > 1) links.push({ p: [[230, top + 28], [230, bottom - 28]] });
+  links.push(
+    // One bus collects the agents and the preset, then enters the block column once.
+    { p: [[230, center], [466, center]] },
+    { p: [[346, center - 29], [346, center]], k: "combo" },
+    { p: [[466, center], [466, 55], [486, 55]], k: "caveman", arrow: true },
+    { p: [[601, 86], [601, 102]], k: "pstack", arrow: true },
+    { p: [[601, 164], [601, 180]], k: "rtk", arrow: true },
+    { p: [[601, 242], [601, 258]], k: "ponytail", arrow: true },
+    { p: [[716, 289], [734, 289], [734, 172], [752, 172]], k: "ponytail", arrow: true },
+  );
+  return {
+    w: WIDE_W,
+    h: 400,
+    nodes,
+    links,
+    captions: [{ x: 486, y: 344, text: "appended in this order, one block each" }],
+  };
+}
 
 /** An orthogonal route through these points, with every corner rounded by `radius`. */
 function ortho(points: ReadonlyArray<Point>, radius = 8): string {
@@ -229,19 +216,35 @@ const MODES = [
 ] as const;
 
 const TURN = [
-  { id: "model", icon: "sparkles", title: "Model turn", note: "one block per mode in context" },
-  { id: "tool", icon: "terminal", title: "Tool call", note: "RTK rewrites it before it runs", offNote: "runs unchanged", rtk: true },
-  { id: "filtered", icon: "filter", title: "Filtered output", note: "signal kept, noise dropped", offNote: "no filter applied", rtk: true },
-  { id: "reply", icon: "message-square", title: "Reply", note: "caveman voice, ponytail size" },
+  { id: "output", icon: "arrow-right", title: "Output", note: "the turn's result" },
 ] as const;
 
-/** The nodes a click can switch, and the values a switch writes. */
-const TOGGLE: Partial<Record<NodeId, { field: string; onValue: string | boolean; offValue: string | boolean }>> = {
-  combo: { field: "comboDefault", onValue: "lite", offValue: "off" },
-  caveman: { field: "cavemanDefault", onValue: "lite", offValue: "off" },
-  pstack: { field: "pstackDefault", onValue: "on", offValue: "off" },
-  rtk: { field: "rtkDefault", onValue: true, offValue: false },
-  ponytail: { field: "ponytailDefault", onValue: "lite", offValue: "off" },
+/** The nodes a click can set, the field each writes, and the levels that field takes. */
+const PICKER: Partial<Record<NodeId, { field: string; options: ReadonlyArray<{ id: string; label: string }> }>> = {
+  combo: {
+    field: "comboDefault",
+    options: [
+      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
+      { id: "balanced", label: "Balanced" }, { id: "max", label: "Max" },
+    ],
+  },
+  caveman: {
+    field: "cavemanDefault",
+    options: [
+      { id: "off", label: "Off" }, { id: "lite", label: "Lite" }, { id: "full", label: "Full" },
+      { id: "ultra", label: "Ultra" }, { id: "megacave-lite", label: "Megacave lite" },
+      { id: "megacave-full", label: "Megacave full" }, { id: "megacave-ultra", label: "Megacave ultra" },
+    ],
+  },
+  rtk: { field: "rtkDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
+  ponytail: {
+    field: "ponytailDefault",
+    options: [
+      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
+      { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
+    ],
+  },
+  pstack: { field: "pstackDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
 };
 
 /** What the detail panel says about a node. */
@@ -251,15 +254,12 @@ const ABOUT: Record<NodeId, string> = {
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
   "host-opencode": "OpenCode loads the tree as one plugin, registered in opencode.json.",
   combo: "One preset for caveman, RTK, and Ponytail. pstack keeps its own switch.",
-  session: "A session start restores the saved defaults, then shares that state with every mode, so nothing needs a reload.",
   caveman: "Voice. Terse replies; code, commands, paths, and errors stay exact.",
   pstack: "Approach. Picks the playbook, the checks, and the design.",
   rtk: "Tooling. Rewrites a shell command and condenses its output before the model sees it.",
   ponytail: "Size. Caps the diff at the smallest complete change.",
-  model: "The turn itself, with one block per active mode in context.",
-  tool: "A tool call leaves the model. RTK rewrites it first when RTK is on.",
-  filtered: "The result the model reads: signal kept, noise dropped.",
-  reply: "What comes back, in caveman's voice at ponytail's size.",
+  output: "One turn, start to finish: the prompt blocks go in, the model runs, and the reply comes back.",
+  "add-host": "Tersio installs one extension tree per agent. Pick an agent to add it.",
 };
 
 const STEPS = [
@@ -295,6 +295,7 @@ function NodeButton({
   off,
   selected,
   accent,
+  dashed,
   label,
   onSelect,
   onHover,
@@ -304,11 +305,23 @@ function NodeButton({
   off?: boolean;
   selected: boolean;
   accent?: boolean;
+  dashed?: boolean;
   label: string;
   onSelect: () => void;
   onHover: (on: boolean) => void;
   children: React.ReactNode;
 }) {
+  // A mode switch or a finished install changes the label; that change gets one soft ring.
+  const [pulse, setPulse] = useState<string | null>(null);
+  const previous = useRef(label);
+  useEffect(() => {
+    if (previous.current === label) return;
+    previous.current = label;
+    setPulse(label);
+    const timer = window.setTimeout(() => setPulse(null), 600);
+    return () => window.clearTimeout(timer);
+  }, [label]);
+
   return (
     <button
       type="button"
@@ -321,11 +334,37 @@ function NodeButton({
       onBlur={() => onHover(false)}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       className={cn(
-        "absolute flex cursor-pointer flex-col justify-center gap-0.5 overflow-hidden rounded-xl border border-line bg-panel px-3 py-2 text-left transition-[opacity,border-color,box-shadow] duration-200 outline-none",
+        "howto-node absolute flex cursor-pointer flex-col justify-center gap-0.5 overflow-hidden rounded-xl border border-line bg-panel px-3 py-2 text-left outline-none",
         "hover:border-accent/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40",
-        off && "border-dashed opacity-45",
+        dashed && "items-center border-2 border-dashed bg-panel text-dim hover:border-accent/50 hover:text-ink",
+        off && "border-2 border-dashed opacity-55",
         accent && "border-accent/40",
         selected && "border-accent ring-2 ring-accent/30",
+      )}
+    >
+      {pulse ? <span key={pulse} aria-hidden="true" className="howto-pulse pointer-events-none absolute inset-0 rounded-xl ring-2 ring-accent/50" /> : null}
+      {children}
+    </button>
+  );
+}
+
+/** One small action in the node menu: a level, a host command, or an install. */
+function MenuAction({ onClick, disabled, danger, children }: {
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "mono cursor-pointer rounded-md border px-1.5 py-1 text-[10px] transition-colors disabled:cursor-default disabled:opacity-40",
+        danger
+          ? "border-destructive/50 text-destructive hover:bg-destructive/10"
+          : "border-line text-dim hover:border-accent/50 hover:text-ink",
       )}
     >
       {children}
@@ -333,30 +372,29 @@ function NodeButton({
   );
 }
 
-function Port({ x, y }: { x: number; y: number }) {
-  return <circle cx={x} cy={y} r={3} fill="var(--panel)" stroke="var(--dim)" strokeWidth={1.5} />;
-}
-
 function PipelineCanvas({
   modes,
   hostState,
-  onToggle,
+  onSet,
+  onHostAction,
   busy,
 }: {
   modes: ModeState | null;
   hostState: HostState;
-  onToggle: (node: NodeId, nextOn: boolean) => void;
+  onSet: (node: NodeId, field: string, value: string | boolean) => void;
+  onHostAction: (node: NodeId, action: HostAction) => void;
   busy: NodeId | null;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<{ key: keyof typeof LAYOUTS; fit: number }>({ key: "wide", fit: 1 });
+  const [view, setView] = useState<{ key: LayoutKey; fit: number }>({ key: "wide", fit: 1 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selected, setSelected] = useState<NodeId | null>(null);
+  const [confirming, setConfirming] = useState<NodeId | null>(null);
   const [panning, setPanning] = useState(false);
   const [hovered, setHovered] = useState<NodeId | null>(null);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-  const lastKey = useRef<keyof typeof LAYOUTS>("wide");
+  const lastKey = useRef<LayoutKey>("wide");
 
   // Pick the design space that suits the width, then stretch it to fill. A layout change is a new
   // canvas, so the pan and zoom start over with it.
@@ -366,13 +404,13 @@ function PipelineCanvas({
     const measure = (): void => {
       const width = el.clientWidth;
       if (width <= 0) return;
-      const key: keyof typeof LAYOUTS = width < 560 ? "narrow" : width < 900 ? "medium" : "wide";
+      const key: LayoutKey = width < 560 ? "narrow" : width < 900 ? "medium" : "wide";
       if (key !== lastKey.current) {
         lastKey.current = key;
         setZoom(1);
         setPan({ x: 0, y: 0 });
       }
-      setView({ key, fit: width / LAYOUTS[key].w });
+      setView({ key, fit: width / (key === "wide" ? WIDE_W : LAYOUTS[key].w) });
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -380,8 +418,6 @@ function PipelineCanvas({
     return () => observer.disconnect();
   }, []);
 
-  const layout = LAYOUTS[view.key];
-  const scale = view.fit * zoom;
   const lit = (key: EdgeKey): Lit => {
     if (key === "hosts") {
       const installed = Object.values(hostState.installed);
@@ -398,22 +434,21 @@ function PipelineCanvas({
     if (key === "ponytail") return modes.ponytailDefault !== "off";
     return modes.pstackDefault !== "off";
   };
-  const rtkOff = isOff(lit("rtk"));
-  const cavemanOff = isOff(lit("caveman"));
-  const ponytailOff = isOff(lit("ponytail"));
-  const replyNote = cavemanOff && ponytailOff
-    ? "plain reply"
-    : cavemanOff
-      ? "ponytail size"
-      : ponytailOff
-        ? "caveman voice"
-        : "caveman voice, ponytail size";
+  // An unknown host stays on the canvas: an exported file reads no host list.
+  const shownHosts = HOSTS.filter((host) => hostState.installed[host.id] !== false);
+  const missingHosts = HOSTS.filter((host) => isOff(lit(host.id)));
+  const layoutKey = view.key;
+  const base = layoutKey === "wide" ? wideLayout(shownHosts) : LAYOUTS[layoutKey];
+  // Nothing left to install, so the dashed slot goes with it.
+  const layout: Layout = missingHosts.length === 0
+    ? { ...base, nodes: base.nodes.filter(([id]) => id !== "add-host") }
+    : base;
+  const scale = view.fit * zoom;
 
   const isNodeOff = (id: NodeId): boolean => {
     if (id === "hosts") return hostState.installed && !Object.values(hostState.installed).some(Boolean);
     if (id.startsWith("host-")) return isOff(lit(id.slice(5) as EdgeKey));
     if (id === "combo" || id === "caveman" || id === "pstack" || id === "rtk" || id === "ponytail") return isOff(lit(id));
-    if (id === "tool" || id === "filtered") return rtkOff;
     return false;
   };
 
@@ -434,7 +469,8 @@ function PipelineCanvas({
     if (id === "hosts") {
       return (
         <>
-          {HOSTS.map((host) => {
+          {shownHosts.length === 0 ? <span className="mono text-[10px] text-dim">no agent yet</span> : null}
+          {shownHosts.map((host) => {
             const off = isOff(lit(host.id));
             return (
               <span key={host.id} className={cn("flex min-w-0 items-center gap-1.5", off && "opacity-45")}>
@@ -476,14 +512,6 @@ function PipelineCanvas({
         </>
       );
     }
-    if (id === "session") {
-      return (
-        <>
-          <span className="text-[13px] font-semibold">Session start</span>
-          <span className="mono text-[10px] leading-snug text-dim">restore defaults, share the mode state</span>
-        </>
-      );
-    }
     const mode = MODES.find((m) => m.key === id);
     if (mode) {
       const off = isOff(lit(mode.key));
@@ -507,16 +535,19 @@ function PipelineCanvas({
         </>
       );
     }
-    const step = TURN.find((t) => t.id === id) ?? TURN[0];
-    const off = "rtk" in step && rtkOff;
+    if (id === "add-host") {
+      return (
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-dim">
+          <Icon name="plus" className="size-3.5 shrink-0" /> Add agent
+        </span>
+      );
+    }
     return (
       <>
         <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-          <Icon name={step.icon} className="size-3.5 shrink-0 text-dim" /> {step.title}
+          <Icon name="arrow-right" className="size-3.5 shrink-0 text-dim" /> Output
         </span>
-        <span className="mono truncate text-[10px] text-dim">
-          {step.id === "reply" ? replyNote : off && "offNote" in step ? step.offNote : step.note}
-        </span>
+        <span className="mono truncate text-[10px] text-dim">the turn's result</span>
       </>
     );
   };
@@ -525,7 +556,7 @@ function PipelineCanvas({
     if (id === "hosts") return "Agents";
     if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
     if (id === "combo") return "Combo preset";
-    if (id === "session") return "Session start";
+    if (id === "add-host") return "Add agent";
     const mode = MODES.find((m) => m.key === id);
     if (mode) return mode.name;
     return TURN.find((t) => t.id === id)?.title ?? id;
@@ -541,7 +572,6 @@ function PipelineCanvas({
       const count = Object.values(hostState.installed).filter(Boolean).length;
       return { label: `${count} of ${HOSTS.length} installed`, on: count > 0 };
     }
-    if (id === "session") return { label: "always on", on: true };
     if (id === "combo") {
       const on = lit("combo");
       return { label: isOff(on) ? "off" : modes?.comboLevel || modes?.comboDefault || "on", on };
@@ -559,36 +589,71 @@ function PipelineCanvas({
       const on = lit("rtk");
       return { label: isOff(on) ? "off" : "on", on };
     }
-    const off = (id === "tool" || id === "filtered") && rtkOff;
-    return { label: off ? "off" : "on", on: !off };
+    if (id === "add-host") return { label: "", on: null };
+    return { label: "on", on: true };
   };
 
   const selectedState = selected ? stateOf(selected) : null;
-  const spec = selected ? TOGGLE[selected] : undefined;
-  const nextOn = selectedState?.on === false;
-  const nextValue = spec ? (nextOn ? spec.onValue : spec.offValue) : null;
-  // A boolean switch reads as on or off in the command, the way /rtk takes it.
-  const commandValue = typeof nextValue === "boolean" ? (nextValue ? "on" : "off") : nextValue;
-  const nextCommand = selected && spec ? `/${selected} ${commandValue}` : null;
+  const MENU_W = 264;
+  const MENU_H = 200;
+  const viewportW = layout.w * view.fit;
+  const viewportH = layout.h * view.fit;
+  const selectedBox = selected ? layout.nodes.find(([id]) => id === selected)?.[1] ?? null : null;
+  const hostId = selected?.startsWith("host-") ? selected.slice("host-".length) : null;
+  const hostInstalled = hostId !== null && !isOff(lit(hostId as EdgeKey));
+  // The menu hangs off the node in screen space, so it keeps its type size at any zoom.
+  const menu = selectedBox
+    ? {
+      left: Math.min(Math.max(8, selectedBox.x * scale + pan.x), Math.max(8, viewportW - MENU_W - 8)),
+      top: (selectedBox.y + selectedBox.h) * scale + pan.y + MENU_H <= viewportH
+        ? (selectedBox.y + selectedBox.h) * scale + pan.y + 8
+        : Math.max(8, selectedBox.y * scale + pan.y - MENU_H - 8),
+    }
+    : null;
+  const picker = selected ? PICKER[selected] : undefined;
+  const currentValue = (id: NodeId): string | null => {
+    if (!modes) return null;
+    if (id === "combo") return modes.comboLevel || modes.comboDefault;
+    if (id === "caveman") return modes.cavemanDefault;
+    if (id === "ponytail") return modes.ponytailDefault;
+    if (id === "pstack") return modes.pstackDefault;
+    if (id === "rtk") return modes.rtkDefault ? "on" : "off";
+    return null;
+  };
+  const current = selected ? currentValue(selected) : null;
+  // `custom` is what the three modes say, so it matches no preset button and names no command.
+  const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
+
+  useEffect(() => {
+    if (!selected) return;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selected]);
 
   const zoomBy = (factor: number): void => {
     setZoom((z) => Math.min(2.4, Math.max(0.6, Number((z * factor).toFixed(2)))));
   };
 
   return (
-    <div>
+    <div className="relative">
       <div
         ref={boxRef}
         role="group"
         aria-label="Pipeline canvas"
         className={cn(
-          "relative overflow-hidden rounded-lg border border-line",
+          // A drag pans the canvas; it never selects a label or a file path on the way.
+          "relative touch-none overflow-hidden rounded-lg border border-line select-none",
           "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
         )}
         style={{ height: layout.h * view.fit, cursor: panning ? "grabbing" : "grab" }}
         onPointerDown={(event) => {
           const target = event.target as HTMLElement;
-          if (event.pointerType !== "mouse" || target.closest("button")) return;
+          if (target.closest("button")) return;
+          setSelected(null);
+          if (event.pointerType !== "mouse") return;
           drag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
           setPanning(true);
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -614,6 +679,7 @@ function PipelineCanvas({
           setZoom(next);
         }}
         onPointerLeave={() => { drag.current = null; setPanning(false); }}
+        onDragStart={(event) => event.preventDefault()}
       >
         <div
           className="absolute origin-top-left"
@@ -649,39 +715,28 @@ function PipelineCanvas({
                   <path
                     key={ortho(link.p)}
                     d={ortho(link.p)}
+                    className="howto-link"
                     stroke="var(--line)"
                     strokeWidth={1.5}
-                    strokeOpacity={dim ? 0.18 : off ? 0.3 : 1}
+                    strokeOpacity={dim ? 0.4 : off ? 0.45 : 1}
                     markerEnd={link.arrow && !off && !dim ? "url(#howto-arrow)" : undefined}
                   />
                 );
               })}
               {layout.links
                 .filter((link) => !(link.k && isOff(lit(link.k))))
-                .filter((link) => focus === null || touches(link.p, focus))
                 .map((link) => (
                   <path
                     key={`flow-${ortho(link.p)}`}
                     d={ortho(link.p)}
-                    className="flow-line"
+                    className="flow-line howto-link"
                     stroke="var(--accent)"
                     strokeWidth={1.5}
-                    strokeOpacity={0.75}
+                    // A focused node keeps its own dashes bright; the rest stay readable, just quiet.
+                    strokeOpacity={focus === null || touches(link.p, focus) ? 0.75 : 0.3}
                   />
                 ))}
-              <path
-                d={ortho(layout.loop)}
-                stroke="var(--accent)"
-                strokeWidth={1.5}
-                strokeDasharray="4 4"
-                strokeOpacity={rtkOff ? 0.3 : focus !== null && !touches(layout.loop, focus) ? 0.18 : 1}
-                markerEnd={rtkOff ? undefined : "url(#howto-arrow)"}
-                className={rtkOff ? undefined : "flow-loop"}
-              />
-              {layout.links.map((link) => link.p[0]).map(([x, y]) => (
-                <Port key={`${x}-${y}`} x={x} y={y} />
-              ))}
-            </g>
+</g>
             {layout.captions.map((caption) => (
               <text
                 key={caption.text}
@@ -705,9 +760,9 @@ function PipelineCanvas({
                 box={box}
                 off={isNodeOff(id)}
                 selected={selected === id}
-                accent={id === "reply" && !(cavemanOff && ponytailOff)}
-                label={`${titleOf(id)}, ${state.label}`}
-                onSelect={() => setSelected((current) => (current === id ? null : id))}
+                dashed={id === "add-host"}
+                label={`${titleOf(id)}, ${state.label}`.replace(/, $/, "")}
+                onSelect={() => { setSelected((open) => (open === id ? null : id)); setConfirming(null); }}
                 onHover={(on) => setHovered(on ? id : null)}
               >
                 {body(id)}
@@ -747,35 +802,102 @@ function PipelineCanvas({
         </div>
       </div>
 
-      <div className="mt-2 min-h-[74px] rounded-xl border border-line px-3 py-2.5">
-        {selected && selectedState ? (
-          <div className="grid gap-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[13px] font-semibold">{titleOf(selected)}</span>
+      {selected && selectedState && menu ? (
+        <div
+          role="dialog"
+          aria-label={`${titleOf(selected)} options`}
+          style={{ left: menu.left, top: menu.top, width: MENU_W }}
+          className="absolute z-20 grid gap-1.5 rounded-xl border border-line bg-panel p-2.5 shadow-lg"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold">{titleOf(selected)}</span>
+            {selectedState.label ? (
               <span className="mono rounded border border-line px-1 text-[9px] text-dim">{selectedState.label}</span>
-              {spec ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  className="ml-auto h-6 px-2 text-[11px]"
-                  disabled={busy !== null}
-                  onClick={() => onToggle(selected, nextOn)}
-                >
-                  {busy === selected ? "Saving" : nextOn ? "Turn on" : "Turn off"}
-                </Button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              aria-label="Close options"
+              className="ml-auto grid size-5 cursor-pointer place-items-center rounded text-dim hover:bg-track hover:text-ink"
+            >
+              <Icon name="x" className="size-3" />
+            </button>
+          </div>
+          <p className="m-0 text-[10px] leading-relaxed text-dim">{ABOUT[selected]}</p>
+          {busy === selected ? <p className="mono m-0 text-[10px] text-accent">Working</p> : null}
+          {hostId ? (
+            <div className="flex flex-wrap items-center gap-1">
+              {hostInstalled ? (
+                <MenuAction disabled={busy !== null} onClick={() => onHostAction(selected, "update")}>Update</MenuAction>
+              ) : (
+                <MenuAction disabled={busy !== null} onClick={() => onHostAction(selected, "install")}>Install</MenuAction>
+              )}
+              {hostInstalled ? (
+                confirming === selected ? (
+                  <MenuAction danger disabled={busy !== null} onClick={() => onHostAction(selected, "uninstall")}>Confirm uninstall</MenuAction>
+                ) : (
+                  <MenuAction disabled={busy !== null} onClick={() => setConfirming(selected)}>Uninstall</MenuAction>
+                )
               ) : null}
             </div>
-            <p className="m-0 text-[11px] leading-relaxed text-dim">{ABOUT[selected]}</p>
-            {nextCommand ? <code className="mono w-fit rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">{nextCommand}</code> : null}
-          </div>
-        ) : (
-          <p className="m-0 text-[11px] leading-relaxed text-dim">
-            Click a node to inspect it. Drag to pan, and use the controls to zoom.
-          </p>
-        )}
-      </div>
+          ) : null}
+          {selected === "add-host" ? (
+            <div className="grid gap-1">
+              {missingHosts.map((host) => (
+                <div key={host.id} className="flex items-center gap-2">
+                  <AgentLogo host={host.id} className="size-3.5 shrink-0" />
+                  <span className="truncate text-[11px]">{host.label}</span>
+                  <span className="ml-auto">
+                    <MenuAction disabled={busy !== null} onClick={() => onHostAction(`host-${host.id}`, "install")}>
+                      Install
+                    </MenuAction>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {picker ? (
+            <>
+              <div className="grid grid-cols-2 gap-1">
+                {picker.options.map((option) => {
+                  const active = current === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={active}
+                      disabled={busy !== null}
+                      onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id)}
+                      className={cn(
+                        "mono cursor-pointer rounded-md border px-1.5 py-1 text-[10px] transition-colors",
+                        active ? "border-accent bg-accent-soft text-ink" : "border-line text-dim hover:border-accent/50 hover:text-ink",
+                        busy !== null && "opacity-50",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {picked ? (
+                <code className="mono w-fit rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="mono m-0 mt-2 text-[10px] text-dim">
+        Click a node for its options. Drag to pan, and use the controls to zoom.
+      </p>
     </div>
   );
+}
+
+/** An exported file has no server, so a failed read leaves the hosts unknown and every node lit. */
+function readHosts(): Promise<Array<{ id: string; installed: boolean }> | null> {
+  return fetch("/api/hosts")
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
 }
 
 export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; onModesChanged: () => void }) {
@@ -784,13 +906,9 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   const [busy, setBusy] = useState<NodeId | null>(null);
 
   useEffect(() => {
-    // An exported file has no server, so a failed read leaves the hosts unknown and every node lit.
-    fetch("/api/hosts")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((rows: Array<{ id: string; installed: boolean }> | null) => {
-        if (rows) setHostState((s) => ({ ...s, installed: Object.fromEntries(rows.map((row) => [row.id, row.installed])) }));
-      })
-      .catch(() => { /* keep them unknown */ });
+    void readHosts().then((rows) => {
+      if (rows) setHostState((s) => ({ ...s, installed: Object.fromEntries(rows.map((row) => [row.id, row.installed])) }));
+    });
     void fetchHealth().then((report) => {
       if (!report) return;
       setHostState((s) => ({
@@ -800,19 +918,17 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     });
   }, []);
 
-  const toggle = (node: NodeId, nextOn: boolean): void => {
-    const spec = TOGGLE[node];
-    if (!spec) return;
+  const save = (node: NodeId, field: string, value: string | boolean): void => {
     setBusy(node);
     void fetch("/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [spec.field]: nextOn ? spec.onValue : spec.offValue }),
+      body: JSON.stringify({ [field]: value }),
     })
       .then((r) => r.json())
       .then((d: { ok?: boolean; error?: string } | null) => {
         if (d?.ok) {
-          toast(`${node} ${nextOn ? "on" : "off"}`, "Applies to new sessions.", "check");
+          toast(`${node} ${typeof value === "boolean" ? (value ? "on" : "off") : value}`, "Applies to new sessions.", "check");
           onModesChanged();
         } else {
           toast("Could not save", d?.error ?? "The server refused the change.", "circle-alert");
@@ -822,19 +938,72 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
       .finally(() => setBusy(null));
   };
 
+  // The CLI runs install, uninstall, and update in its own process, so the page asks the server
+  // whether that child is still running instead of guessing from the tree on disk.
+  const hostAction = (node: NodeId, action: HostAction): void => {
+    const host = node.slice("host-".length);
+    setBusy(node);
+    void fetch("/api/hosts/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host, action }),
+    })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; error?: string } | null) => {
+        if (!d?.ok) {
+          toast(`Could not ${action} ${host}`, d?.error ?? "The server refused the request.", "circle-alert");
+          setBusy(null);
+          return;
+        }
+        toast(`${host}: ${action} started`, "It runs in the background.", "check");
+        const started = Date.now();
+        const timer = window.setInterval(() => {
+          void fetch("/api/hosts/action")
+            .then((r) => (r.ok ? r.json() : null))
+            .then((jobs: Array<{ host: string; action: string; code: number | null }> | null) => {
+              const job = jobs?.find((entry) => entry.host === host && entry.action === action && entry.code !== null);
+              // A child that never reports back still has to hand the menu back.
+              if (!job && Date.now() - started < 120_000) return;
+              window.clearInterval(timer);
+              setBusy(null);
+              void readHosts().then((rows) => {
+                if (rows) setHostState((s) => ({ ...s, installed: Object.fromEntries(rows.map((row) => [row.id, row.installed])) }));
+              });
+              void fetchHealth().then((report) => {
+                if (!report) return;
+                const version = versionOf(report[host as "omp" | "pi" | "opencode"]);
+                if (version) setHostState((s) => ({ ...s, versions: { ...s.versions, [host]: version } }));
+              });
+              if (job?.code === 0) {
+                toast(`${host}: ${action} done`, "The agent list is up to date.", "check");
+              } else if (job) {
+                toast(`${host}: ${action} failed`, `The command exited with code ${job.code}.`, "circle-alert");
+              } else {
+                toast(`${host}: ${action} is still running`, "Reload the page in a moment to see the result.", "circle-alert");
+              }
+            })
+            .catch(() => { /* the next tick tries again */ });
+        }, 1000);
+      })
+      .catch(() => {
+        toast(`Could not ${action} ${host}`, "The dashboard server did not answer. Restart it to load the host actions.", "circle-alert");
+        setBusy(null);
+      });
+  };
+
   return (
     <Page>
       <PageHeader
-        title="How does it work?"
+        title="Quick start"
         description="One package, three agents, four modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
       />
 
       <Card
         title="The pipeline"
         icon="workflow"
-        description="The host loads the extensions. Each mode appends one block to the prompt, then RTK rewrites and filters what the model runs. A dimmed node is off, or not installed. Click a node to inspect it, and switch a mode from the panel under the canvas."
+        description="The host loads the extensions. Each mode appends one block to the prompt, then RTK rewrites and filters what the model runs. A dimmed node is off, or not installed. Click a node for its options; a mode switches straight from its menu."
       >
-        <PipelineCanvas modes={modes} hostState={hostState} onToggle={toggle} busy={busy} />
+        <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
       </Card>
 
       <Card title="Start here" icon="list-ordered" description="Four steps from a fresh machine to a session that reports itself.">

@@ -660,8 +660,8 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     options: [
       { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
       { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
-      { id: "wenyan-lite", label: "Wenyan lite" }, { id: "wenyan-full", label: "Wenyan full" },
-      { id: "wenyan-ultra", label: "Wenyan ultra" },
+      { id: "megacave-lite", label: "Megacave lite" }, { id: "megacave-full", label: "Megacave full" },
+      { id: "megacave-ultra", label: "Megacave ultra" },
     ],
   },
   {
