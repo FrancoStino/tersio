@@ -102,7 +102,23 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 
 Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the dashboard's own default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
 
-Connect an MCP client with `claude mcp add tersio -- tersio mcp`, or the same command (`tersio mcp`) in any client's MCP settings. The server exposes four tools: `tersio_stats`, `tersio_activity`, `tersio_doctor`, and `tersio_modes`.
+### Connecting an MCP client
+
+`tersio mcp` speaks the Model Context Protocol over stdio, so any MCP-capable client can read Tersio's data and set its modes mid-session. Connect it once per client:
+
+- **Claude Code:** `claude mcp add tersio -- tersio mcp`
+- **Codex:** add to `~/.codex/config.toml`:
+  ```toml
+  [mcp_servers.tersio]
+  command = "tersio"
+  args = ["mcp"]
+  ```
+- **Any client that takes an MCP JSON config** (Cursor, VS Code, and others):
+  ```json
+  { "mcpServers": { "tersio": { "command": "tersio", "args": ["mcp"] } } }
+  ```
+
+Four tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or apply a Combo preset).
 
 ## ⌨️ Commands reference
 

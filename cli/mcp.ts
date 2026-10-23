@@ -9,7 +9,7 @@ import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } f
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
 import type { RangeKey } from '../extensions/shared/agent-stats.ts';
 
-/** The spec version this server speaks; a client that names another is answered with its own. */
+/** The spec version this server speaks; a client naming another is answered with this one. */
 const PROTOCOL_VERSION = '2025-06-18';
 
 class RpcError extends Error {
@@ -170,9 +170,8 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
   try {
     let result: unknown;
     if (method === 'initialize') {
-      const asked = (params as { protocolVersion?: unknown } | undefined)?.protocolVersion;
       result = {
-        protocolVersion: typeof asked === 'string' ? asked : PROTOCOL_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'tersio', version: PACKAGE_VERSION },
         instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, installation health with tersio_doctor, and read or set session modes with tersio_modes.',
@@ -192,6 +191,7 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
 export async function runMcpServer(): Promise<void> {
   const send = (msg: unknown): void => { process.stdout.write(`${JSON.stringify(msg)}\n`); };
   const lines = createInterface({ input: process.stdin });
+  let queue: Promise<void> = Promise.resolve();
   lines.on('line', (line) => {
     const text = line.trim();
     if (text === '') return;
@@ -199,7 +199,9 @@ export async function runMcpServer(): Promise<void> {
     try {
       message = JSON.parse(text) as WireMessage;
     } catch { /* a malformed line is dropped; the client's own timeout surfaces it */ }
-    if (message) void handleMessage(message, send);
+    // A client may call tools in parallel, and the printing tools patch the console, so one
+    // handler at a time; an overlapping patch could leak a print onto the wire.
+    if (message) queue = queue.then(() => handleMessage(message, send));
   });
   // The server never outlives its client: a closed stream ends the process.
   lines.on('close', () => process.exit(0));

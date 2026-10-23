@@ -10,18 +10,19 @@ function collector(): { sent: unknown[]; send: (msg: unknown) => void } {
 const call = (id: number, method: string, params?: unknown): { jsonrpc: string; id: number; method: string; params?: unknown } => ({
   jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }),
 });
-
 describe('the MCP server protocol', () => {
-  test('initialize answers with the server identity and the tools capability', async () => {
+  test('initialize answers with the server identity and the version the server speaks', async () => {
     const { sent, send } = collector();
     await handleMessage(call(1, 'initialize', { protocolVersion: '2025-03-26', clientInfo: { name: 't', version: '0' } }), send);
     expect(sent).toHaveLength(1);
     // The collector holds raw wire objects; one cast names the answer's shape for the reads below.
     const answer = sent[0] as { result: { protocolVersion: string; capabilities: Record<string, unknown>; serverInfo: { name: string } } };
-    expect(answer.result.protocolVersion).toBe('2025-03-26');
+    // The spec wants a version the server supports, not an echo of whatever the client asked.
+    expect(answer.result.protocolVersion).toBe('2025-06-18');
     expect(answer.result.capabilities.tools).toEqual({});
     expect(answer.result.serverInfo.name).toBe('tersio');
   });
+
 
   test('tools/list names every tool a client can call', async () => {
     const { sent, send } = collector();
