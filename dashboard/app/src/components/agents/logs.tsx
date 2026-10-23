@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/common";
 import { Icon } from "@/components/icon";
 import { cn } from "cn";
 
-type Kind = "mode" | "agent" | "file" | "doctor" | "data";
+type Kind = "mode" | "agent" | "file" | "doctor";
 
 interface Entry {
   at: number;
@@ -21,7 +21,6 @@ const KIND_LABEL: Record<Kind, string> = {
   agent: "Agent",
   file: "File",
   doctor: "Doctor",
-  data: "Data",
 };
 
 const FILTERS: ReadonlyArray<{ value: "all" | Kind; label: string }> = [

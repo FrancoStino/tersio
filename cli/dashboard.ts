@@ -1,5 +1,6 @@
 // Dashboard server + usage APIs. Binds 127.0.0.1; --export writes a file. No Promise.withResolvers (Node 20.12).
 import { spawn } from 'node:child_process';
+import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
@@ -148,6 +149,41 @@ async function statusJson(): Promise<string> {
     ponytail: profile.ponytailDefault,
     pstack: profile.pstackDefault,
   });
+}
+
+/**
+ * Run a host command in its own process: the installer the terminal runs, with the server free to
+ * answer. The page polls /api/hosts until the host settles, because the child outlives the request.
+ */
+interface HostJob {
+  action: 'install' | 'uninstall' | 'update';
+  startedAt: number;
+  /** `null` while the child runs, then its exit code. */
+  code: number | null;
+}
+
+/** The last command run per host, so the guide can stop waiting the moment it exits. */
+const hostJobs = new Map<string, HostJob>();
+
+function spawnCli(command: 'install' | 'uninstall' | 'update', host: string): boolean {
+  const entry = process.argv[1];
+  if (!entry || !existsSync(entry)) return false;
+  const runtime = entry.endsWith('.ts') ? 'bun' : process.execPath;
+  const child = spawn(runtime, [entry, command, '--host', host, '--yes'], { detached: true, stdio: 'ignore' });
+  const job: HostJob = { action: command, startedAt: Date.now(), code: null };
+  hostJobs.set(host, job);
+  const verb = `${command[0].toUpperCase()}${command.slice(1)}`;
+  recordActivity('agent', `${verb} ${host} started`);
+  child.on('exit', (code) => {
+    job.code = code ?? 0;
+    recordActivity('agent', `${verb} ${host} ${job.code === 0 ? 'finished' : 'failed'}`, undefined, job.code === 0);
+  });
+  child.on('error', (error) => {
+    job.code = -1;
+    recordActivity('agent', `${verb} ${host} failed`, error.message, false);
+  });
+  child.unref();
+  return true;
 }
 
 // Local-only health: find each agent on PATH, run `--version`, report both.
@@ -433,26 +469,31 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
 > {
   const profile = await storedProfile();
+  const events: string[] = [];
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
     // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
     Object.assign(profile, applyComboPreset(profile, level));
+    events.push(`Combo preset to ${level}`);
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
     if (!CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
     profile.cavemanDefault = v;
+    events.push(`Caveman to ${v}`);
   }
   if (body.ponytailDefault !== undefined) {
     const v = String(body.ponytailDefault);
     if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
+    events.push(`Ponytail to ${v}`);
   }
   if (body.pstackDefault !== undefined) {
     const v = String(body.pstackDefault);
     if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
     profile.pstackDefault = v;
+    events.push(`pstack to ${v}`);
   }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
@@ -462,12 +503,14 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   if (body.rtkDefault !== undefined) {
     if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
     profile.rtkDefault = body.rtkDefault;
+    events.push(`RTK to ${body.rtkDefault ? 'on' : 'off'}`);
   }
   if (body.devTools !== undefined) {
     if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
     profile.devTools = body.devTools;
   }
   await writePluginSettings(profile, {});
+  for (const title of events) recordActivity('mode', title, 'Applies to new sessions.');
   return {
     ok: true,
     profile: {
@@ -630,6 +673,13 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
       return;
     }
+    if (req.url?.startsWith('/api/logs') && req.method === 'GET') {
+      const raw = new URL(req.url, 'http://127.0.0.1').searchParams.get('limit');
+      const limit = Math.min(2000, Math.max(1, Number.parseInt(raw ?? '', 10) || 400));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readActivity(limit)));
+      return;
+    }
     if (req.url === '/api/hosts' && req.method === 'GET') {
       // What the guide draws as connected: the host directories an install writes, read from disk.
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -639,6 +689,37 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         installed: host.installed,
         version: host.version,
       }))));
+      return;
+    }
+    if (req.url === '/api/hosts/action' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([...hostJobs].map(([host, job]) => ({ host, ...job }))));
+      return;
+    }
+    if (req.url === '/api/hosts/action' && req.method === 'POST') {
+      // Add an agent or turn one off from the guide. The CLI does the work, so the tree on disk and
+      // the guide cannot drift apart.
+      let body: Record<string, unknown> = {};
+      try {
+        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
+      } catch {
+        body = {};
+      }
+      const host = String(body.host ?? '');
+      const action = String(body.action ?? '');
+      const known = detectHosts().some((entry) => entry.id === host);
+      if (!known || (action !== 'install' && action !== 'uninstall' && action !== 'update')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown host or action' }));
+        return;
+      }
+      if (!spawnCli(action, host)) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+        return;
+      }
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, pending: true, host, action }));
       return;
     }
     if (req.url === '/settings' && req.method === 'GET') {
@@ -760,6 +841,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         if (raw === 'daily' || raw === 'weekly' || raw === 'monthly' || raw === 'manual') schedule = raw;
       } catch { /* keep manual */ }
       const report = schedule === 'manual' ? getDoctorReport(true) : setDiagSchedule(schedule);
+      recordActivity('doctor', schedule === 'manual' ? 'Doctor check' : `Check schedule to ${schedule}`, 'From the dashboard.');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(report));
       return;
@@ -768,6 +850,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       try {
         const { runDoctorRepairs } = await import('./doctor-fix.ts');
         const failed = await runDoctorRepairs(['extensions', 'registrations', 'ponytail']);
+        recordActivity('doctor', 'Doctor repair', failed.length === 0 ? 'Extensions, registrations, and Ponytail checked.' : `${failed.length} step(s) failed.`, failed.length === 0);
         getDoctorReport(true);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: failed.length === 0, failed }));

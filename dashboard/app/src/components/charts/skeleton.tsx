@@ -78,6 +78,9 @@ const LAYOUT: Record<SectionId, readonly Block[]> = {
     { cards: [{ body: "chart" }] },
     { cards: [{ body: "table", rows: 4 }] },
   ],
+  logs: [
+    { cards: [{ body: "table", rows: 10 }] },
+  ],
 };
 
 /** One figure, in the shape `Stat` draws: a small label over a bold value. */

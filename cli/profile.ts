@@ -8,6 +8,7 @@ import {
 import type { WriteOptions } from './common.ts';
 import os from 'node:os';
 import { DEFAULT_CURRENCY, isCurrencyCode } from './currency.ts';
+import { recordActivity } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
 import { readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
@@ -162,6 +163,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   }
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
+  recordActivity('mode', 'Session defaults saved', formatProfile(profile));
   console.log(`  [write] Session defaults in ${file}`);
   await mirrorPonytailDefault(profile.ponytailDefault, options);
 }

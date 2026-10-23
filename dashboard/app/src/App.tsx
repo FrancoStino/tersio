@@ -25,6 +25,7 @@ import { ToolsPage } from "./components/agents/tools";
 import { ProjectsPage } from "./components/agents/projects";
 import { UpstreamPage } from "./components/agents/upstream";
 import { HowToPage } from "./components/agents/how-to";
+import { LogsPage } from "./components/agents/logs";
 import { SettingsDialog } from "@/components/dialogs";
 import { ShareDialog } from "@/components/agents/share-dialog";
 import { ToasterProvider } from "@/components/toaster";
@@ -134,13 +135,13 @@ function Dashboard() {
   useReveal();
   const { fx, money, applyCurrency } = useFx();
   const { section: route, range, session, setSection, setRange, setSession } = useHashRoute();
-  // Upstream is a developer surface: the About switch hides it, and a bookmarked route lands on Overview.
+  // Upstream and Logs are developer surfaces: the About switch hides them, and a bookmarked route lands on Overview.
   const dev = useDevMode();
-  const section = route === "upstream" && !dev ? "overview" : route;
+  const section = (route === "upstream" || route === "logs") && !dev ? "overview" : route;
   // The smallest view still answers "is there an agent database".
   // Upstream is not an agent view: the scorecard has its own store, and the hook keeps the shell uniform.
   // Neither the scorecard nor the guide is an agent view; the hook keeps the shell uniform.
-  const view: AgentView = section === "upstream" || section === "how-to" ? "all" : section;
+  const view: AgentView = section === "upstream" || section === "how-to" || section === "logs" ? "all" : section;
   // Only the request log pages through the range; every other view wants the newest rows.
   const [requestOffset, setRequestOffset] = useState(0);
   const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
@@ -171,6 +172,8 @@ function Dashboard() {
       return <SessionTrace key={session} sessionFile={session} money={money} onClose={() => setSession(null)} />;
     }
     // The guide reads no store, so it never waits on the snapshot behind the other pages.
+    // The log reads the activity file, not an agent database, so it renders either way.
+    if (section === "logs") return <LogsPage />;
     if (loading && !agent && section !== "how-to") return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
