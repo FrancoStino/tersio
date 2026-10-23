@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
-import { COMBO_DEFAULTS, PACKAGE_VERSION } from './common.ts';
+import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
 import { formatCurrency, readStoredCurrency } from './currency.ts';
 import { runDoctor } from './doctor.ts';
 import { agentStats } from './dashboard.ts';
@@ -40,6 +40,19 @@ interface ActivityToolArgs {
 
 interface ModesToolArgs {
   combo?: unknown;
+  caveman?: unknown;
+  rtk?: unknown;
+  ponytail?: unknown;
+  pstack?: unknown;
+}
+
+/** One validated value per mode a call may set; null means the call left that mode alone. */
+interface ModeWants {
+  combo: string | null;
+  caveman: string | null;
+  rtk: 'on' | 'off' | null;
+  ponytail: string | null;
+  pstack: 'on' | 'off' | null;
 }
 
 /**
@@ -88,12 +101,20 @@ async function doctorText(): Promise<string> {
   return `${text}\n${value.ok} ok, ${value.warn} warnings, ${value.missing} missing.`.trim();
 }
 
-async function modesText(combo: string | null): Promise<string> {
-  const profile = await storedProfile();
-  if (combo === null) return `Current session defaults: ${formatProfile(profile)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) to switch the preset.`;
-  const next = applyComboPreset(profile, combo);
+async function modesText(want: ModeWants): Promise<string> {
+  const stored = await storedProfile();
+  // The preset lands first, so a single mode in the same call overrides just its piece of it.
+  let next = want.combo !== null ? applyComboPreset(stored, want.combo) : stored;
+  if (want.caveman !== null) next = { ...next, cavemanDefault: want.caveman };
+  if (want.rtk !== null) next = { ...next, rtkDefault: want.rtk === 'on' };
+  if (want.ponytail !== null) next = { ...next, ponytailDefault: want.ponytail };
+  if (want.pstack !== null) next = { ...next, pstackDefault: want.pstack };
+  const changed = want.combo !== null || want.caveman !== null || want.rtk !== null || want.ponytail !== null || want.pstack !== null;
+  if (!changed) {
+    return `Current session defaults: ${formatProfile(next)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) or any single mode — caveman, rtk, ponytail, pstack — to change them.`;
+  }
   const { text } = await captureLog(() => writePluginSettings(next, { quiet: true }));
-  return [text, `Combo preset set to ${combo}: ${formatProfile(next)}`].filter(Boolean).join('\n');
+  return [text, `Session defaults saved: ${formatProfile(next)}`].filter(Boolean).join('\n');
 }
 
 /** JSON Schema per tool, the shape every MCP client knows how to render. */
@@ -121,10 +142,16 @@ const TOOLS = [
   },
   {
     name: 'tersio_modes',
-    description: 'Read the session-start mode defaults, or set the Combo preset (which sets Caveman, RTK, and Ponytail together).',
+    description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack) overrides its piece of that preset.',
     inputSchema: {
       type: 'object',
-      properties: { combo: { type: 'string', enum: [...COMBO_DEFAULTS], description: `Combo preset to apply: ${[...COMBO_DEFAULTS].join(', ')}. Omit to only read.` } },
+      properties: {
+        combo: { type: 'string', enum: [...COMBO_DEFAULTS], description: `Combo preset to apply: ${[...COMBO_DEFAULTS].join(', ')}.` },
+        caveman: { type: 'string', enum: [...CAVEMAN_DEFAULTS], description: `Caveman reply level: ${[...CAVEMAN_DEFAULTS].join(', ')}.` },
+        rtk: { type: 'string', enum: [...RTK_DEFAULTS], description: 'Condensed shell output: on or off.' },
+        ponytail: { type: 'string', enum: [...PONYTAIL_DEFAULTS], description: `Lean-code level: ${[...PONYTAIL_DEFAULTS].join(', ')}.` },
+        pstack: { type: 'string', enum: [...PSTACK_DEFAULTS], description: 'Rigor mode: on or off.' },
+      },
     },
   },
 ] as const;
@@ -151,10 +178,24 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
     }
   }
   if (name === 'tersio_modes') {
-    if (args.combo !== undefined && !(typeof args.combo === 'string' && COMBO_DEFAULTS.has(args.combo))) {
-      throw new RpcError(-32602, `combo must be one of ${[...COMBO_DEFAULTS].join(', ')}`);
-    }
-    return { content: [{ type: 'text', text: await modesText(typeof args.combo === 'string' ? args.combo : null) }] };
+    // One validated value per mode; the sets are the same ones the CLI flags and Settings dialog use.
+    const oneOf = (value: unknown, set: Set<string>, label: string): string | null => {
+      if (value === undefined) return null;
+      if (typeof value !== 'string' || !set.has(value)) throw new RpcError(-32602, `${label} must be one of ${[...set].join(', ')}`);
+      return value;
+    };
+    const rtkOrPstack = (value: unknown, set: Set<string>, label: string): 'on' | 'off' | null => {
+      const picked = oneOf(value, set, label);
+      return picked === null ? null : (picked as 'on' | 'off');
+    };
+    const want: ModeWants = {
+      combo: oneOf(args.combo, COMBO_DEFAULTS, 'combo'),
+      caveman: oneOf(args.caveman, CAVEMAN_DEFAULTS, 'caveman'),
+      rtk: rtkOrPstack(args.rtk, RTK_DEFAULTS, 'rtk'),
+      ponytail: oneOf(args.ponytail, PONYTAIL_DEFAULTS, 'ponytail'),
+      pstack: rtkOrPstack(args.pstack, PSTACK_DEFAULTS, 'pstack'),
+    };
+    return { content: [{ type: 'text', text: await modesText(want) }] };
   }
   throw new RpcError(-32602, `unknown tool: ${name}`);
 }

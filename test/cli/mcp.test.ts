@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { handleMessage, startMcpHttpServer } from '../../cli/mcp.ts';
@@ -61,6 +62,44 @@ describe('the MCP server protocol', () => {
     await handleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }, send);
     await handleMessage({ jsonrpc: '2.0', id: 7, method: 42 }, send);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('the MCP modes tool', () => {
+  const modes = async (args: Record<string, unknown>): Promise<{ text: string; error?: { message: string } }> => {
+    const { sent, send } = collector();
+    await handleMessage(call(11, 'tools/call', { name: 'tersio_modes', arguments: args }), send);
+    const answer = sent[0] as { result?: { content: Array<{ text: string }> }; error?: { message: string } };
+    if (answer.error) return { text: '', error: answer.error };
+    return { text: answer.result.content[0].text };
+  };
+
+  test('an unknown level answers with invalid-params naming the mode', async () => {
+    const { error } = await modes({ caveman: 'bogus' });
+    expect(error?.message).toContain('caveman must be one of');
+  });
+
+  test('a single mode overrides its piece of the preset and lands in settings', async () => {
+    // Isolated homes, so the write never touches the real settings or the ponytail mirror.
+    const home = await mkdtemp(path.join(tmpdir(), 'tersio-modes-'));
+    const previousTersio = process.env.TERSIO_HOME;
+    const previousXdg = process.env.XDG_CONFIG_HOME;
+    process.env.TERSIO_HOME = home;
+    process.env.XDG_CONFIG_HOME = path.join(home, 'config');
+    try {
+      const set = await modes({ combo: 'balanced', caveman: 'ultra' });
+      expect(set.text).toContain('Session defaults saved');
+      expect(set.text).toContain('caveman=ultra');
+      // balanced sets rtk on; the read-back proves the whole profile persisted.
+      const read = await modes({});
+      expect(read.text).toContain('caveman=ultra');
+      expect(read.text).toContain('rtk=on');
+      const stored = JSON.parse(readFileSync(path.join(home, 'settings.json'), 'utf8')) as { cavemanDefault: string };
+      expect(stored.cavemanDefault).toBe('ultra');
+    } finally {
+      process.env.TERSIO_HOME = previousTersio;
+      process.env.XDG_CONFIG_HOME = previousXdg;
+    }
   });
 });
 
