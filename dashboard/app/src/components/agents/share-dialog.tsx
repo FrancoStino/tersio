@@ -1,4 +1,4 @@
-// The share card: an SVG of the range, rasterized at 1200x850 for a PNG; a text line covers image-less networks.
+// The share card: an SVG of the range, rasterized at 1200 wide for a PNG; a text line covers image-less networks.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/icon";
@@ -75,9 +75,18 @@ function streakDays(streaks: GraphStreaks): Set<number> {
   return set;
 }
 
-/** The 1200x850 card, rasterized for a PNG and inlined for the preview. */
+/** The card, rasterized for a PNG and inlined for the preview. Width is fixed; height follows the layout. */
+const CARD_W = 1200;
+const CARD_H = 850;
+/** The calendar's grid is bound by its 53-week width, so its card is shorter and the figures sit nearer it. */
+const CALENDAR_H = 780;
+const cardHeight = (card: Card): number => (card.kind === "calendar" ? CALENDAR_H : CARD_H);
 function cardSvg(card: Card, money: (v: number) => string, brand: string | null): string {
   const e = (x: string): string => x.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const svgHeight = cardHeight(card);
+  const statsY = card.kind === "calendar" ? 588 : 664;
+  // The bolt is a watermark pinned near the bottom edge; it rides the shorter card.
+  const bolt = card.kind === "calendar" ? ` transform="translate(0 ${svgHeight - 860})"` : "";
   // Canvas reads live tokens off <html> since it cannot resolve var().
   const computed = getComputedStyle(document.documentElement);
   const token = (name: string, fallback: string): string => computed.getPropertyValue(name).trim() || fallback;
@@ -105,8 +114,8 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
 
   if (card.kind === "empty") {
     return (
-      '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850" viewBox="0 0 1200 850">' +
-      `<rect width="1200" height="850" rx="28" fill="${bg}"/>` +
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${svgHeight}" viewBox="0 0 ${CARD_W} ${svgHeight}">` +
+      `<rect width="${CARD_W}" height="${svgHeight}" rx="28" fill="${bg}"/>` +
       `<path d="M1090 700 L980 800 h70 l-8 60 80 -96 h-70 l8 -64 z" fill="none" stroke="${accent}" stroke-width="14" opacity="0.08" stroke-linejoin="round"/>` +
       `<text x="64" y="80" font-family="monospace" font-size="26" letter-spacing="6" fill="${accent}">${e(`TERSIO · ${card.range.toUpperCase()}`)}</text>` +
       empty() +
@@ -264,9 +273,9 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
         `<image href="${brand}" x="1040" y="40" width="96" height="96" preserveAspectRatio="xMidYMid slice" clip-path="url(#tersio-brand)"/>`;
 
   return (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850" viewBox="0 0 1200 850">' +
-    `<rect width="1200" height="850" rx="28" fill="${bg}"/>` +
-    `<path d="M1090 700 L980 800 h70 l-8 60 80 -96 h-70 l8 -64 z" fill="none" stroke="${accent}" stroke-width="14" opacity="0.08" stroke-linejoin="round"/>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${svgHeight}" viewBox="0 0 ${CARD_W} ${svgHeight}">` +
+    `<rect width="${CARD_W}" height="${svgHeight}" rx="28" fill="${bg}"/>` +
+    `<g${bolt}><path d="M1090 700 L980 800 h70 l-8 60 80 -96 h-70 l8 -64 z" fill="none" stroke="${accent}" stroke-width="14" opacity="0.08" stroke-linejoin="round"/></g>` +
     `<text x="64" y="80" font-family="monospace" font-size="26" letter-spacing="6" fill="${accent}">${e(`TERSIO · ${card.range.toUpperCase()}`)}</text>` +
     `<text x="60" y="230" font-family="monospace" font-size="130" font-weight="bold" fill="${ink}">${e(`${fmtShort(card.tokens)} tokens`)}</text>` +
     `<text x="64" y="278" font-family="monospace" font-size="30" fill="${dim}">${e(`across ${fmt(card.requests)} agent requests`)}</text>` +
@@ -275,13 +284,13 @@ function cardSvg(card: Card, money: (v: number) => string, brand: string | null)
     months +
     graph +
     legend +
-    figure(64, 664, "API-EQUIVALENT", money(card.costUsd)) +
-    figure(448, 664, "CACHE RATE", pct(card.cacheRate)) +
-    figure(832, 664, "ERROR RATE", pct(card.errorRate)) +
-    figure(64, 754, "PEAK DAY", fmtShort(s.peakTokens)) +
-    figure(320, 754, "LONGEST TASK", fmtElapsed(card.maxDurationMs)) +
-    figure(576, 754, "LONGEST STREAK", `${s.longest.days}d`) +
-    figure(832, 754, "CURRENT STREAK", `${s.current.days}d`) +
+    figure(64, statsY, "API-EQUIVALENT", money(card.costUsd)) +
+    figure(448, statsY, "CACHE RATE", pct(card.cacheRate)) +
+    figure(832, statsY, "ERROR RATE", pct(card.errorRate)) +
+    figure(64, statsY + 90, "PEAK DAY", fmtShort(s.peakTokens)) +
+    figure(320, statsY + 90, "LONGEST TASK", fmtElapsed(card.maxDurationMs)) +
+    figure(576, statsY + 90, "LONGEST STREAK", `${s.longest.days}d`) +
+    figure(832, statsY + 90, "CURRENT STREAK", `${s.current.days}d`) +
     "</svg>"
   );
 }
@@ -342,11 +351,11 @@ export function ShareDialog({
     img.onload = () => {
       if (!live) return;
       const canvas = document.createElement("canvas");
-      canvas.width = 1200;
-      canvas.height = 850;
+      canvas.width = CARD_W;
+      canvas.height = cardHeight(card);
       const context = canvas.getContext("2d");
       if (!context) return;
-      context.drawImage(img, 0, 0, 1200, 850);
+      context.drawImage(img, 0, 0, CARD_W, cardHeight(card));
       if (svgRef.current) {
         // The same SVG the PNG rasterizes, scaled by the wrapper's aspect ratio.
         svgRef.current.innerHTML = cardSvg(card, money, brand);
@@ -371,15 +380,16 @@ export function ShareDialog({
       resolve(blob);
     };
     img.onload = () => {
+      const height = cardHeight(card);
       const canvas = document.createElement("canvas");
-      canvas.width = 1200;
-      canvas.height = 850;
+      canvas.width = CARD_W;
+      canvas.height = height;
       const context = canvas.getContext("2d");
       if (!context) {
         done(null);
         return;
       }
-      context.drawImage(img, 0, 0, 1200, 850);
+      context.drawImage(img, 0, 0, CARD_W, height);
       canvas.toBlob(done, "image/png");
     };
     img.onerror = () => done(null);
@@ -446,7 +456,12 @@ export function ShareDialog({
           </button>
         </div>
 
-        <div ref={svgRef} aria-hidden="true" className="mt-4 aspect-[1200/850] w-full overflow-hidden rounded-xl border border-line bg-panel [&_svg]:block [&_svg]:h-full [&_svg]:w-full" />
+        <div
+          ref={svgRef}
+          aria-hidden="true"
+          style={{ aspectRatio: card ? `${CARD_W} / ${cardHeight(card)}` : `${CARD_W} / ${CARD_H}` }}
+          className="mt-4 w-full overflow-hidden rounded-xl border border-line bg-panel [&_svg]:block [&_svg]:h-full [&_svg]:w-full"
+        />
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {(["x", "reddit", "linkedin"] as ShareTarget[]).map((target) => (

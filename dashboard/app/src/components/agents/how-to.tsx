@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card, Page, PageHeader } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/ui/skeleton";
+import { usePending } from "@/hooks/use-pending";
 import { fetchHealth } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
@@ -893,6 +895,25 @@ function PipelineCanvas({
   );
 }
 
+/** The canvas's shape while the host list is still out: agent column, mode column, output. */
+function PipelineSkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading the pipeline"
+      className="flex min-h-[260px] flex-wrap items-center gap-6 rounded-lg border border-line p-4"
+    >
+      <div className="grid gap-3">
+        {[0, 1, 2].map((row) => <Skeleton key={row} className="h-12 w-40 rounded-xl" />)}
+      </div>
+      <div className="grid gap-3">
+        {[0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-12 w-44 rounded-xl" />)}
+      </div>
+      <Skeleton className="h-16 w-52 rounded-xl" />
+    </div>
+  );
+}
+
 /** An exported file has no server, so a failed read leaves the hosts unknown and every node lit. */
 function readHosts(): Promise<Array<{ id: string; installed: boolean }> | null> {
   return fetch("/api/hosts")
@@ -904,11 +925,15 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   const toast = useToast();
   const [hostState, setHostState] = useState<HostState>({ installed: {}, versions: {} });
   const [busy, setBusy] = useState<NodeId | null>(null);
+  const [hostsLoaded, setHostsLoaded] = useState(false);
+  const pipelinePending = usePending(!hostsLoaded);
 
   useEffect(() => {
-    void readHosts().then((rows) => {
-      if (rows) setHostState((s) => ({ ...s, installed: Object.fromEntries(rows.map((row) => [row.id, row.installed])) }));
-    });
+    void readHosts()
+      .then((rows) => {
+        if (rows) setHostState((s) => ({ ...s, installed: Object.fromEntries(rows.map((row) => [row.id, row.installed])) }));
+      })
+      .finally(() => setHostsLoaded(true));
     void fetchHealth().then((report) => {
       if (!report) return;
       setHostState((s) => ({
@@ -1003,7 +1028,9 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
         icon="workflow"
         description="The host loads the extensions. Each mode appends one block to the prompt, then RTK rewrites and filters what the model runs. A dimmed node is off, or not installed. Click a node for its options; a mode switches straight from its menu."
       >
-        <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
+        {pipelinePending ? <PipelineSkeleton /> : (
+          <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
+        )}
       </Card>
 
       <Card title="Start here" icon="list-ordered" description="Four steps from a fresh machine to a session that reports itself.">

@@ -4,6 +4,8 @@ import { Page, PageHeader, PagedTable, Segmented } from "@/components/charts";
 import type { Column } from "@/components/charts";
 import { EmptyState } from "@/components/common";
 import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/ui/skeleton";
+import { usePending } from "@/hooks/use-pending";
 import { cn } from "cn";
 
 type Kind = "mode" | "agent" | "file" | "doctor";
@@ -52,6 +54,7 @@ export function LogsPage({ onClose }: { onClose: () => void }) {
   const [filter, setFilter] = useState<"all" | Kind>("all");
   const [collapsed, setCollapsed] = useState(false);
   const [large, setLarge] = useState(false);
+  const pending = usePending(loading && entries.length === 0);
 
   const load = useCallback((): void => {
     void fetch("/api/logs?limit=500")
@@ -178,11 +181,18 @@ export function LogsPage({ onClose }: { onClose: () => void }) {
             {rows.length} entries{rows[0] ? `, newest ${clock(rows[0].at)}` : ""}
           </p>
         ) : loading && entries.length === 0 ? (
-          <div className="grid gap-2 p-3.5" aria-busy="true" aria-label="Loading log">
-            {Array.from({ length: 6 }, (_, index) => (
-              <span key={index} className="h-6 animate-pulse rounded bg-track" />
-            ))}
-          </div>
+          // A fast local read settles before this draws, so a skeleton never flicks on and off.
+          pending ? (
+            <div className="grid gap-2.5 px-3.5 py-3" aria-busy="true" aria-label="Loading log">
+              {Array.from({ length: 8 }, (_, index) => (
+                <div key={index} className="flex items-center gap-3">
+                  <Skeleton className="h-3 w-14 shrink-0" />
+                  <Skeleton className="h-3 w-10 shrink-0" />
+                  <Skeleton className="h-3 flex-1" />
+                </div>
+              ))}
+            </div>
+          ) : null
         ) : (
           <div className={cn("mono", large ? "text-[14px]" : "text-[13px]")}>
             <PagedTable

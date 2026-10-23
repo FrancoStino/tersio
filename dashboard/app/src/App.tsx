@@ -99,8 +99,9 @@ function useReveal(): void {
 }
 
 /** The session-start modes the navbar banner names, from GET /settings; null for a file export. */
-function useModeState(): readonly [ModeState | null, () => void] {
+function useModeState(): readonly [ModeState | null, () => void, boolean] {
   const [modes, setModes] = useState<ModeState | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => {
     alive.current = false;
@@ -121,13 +122,14 @@ function useModeState(): readonly [ModeState | null, () => void] {
           pstackDefault: typeof d.pstackDefault === "string" ? d.pstackDefault : "off",
         });
       })
-      .catch(() => { /* no server: the banner stays hidden */ });
+      .catch(() => { /* no server: the banner keeps its placeholder */ })
+      .finally(() => setLoaded(true));
   }, []);
   useEffect(() => {
     load();
   }, [load]);
 
-  return [modes, load] as const;
+  return [modes, load, loaded] as const;
 }
 
 function Dashboard() {
@@ -151,7 +153,9 @@ function Dashboard() {
   const [shareOpen, setShareOpen] = useState(false);
   const [request, setRequest] = useState<AgentRequestRow | null>(null);
   // The session-start modes the navbar's banner names, reloaded when Settings closes.
-  const [modes, reloadModes] = useModeState();
+  const [modes, reloadModes, modesLoaded] = useModeState();
+  // The rail draws its own skeleton until the first data answer, so its items do not pop in.
+  const agentPending = loading && !agent;
 
   useShortcuts({ onRange: setRange, onSection: setSection });
   // A new range renumbers the log, so a page held across the switch would point at different rows.
@@ -171,10 +175,11 @@ function Dashboard() {
     if (section === "traces" && session) {
       return <SessionTrace key={session} sessionFile={session} money={money} onClose={() => setSession(null)} />;
     }
-    // The guide reads no store, so it never waits on the snapshot behind the other pages.
-    // The log reads the activity file, not an agent database, so it renders either way.
+    // The guide, the log, and the scorecard read their own sources, so none waits on an agent database.
+    if (section === "how-to") return <HowToPage modes={modes} onModesChanged={reloadModes} />;
+    if (section === "upstream") return <UpstreamPage />;
     if (section === "logs") return <LogsPage onClose={() => setSection("overview")} />;
-    if (loading && !agent && section !== "how-to") return <PageSkeleton section={section} />;
+    if (loading && !agent) return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
       if (stale) {
@@ -229,10 +234,6 @@ function Dashboard() {
         return <ToolsPage agent={agent} money={money} />;
       case "projects":
         return <ProjectsPage agent={agent} money={money} />;
-      case "upstream":
-        return <UpstreamPage />;
-      case "how-to":
-        return <HowToPage modes={modes} onModesChanged={reloadModes} />;
       default:
         return null;
     }
@@ -246,7 +247,9 @@ function Dashboard() {
         range={range}
         onRange={setRange}
         modes={modes}
+        modesLoaded={modesLoaded}
         agentAvailable={agentAvailable}
+        agentPending={agentPending}
         onSettings={() => setSettingsOpen(true)}
         onShare={() => setShareOpen(true)}
       >

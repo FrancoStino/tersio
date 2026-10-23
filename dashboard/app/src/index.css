@@ -186,7 +186,7 @@
   }
 
 /* Accent picker: --accent tints controls and charts, --grid/--cell-* the heatmap, --bg the wash. Kept ahead of html[data-theme="dark"] to win on specificity. */
-  html[data-accent="emerald"] { --accent:#047857; --accent-soft:rgba(4,120,87,.12); --bg:#f4f4f5; --grid:rgba(4,120,87,.07); --cell-1:rgba(4,120,87,.3); --cell-2:rgba(4,120,87,.55); --cell-3:rgba(4,120,87,.8); --cell-4:#047857; }
+  html[data-accent="emerald"] { --accent:#047857; --accent-soft:rgba(4,120,87,.12); --bg:#f1f8f4; --grid:rgba(4,120,87,.07); --cell-1:rgba(4,120,87,.3); --cell-2:rgba(4,120,87,.55); --cell-3:rgba(4,120,87,.8); --cell-4:#047857; }
   html[data-accent="violet"] { --accent:#7c3aed; --accent-soft:rgba(124,58,237,.14); --bg:#f7f5ff; --grid:rgba(124,58,237,.08); --cell-1:rgba(124,58,237,.3); --cell-2:rgba(124,58,237,.55); --cell-3:rgba(124,58,237,.8); --cell-4:#7c3aed; }
   html[data-accent="slate"] { --accent:#5b6779; --accent-soft:rgba(91,103,121,.14); --bg:#f6f7f9; --grid:rgba(91,103,121,.08); --cell-1:rgba(91,103,121,.3); --cell-2:rgba(91,103,121,.55); --cell-3:rgba(91,103,121,.8); --cell-4:#5b6779; }
   html[data-accent="cyan"] { --accent:#0e7490; --accent-soft:rgba(14,116,144,.14); --bg:#f0f9fb; --grid:rgba(14,116,144,.08); --cell-1:rgba(14,116,144,.3); --cell-2:rgba(14,116,144,.55); --cell-3:rgba(14,116,144,.8); --cell-4:#0e7490; }
@@ -277,6 +277,7 @@
 
 
 /* Accent picker, dark half: each accent repeats the two base-token selectors. Emerald is the base, so it needs neither. */
+  html[data-theme="dark"][data-accent="emerald"] { --accent:#34d399; --accent-soft:rgba(52,211,153,.12); --bg:#06110c; --grid:rgba(52,211,153,.06); --cell-1:rgba(52,211,153,.3); --cell-2:rgba(52,211,153,.55); --cell-3:rgba(52,211,153,.8); --cell-4:#34d399; }
   html[data-theme="dark"][data-accent="violet"] { --accent:#a78bfa; --accent-soft:rgba(167,139,250,.14); --bg:#0f0a18; --grid:rgba(167,139,250,.06); --cell-1:rgba(167,139,250,.3); --cell-2:rgba(167,139,250,.55); --cell-3:rgba(167,139,250,.8); --cell-4:#a78bfa; }
   html[data-theme="dark"][data-accent="slate"] { --accent:#94a3b8; --accent-soft:rgba(148,163,184,.14); --bg:#0c0f14; --grid:rgba(148,163,184,.06); --cell-1:rgba(148,163,184,.3); --cell-2:rgba(148,163,184,.55); --cell-3:rgba(148,163,184,.8); --cell-4:#94a3b8; }
   html[data-theme="dark"][data-accent="cyan"] { --accent:#22d3ee; --accent-soft:rgba(34,211,238,.14); --bg:#08161a; --grid:rgba(34,211,238,.06); --cell-1:rgba(34,211,238,.3); --cell-2:rgba(34,211,238,.55); --cell-3:rgba(34,211,238,.8); --cell-4:#22d3ee; }
@@ -284,6 +285,7 @@
   html[data-theme="dark"][data-accent="amber"] { --accent:#fbbf24; --accent-soft:rgba(251,191,36,.14); --bg:#171004; --grid:rgba(251,191,36,.06); --cell-1:rgba(251,191,36,.3); --cell-2:rgba(251,191,36,.55); --cell-3:rgba(251,191,36,.8); --cell-4:#fbbf24; }
   html[data-theme="dark"][data-accent="orange"] { --accent:#fb923c; --accent-soft:rgba(251,146,60,.14); --bg:#1a0d06; --grid:rgba(251,146,60,.06); --cell-1:rgba(251,146,60,.3); --cell-2:rgba(251,146,60,.55); --cell-3:rgba(251,146,60,.8); --cell-4:#fb923c; }
   @media (prefers-color-scheme: dark) {
+    html:not([data-theme])[data-accent="emerald"] { --accent:#34d399; --accent-soft:rgba(52,211,153,.12); --bg:#06110c; --grid:rgba(52,211,153,.06); --cell-1:rgba(52,211,153,.3); --cell-2:rgba(52,211,153,.55); --cell-3:rgba(52,211,153,.8); --cell-4:#34d399; }
     html:not([data-theme])[data-accent="violet"] { --accent:#a78bfa; --accent-soft:rgba(167,139,250,.14); --bg:#0f0a18; --grid:rgba(167,139,250,.06); --cell-1:rgba(167,139,250,.3); --cell-2:rgba(167,139,250,.55); --cell-3:rgba(167,139,250,.8); --cell-4:#a78bfa; }
     html:not([data-theme])[data-accent="slate"] { --accent:#94a3b8; --accent-soft:rgba(148,163,184,.14); --bg:#0c0f14; --grid:rgba(148,163,184,.06); --cell-1:rgba(148,163,184,.3); --cell-2:rgba(148,163,184,.55); --cell-3:rgba(148,163,184,.8); --cell-4:#94a3b8; }
     html:not([data-theme])[data-accent="cyan"] { --accent:#22d3ee; --accent-soft:rgba(34,211,238,.14); --bg:#08161a; --grid:rgba(34,211,238,.06); --cell-1:rgba(34,211,238,.3); --cell-2:rgba(34,211,238,.55); --cell-3:rgba(34,211,238,.8); --cell-4:#22d3ee; }

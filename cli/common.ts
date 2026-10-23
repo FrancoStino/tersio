@@ -42,6 +42,8 @@ interface PluginsPackage {
 }
 
 const CAVEMAN_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra']);
+// The dashboard's accent picker; the ids match lib/accent.ts, and a new port cannot keep them.
+const ACCENT_DEFAULTS = new Set(['emerald', 'violet', 'slate', 'cyan', 'rose', 'amber', 'orange']);
 const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
@@ -401,7 +403,7 @@ function textTable(headers: string[], rows: string[][], right: boolean[] = [], m
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
-  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS,
+  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand,
   install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,

@@ -120,6 +120,27 @@ export function ThemeProvider({
   const setAccent = React.useCallback((nextAccent: AccentId) => {
     localStorage.setItem(ACCENT_STORAGE_KEY, nextAccent)
     setAccentState(nextAccent)
+    // The dashboard binds a fresh port each run, so browser storage alone loses this on the next launch.
+    void fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accent: nextAccent }),
+    }).catch(() => { /* an exported file has no server; the store still holds it */ })
+  }, [])
+
+  // The saved accent wins over this browser's copy, so the choice survives a new port and a new browser.
+  React.useEffect(() => {
+    let live = true
+    void fetch("/settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((saved: { accent?: unknown } | null) => {
+        const next = saved?.accent
+        if (!live || !isAccentId(next)) return
+        localStorage.setItem(ACCENT_STORAGE_KEY, next)
+        setAccentState((current) => (current === next ? current : next))
+      })
+      .catch(() => { /* no server: keep the stored accent */ })
+    return () => { live = false }
   }, [])
 
   const applyTheme = React.useCallback(

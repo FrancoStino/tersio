@@ -8,6 +8,8 @@ import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartToo
 import type { ChartConfig } from "@/components/ui/chart";
 import { EmptyState } from "@/components/common";
 import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/ui/skeleton";
+import { usePending } from "@/hooks/use-pending";
 import { AgentLogo } from "@/components/agent-logos";
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, XAxis, YAxis } from "recharts";
 import { UPCOMING_AGENTS } from "@/lib/agents";
@@ -381,11 +383,28 @@ const AGENT_COLUMNS: Array<Column<HostRow>> = [
 ];
 
 /** The scorecard: a radar over the ports, a stacked bar per agent, then the two tables side by side. */
+/** The scorecard's shape while its read is out: four stats, two charts, and the two tables. */
+function UpstreamSkeleton() {
+  return (
+    <div className="grid gap-3" aria-busy="true" aria-label="Loading the scorecard">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {[0, 1, 2, 3].map((cell) => <Skeleton key={cell} className="h-20 rounded-xl" />)}
+      </div>
+      <div className="grid gap-3 lg:grid-cols-3">
+        <Skeleton className="h-[260px] rounded-xl" />
+        <Skeleton className="h-[260px] rounded-xl lg:col-span-2" />
+      </div>
+      <Skeleton className="h-[220px] rounded-xl" />
+    </div>
+  );
+}
+
 export function UpstreamPage() {
   const toast = useToast();
   const [card, setCard] = useState<Scorecard | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const pending = usePending(!loaded);
   const [checking, setChecking] = useState(false);
 
   const load = useCallback(() => {
@@ -453,7 +472,7 @@ export function UpstreamPage() {
         }
       />
 
-      {!loaded ? null : !card ? (
+      {!loaded ? (pending ? <UpstreamSkeleton /> : null) : !card ? (
         <EmptyState
           icon="layers"
           title="No scorecard yet"

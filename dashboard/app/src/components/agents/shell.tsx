@@ -1,13 +1,14 @@
 // The shell: a glass topbar (brand, mode banner, range, theme) over a page-jumping rail whose footer holds Settings.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarTrigger, SidebarRail,
+  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarSeparator, SidebarTrigger, SidebarRail,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/charts";
 import { Icon } from "@/components/icon";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SocialLinks } from "@/components/brand";
 import { useTheme } from "@/components/theme-provider";
 import { AGENT_RANGES, isFileExport } from "@/lib/data";
@@ -18,6 +19,10 @@ import { NAV, NAV_ITEMS } from "./nav";
 import type { SectionId } from "./nav";
 
 export const DEFAULT_RANGE: AgentRange = "24h";
+
+/** The rail's drag handle; browser storage bridges a reload, tersio settings bridge a new port. */
+const SIDEBAR_WIDTH_KEY = "tersio-sidebar-width";
+const clampSidebarWidth = (px: number): number => Math.min(420, Math.max(180, Math.round(px)));
 
 const RANGE_TEXT: Record<AgentRange, string> = {
   "1h": "1h",
@@ -75,7 +80,7 @@ const MODE_GLYPHS = [
 ] as const;
 
 /** The combo preset this machine starts sessions with and the modes under it; a click opens Settings. */
-export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen: () => void }) {
+export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null; onOpen: () => void; loading?: boolean }) {
   const level = modes?.comboLevel ?? modes?.comboDefault ?? "off";
   const on = level !== "off";
   const label = on ? `COMBO ${level.toUpperCase()}` : "COMBO OFF";
@@ -96,6 +101,19 @@ export function ModeBanner({ modes, onOpen }: { modes: ModeState | null; onOpen:
     observer.observe(box);
     return () => observer.disconnect();
   }, [modes]);
+  // The five modes are unknown until /settings answers; a strip of OFF would read as a real state.
+  if (loading) {
+    return (
+      <span
+        aria-hidden="true"
+        className="mono flex h-8 w-[284px] max-w-[45vw] shrink-0 items-center gap-2 rounded-lg border border-line bg-panel/60 px-2.5"
+      >
+        <Skeleton className="size-3.5 shrink-0 rounded-[4px]" />
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-3 w-28" />
+      </span>
+    );
+  }
   const row = (key: string): ReactNode => (
     <span key={key} className="flex shrink-0 items-center">
       {MODE_GLYPHS.map((m, i) => (
@@ -216,20 +234,24 @@ export function AppSidebar({
   section,
   onSection,
   agentAvailable,
+  agentPending,
   onSettings,
+  onResize,
 }: {
   section: SectionId;
   onSection: (section: SectionId) => void;
   agentAvailable: boolean;
+  agentPending: boolean;
   onSettings: () => void;
+  onResize?: (width: number, final: boolean) => void;
 }) {
   // A hidden developer page must not keep its slot in the rail, and the hotkey map follows it.
   const dev = useDevMode();
   // z-50 keeps the rail header above the inset's sticky one, so the trigger stays clickable where the two overlap.
   return (
     <Sidebar collapsible="icon" className="z-50 border-r border-line bg-panel text-ink">
-      <SidebarHeader className="h-12 shrink-0 justify-center border-b border-line p-0 px-2">
-        <div className="flex h-8 w-full items-center gap-2.5 px-1.5">
+      <SidebarHeader className="h-12 shrink-0 justify-center border-b border-line p-0 px-2 group-data-[collapsible=icon]:px-0">
+        <div className="flex h-8 w-full items-center gap-2.5 px-1.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           {/* The mark hides with the rail: a 24 pixel mark beside the trigger overflows the 48
               pixel strip and leaves the trigger hanging outside the rail. */}
           <img
@@ -240,41 +262,57 @@ export function AppSidebar({
             className="size-6 shrink-0 rounded-[8px] group-data-[collapsible=icon]:hidden"
           />
           <span className="min-w-0 truncate text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Tersio <span className="font-normal text-dim">stats</span>
+            Tersio <span className="font-normal text-dim">Dashboard</span>
           </span>
-          <SidebarTrigger className="ml-auto shrink-0 text-dim hover:text-ink" aria-label="Toggle navigation" />
+          <SidebarTrigger className="ml-auto shrink-0 text-dim hover:text-ink group-data-[collapsible=icon]:ml-0" aria-label="Toggle navigation" />
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {NAV.map((group) => {
+        {NAV.map((group, index) => {
           const items = group.items.filter((item) => (agentAvailable || !item.agentOnly) && (dev || !item.devOnly));
-          if (items.length === 0) return null;
+          // A pending read draws the full count this rail would have, so no item arrives late.
+          const pending = group.items.filter((item) => dev || !item.devOnly);
+          if (items.length === 0 && pending.length === 0) return null;
           return (
-            <SidebarGroup key={group.heading}>
-              <SidebarGroupLabel className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
-                {group.heading}
-              </SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {items.map((item) => (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton
-                        isActive={section === item.id}
-                        tooltip={item.label}
-                        onClick={() => onSection(item.id)}
-                        className="mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink"
-                      >
-                        <Icon name={item.icon} className="size-4" />
-                        <span className="truncate">{item.label}</span>
-                        <kbd className="mono ml-auto hidden shrink-0 text-[10px] opacity-70 group-data-[collapsible=offcanvas]:inline">
-                          G {item.hotkey.toUpperCase()}
-                        </kbd>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            <Fragment key={group.heading}>
+              {/* One hairline between sections, drawn by the rail's own separator. */}
+              {index > 0 ? <SidebarSeparator className="my-1" /> : null}
+              <SidebarGroup>
+                <SidebarGroupLabel className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
+                  {group.heading}
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {agentPending ? pending.map((item) => (
+                      <SidebarMenuItem key={item.id}>
+                        <div
+                          aria-hidden="true"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+                        >
+                          <Skeleton className="size-4 shrink-0 rounded-[4px]" />
+                          <Skeleton className="h-3 w-20 group-data-[collapsible=icon]:hidden" />
+                        </div>
+                      </SidebarMenuItem>
+                    )) : items.map((item) => (
+                      <SidebarMenuItem key={item.id}>
+                        <SidebarMenuButton
+                          isActive={section === item.id}
+                          tooltip={item.label}
+                          onClick={() => onSection(item.id)}
+                          className="mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink"
+                        >
+                          <Icon name={item.icon} className="size-4" />
+                          <span className="truncate">{item.label}</span>
+                          <kbd className="mono ml-auto hidden shrink-0 text-[10px] opacity-70 group-data-[collapsible=offcanvas]:inline">
+                            G {item.hotkey.toUpperCase()}
+                          </kbd>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </Fragment>
           );
         })}
       </SidebarContent>
@@ -290,7 +328,7 @@ export function AppSidebar({
           <kbd>1</kbd>-<kbd>6</kbd> window · <kbd>G</kbd> then a letter to jump
         </p>
       </SidebarFooter>
-      <SidebarRail />
+      <SidebarRail onResize={onResize} />
     </Sidebar>
   );
 }
@@ -299,12 +337,14 @@ export function Topbar({
   range,
   onRange,
   modes,
+  modesLoaded,
   onShare,
   onOpenSettings,
 }: {
   range: AgentRange;
   onRange: (range: AgentRange) => void;
   modes: ModeState | null;
+  modesLoaded: boolean;
   onShare: () => void;
   onOpenSettings: () => void;
 }) {
@@ -331,7 +371,7 @@ export function Topbar({
         className="grid size-8 shrink-0 place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft sm:hidden"
       />
       {/* The rail's own header carries the expand/collapse control; the banner names the modes. */}
-      <ModeBanner modes={modes} onOpen={onOpenSettings} />
+      <ModeBanner modes={modes} onOpen={onOpenSettings} loading={!modesLoaded} />
       {/* The right group never shrinks: it holds the three buttons a narrow viewport still needs,
           and the banner truncates instead. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -358,7 +398,9 @@ export function Shell({
   range,
   onRange,
   modes,
+  modesLoaded,
   agentAvailable,
+  agentPending,
   onSettings,
   onShare,
   children,
@@ -368,25 +410,66 @@ export function Shell({
   range: AgentRange;
   onRange: (range: AgentRange) => void;
   modes: ModeState | null;
+  modesLoaded: boolean;
   agentAvailable: boolean;
+  agentPending: boolean;
   onSettings: () => void;
   onShare: () => void;
   children: React.ReactNode;
 }) {
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : 216;
+  });
+
+  // The width lives in tersio settings, because the dashboard binds a new origin each run.
+  useEffect(() => {
+    void fetch("/settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((saved: { sidebarWidth?: unknown } | null) => {
+        if (typeof saved?.sidebarWidth !== "number") return;
+        const next = clampSidebarWidth(saved.sidebarWidth);
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+        setSidebarWidth(next);
+      })
+      .catch(() => { /* an exported file keeps the stored width */ });
+  }, []);
+
+  const resizeSidebar = useCallback((next: number, final: boolean): void => {
+    const clamped = clampSidebarWidth(next);
+    setSidebarWidth(clamped);
+    if (!final) return;
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+    void fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sidebarWidth: clamped }),
+    }).catch(() => { /* the page keeps the width for this run */ });
+  }, []);
+
   return (
-    <SidebarProvider defaultOpen className="[--sidebar-width:13.5rem]">
+    <SidebarProvider defaultOpen style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       <AppSidebar
         section={section}
         onSection={onSection}
         agentAvailable={agentAvailable}
+        agentPending={agentPending}
         onSettings={onSettings}
+        onResize={resizeSidebar}
       />
       <SidebarInset className="min-w-0 bg-transparent">
         <div
           className="pointer-events-none fixed inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_70%_at_50%_0%,black_30%,transparent_75%)]"
           aria-hidden="true"
         />
-        <Topbar range={range} onRange={onRange} modes={modes} onShare={onShare} onOpenSettings={onSettings} />
+        <Topbar
+          range={range}
+          onRange={onRange}
+          modes={modes}
+          modesLoaded={modesLoaded}
+          onShare={onShare}
+          onOpenSettings={onSettings}
+        />
         <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
       </SidebarInset>
     </SidebarProvider>

@@ -34,7 +34,7 @@ export interface NavGroup {
 export const NAV: readonly NavGroup[] = [
   {
     // The guide leads the rail, so a first visit has somewhere to start before any statistics load.
-    heading: "Start",
+    heading: "Setup",
     items: [
       { id: "how-to", label: "Quick start", icon: "workflow", hotkey: "h", agentOnly: false },
     ],
