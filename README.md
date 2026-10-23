@@ -96,10 +96,13 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 | `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail). A terminal asks which agent; `--host` pins it and `--yes` keeps Oh My Pi |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
+| `tersio mcp` | Start the Tersio MCP server on stdio, so any MCP client (Claude Code, Codex, ChatGPT, and others) can read usage, activity, and doctor reports, and set the Combo preset |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
 Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the dashboard's own default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
+
+Connect an MCP client with `claude mcp add tersio -- tersio mcp`, or the same command (`tersio mcp`) in any client's MCP settings. The server exposes four tools: `tersio_stats`, `tersio_activity`, `tersio_doctor`, and `tersio_modes`.
 
 ## ⌨️ Commands reference
 
