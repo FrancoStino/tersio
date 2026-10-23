@@ -173,7 +173,7 @@ function Dashboard() {
     }
     // The guide reads no store, so it never waits on the snapshot behind the other pages.
     // The log reads the activity file, not an agent database, so it renders either way.
-    if (section === "logs") return <LogsPage />;
+    if (section === "logs") return <LogsPage onClose={() => setSection("overview")} />;
     if (loading && !agent && section !== "how-to") return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
