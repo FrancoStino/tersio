@@ -104,7 +104,9 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 
 ### Connecting an MCP client
 
-`tersio mcp` speaks the Model Context Protocol over stdio, so any MCP-capable client can read Tersio's data and set its modes mid-session. Connect it once per client:
+`tersio mcp` speaks the Model Context Protocol, so any MCP-capable client can read Tersio's data and set its modes mid-session. Two connect forms, the same two every MCP server offers: a command the client spawns, or a URL with a header.
+
+**Command form (stdio).** The client starts and stops Tersio itself; nothing to keep running:
 
 - **Claude Code:** `claude mcp add tersio -- tersio mcp`
 - **Codex:** add to `~/.codex/config.toml`:
@@ -118,7 +120,19 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
   { "mcpServers": { "tersio": { "command": "tersio", "args": ["mcp"] } } }
   ```
 
-Four tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or apply a Combo preset).
+**URL form (local HTTP + Bearer header).** For clients that take a `url` and `headers` entry, like hosted servers do. Start the endpoint once (it prints its address and token; the token is generated on first run and kept in `~/.tersio/state.json`, so your config stays valid):
+
+```bash
+tersio mcp --http            # --port <n> overrides; default 7677, bound to 127.0.0.1
+```
+
+```json
+{ "mcpServers": { "tersio": { "url": "http://127.0.0.1:7677/mcp", "headers": { "Authorization": "Bearer <the printed token>" } } } }
+```
+
+The URL is localhost, because Tersio reads this machine's data; the Bearer token keeps other local processes out. Unlike the command form, this endpoint only answers while it runs.
+
+Four tools become available either way: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or apply a Combo preset).
 
 ## ⌨️ Commands reference
 

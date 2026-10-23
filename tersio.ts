@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
 import { runInstall } from './cli/install.ts';
 import { runDoctor } from './cli/doctor.ts';
-import { runMcpServer } from './cli/mcp.ts';
+import { runMcpHttpServer, runMcpServer } from './cli/mcp.ts';
 import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
 import { runUpstream } from './cli/upstream.ts';
@@ -21,7 +21,7 @@ Commands:
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
-  mcp           Start the Tersio MCP server on stdio, for MCP clients
+  mcp           Start the Tersio MCP server on stdio; --http serves a local URL with a Bearer header (--port, default 7677)
   uninstall    Remove the managed extensions
   version      Print the package version
   help         Show this help
@@ -75,7 +75,9 @@ async function main(): Promise<void> {
   }
 
   if (mcp) {
-    await runMcpServer();
+    // HTTP serves the URL-and-header form a static mcp.json wants; stdio is the default a client spawns itself.
+    if (args.includes('--http')) await runMcpHttpServer(dashboardPort || 7677);
+    else await runMcpServer();
     closeRL();
     return;
   }

@@ -1,4 +1,6 @@
-// The MCP server: one stdio endpoint so any MCP client can read Tersio's data and steer its modes.
+// The MCP server: stdio for clients that spawn a command, local HTTP for clients that take a URL and a header.
+import { createServer, type Server } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
 import { COMBO_DEFAULTS, PACKAGE_VERSION } from './common.ts';
@@ -7,6 +9,7 @@ import { runDoctor } from './doctor.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
+import { patchState, readState } from '../extensions/shared/state.ts';
 import type { RangeKey } from '../extensions/shared/agent-stats.ts';
 
 /** The spec version this server speaks; a client naming another is answered with this one. */
@@ -205,5 +208,70 @@ export async function runMcpServer(): Promise<void> {
   });
   // The server never outlives its client: a closed stream ends the process.
   lines.on('close', () => process.exit(0));
-  await new Promise<void>(() => { /* serve until the client disconnects */ });
+  const { promise } = Promise.withResolvers<void>();
+  await promise;
+}
+
+/** The token an HTTP client presents as a Bearer header; one random secret, kept in state, so the URL alone is not access. */
+export function mcpHttpToken(): string {
+  const existing = readState().mcpToken;
+  if (typeof existing === 'string' && existing !== '') return existing;
+  const token = randomBytes(24).toString('hex');
+  patchState({ mcpToken: token });
+  return token;
+}
+
+/**
+ * The streamable-HTTP form: one POST endpoint that answers each JSON-RPC message with JSON.
+ * Stateless on purpose — every call carries everything, so no session has to survive a restart.
+ */
+export function startMcpHttpServer(port: number): Promise<{ server: Server; url: string; token: string }> {
+  const token = mcpHttpToken();
+  const server = createServer((req, res) => {
+    // Localhost only, and the Bearer token gates it: the URL on its own reaches nothing.
+    if (req.url !== '/mcp') { res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found'); return; }
+    if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST', 'Content-Type': 'text/plain' }).end('POST only'); return; }
+    if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401, { 'Content-Type': 'text/plain' }).end('unauthorized'); return; }
+    const body: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => body.push(chunk));
+    req.on('end', () => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(Buffer.concat(body).toString('utf8'));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain' }).end('body must be JSON');
+        return;
+      }
+      const messages = Array.isArray(payload) ? payload : [payload];
+      const answers: unknown[] = [];
+      const send = (msg: unknown): void => { answers.push(msg); };
+      // The printing tools patch the console, so calls run one at a time even inside a batch.
+      let queue: Promise<void> = Promise.resolve();
+      for (const message of messages) {
+        if (message === null || typeof message !== 'object') continue;
+        queue = queue.then(() => handleMessage(message as WireMessage, send));
+      }
+      void queue.then(() => {
+        const out = Array.isArray(payload) ? answers : answers[0];
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(out === undefined ? '' : JSON.stringify(out));
+      });
+    });
+  });
+  const { promise, resolve } = Promise.withResolvers<{ server: Server; url: string; token: string }>();
+  server.listen(port, '127.0.0.1', () => {
+    const address = server.address();
+    const bound = typeof address === 'object' && address !== null ? address.port : port;
+    resolve({ server, url: `http://127.0.0.1:${bound}/mcp`, token });
+  });
+  return promise;
+}
+
+/** The `tersio mcp --http` entry: serve until stopped, with the URL and header printed once. */
+export async function runMcpHttpServer(port: number): Promise<void> {
+  const { url, token } = await startMcpHttpServer(port);
+  console.log(`[ok] Tersio MCP (HTTP) -> ${url}`);
+  console.log(`     Authorization: Bearer ${token}`);
+  const { promise } = Promise.withResolvers<void>();
+  await promise;
 }

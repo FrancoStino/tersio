@@ -16,6 +16,8 @@ export interface TersioState {
   /** Epoch ms until which the prompt stays hidden. */
   updateSnoozeUntil?: number;
   rtkEligible?: { version?: string; heads?: string[]; sig?: string };
+  /** The Bearer token the local MCP HTTP endpoint requires, so the URL alone reaches nothing. */
+  mcpToken?: string;
   diag?: unknown;
 }
 

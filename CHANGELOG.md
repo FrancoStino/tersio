@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - A **`tersio mcp`** command. It starts a small server that any MCP client can talk to — Claude Code, Codex, ChatGPT, and every other MCP-capable app — so an agent can answer "what did my sessions cost", read what Tersio changed, run the health check, and switch the Combo preset, without opening the dashboard. Connect it with `claude mcp add tersio -- tersio mcp` or the same command in any client's MCP settings.
+ - A **`tersio mcp`** command. It starts a small server that any MCP client can talk to — Claude Code, Codex, ChatGPT, and every other MCP-capable app — so an agent can answer "what did my sessions cost", read what Tersio changed, run the health check, and switch the Combo preset, without opening the dashboard. Connect it with `claude mcp add tersio -- tersio mcp`, or the `mcpServers` entry in any client's settings. With `--http` it instead serves a local URL with a Bearer header, for clients that take a `url` and `headers` entry like hosted servers do: it prints its address and a token, and the token is kept so the entry in your config stays valid.
 
 ### Fixed
  - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.

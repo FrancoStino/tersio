@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { handleMessage } from '../../cli/mcp.ts';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { handleMessage, startMcpHttpServer } from '../../cli/mcp.ts';
 
 // One collector stands in for the wire, so the tests assert what a client receives.
 function collector(): { sent: unknown[]; send: (msg: unknown) => void } {
@@ -58,5 +61,33 @@ describe('the MCP server protocol', () => {
     await handleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }, send);
     await handleMessage({ jsonrpc: '2.0', id: 7, method: 42 }, send);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('the MCP HTTP endpoint', () => {
+  test('answers only the bearer token it issued', async () => {
+    // An isolated TERSIO_HOME, so the token this test mints never touches the real one.
+    const home = await mkdtemp(path.join(tmpdir(), 'tersio-mcp-'));
+    const previous = process.env.TERSIO_HOME;
+    process.env.TERSIO_HOME = home;
+    const { server, url, token } = await startMcpHttpServer(0);
+    try {
+     const post = (body: unknown, headers: Record<string, string>) => fetch(url, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json', ...headers },
+       body: JSON.stringify(body),
+     });
+     expect((await post(call(1, 'initialize', {}), {})).status).toBe(401);
+     expect((await post(call(1, 'initialize', {}), { Authorization: 'Bearer wrong' })).status).toBe(401);
+     const init = await post(call(1, 'initialize', { protocolVersion: '2025-03-26' }), { Authorization: `Bearer ${token}` });
+     expect(init.status).toBe(200);
+     const answer = await init.json() as { result: { protocolVersion: string; serverInfo: { name: string } } };
+     expect(answer.result.protocolVersion).toBe('2025-06-18');
+     expect(answer.result.serverInfo.name).toBe('tersio');
+     expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(405);
+    } finally {
+      process.env.TERSIO_HOME = previous;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
