@@ -110,7 +110,14 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 
 - **Any client that takes an MCP JSON config**:
   ```json
-  { "mcpServers": { "tersio": { "command": "tersio", "args": ["mcp"] } } }
+  {
+    "mcpServers": {
+      "tersio": {
+        "command": "tersio",
+        "args": ["mcp"]
+      }
+    }
+  }
   ```
   A client with its own `mcp add`-style command takes the same pair: the command `tersio` with the argument `mcp`.
 
@@ -121,7 +128,16 @@ tersio mcp --http            # --port <n> overrides; default 7677, bound to 127.
 ```
 
 ```json
-{ "mcpServers": { "tersio": { "url": "http://127.0.0.1:7677/mcp", "headers": { "Authorization": "Bearer <the printed token>" } } } }
+{
+  "mcpServers": {
+    "tersio": {
+      "url": "http://127.0.0.1:7677/mcp",
+      "headers": {
+        "Authorization": "Bearer <the printed token>"
+      }
+    }
+  }
+}
 ```
 
 The URL is localhost, because Tersio reads this machine's data; the Bearer token keeps other local processes out. Unlike the command form, this endpoint only answers while it runs.
