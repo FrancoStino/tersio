@@ -21,6 +21,7 @@ import {
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease } from '../extensions/shared/utils.ts';
 import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
+import { CAVEMAN_PIN } from './upstream.ts';
 
 const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 /** How long one source gets before the check gives up on it. */
@@ -156,11 +157,11 @@ interface UpdatePlan {
   cliSource: 'npm' | 'github' | null;
   npm: string | null;
   rtk: [string | null, string | null];
-  rule: [string | null, string | null];
+  ruleLocal: string | null;
+  // The rule bodies at the newest release; the tag names them, the hashes only decide staleness.
+  rule: { tag: string; hashes: string } | null;
   // Bundled with tersio: only the local copy is probed. Missing marks stale; present is never stale on its own.
   ponytail: string | null;
-  // The Caveman release tag names the bodies the update would install; the hashes only decide staleness.
-  ruleTag: string | null;
 }
 
 /** The tag and the two upstream bodies at the newest release, so the plan compares against a published version. */
@@ -196,8 +197,8 @@ async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePla
     cliSource: release?.source ?? null,
     npm: release?.npm ?? null,
     rtk: [rtkLocal, rtkRelease],
-    rule: [ruleLocal, ruleRemote?.hashes ?? null],
-    ruleTag: ruleRemote?.tag ?? null,
+    ruleLocal,
+    rule: ruleRemote,
     ponytail: ponytailLocalText ? parseJsonObject<{ version?: string }>(ponytailLocalText)?.version ?? null : null,
   };
 }
@@ -221,13 +222,13 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
     status.push(`npm serves ${plan.npm}; the release feed has ${plan.cli}`);
   }
   push('RTK', plan.rtk[0], plan.rtk[1]);
-  // The rule carries no local version; the release tag names what the bodies match or would install.
-  const [ruleLocal, ruleLatest] = plan.rule;
-  if (ruleLocal && ruleLatest && ruleLocal === ruleLatest) status.push(`Caveman rule: ${plan.ruleTag} (up to date)`);
-  else if (ruleLatest) {
-    status.push(`Caveman rule: ${ruleLocal ?? 'missing'} → ${plan.ruleTag}`);
-    stale.push(`Caveman rule: ${ruleLocal ?? 'missing'} → ${plan.ruleTag}`);
-  } else if (ruleLocal) status.push(`Caveman rule: ${ruleLocal} (latest unknown)`);
+  // The rule body carries no version, so the tag recorded at pull time names it; the pin covers a fresh install.
+  const ruleCurrent = (readState().cavemanUpstream?.tag ?? CAVEMAN_PIN).replace(/^v/, '');
+  if (plan.ruleLocal && plan.rule && plan.ruleLocal === plan.rule.hashes) status.push(`Caveman rule: ${ruleCurrent} (up to date)`);
+  else if (plan.rule) {
+    status.push(`Caveman rule: ${ruleCurrent} → ${plan.rule.tag.replace(/^v/, '')}`);
+    stale.push(`Caveman rule: ${ruleCurrent} → ${plan.rule.tag.replace(/^v/, '')}`);
+  } else if (plan.ruleLocal) status.push(`Caveman rule: ${ruleCurrent} (latest unknown)`);
   else status.push('Caveman rule: unknown');
   if (plan.ponytail) status.push(`Ponytail: ${plan.ponytail} (bundled with tersio)`);
   else {
