@@ -96,7 +96,7 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 | `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail). A terminal asks which agent; `--host` pins it and `--yes` keeps Oh My Pi |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
-| `tersio mcp` | Start the Tersio MCP server on stdio, so any MCP client (Claude Code, Codex, ChatGPT, and others) can read usage, activity, and doctor reports, and set the Combo preset |
+| `tersio mcp` | Start the Tersio MCP server on stdio, so any MCP client can read usage, activity, and doctor reports, and set the Combo preset |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
@@ -108,17 +108,11 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 
 **Command form (stdio).** The client starts and stops Tersio itself; nothing to keep running:
 
-- **Claude Code:** `claude mcp add tersio -- tersio mcp`
-- **Codex:** add to `~/.codex/config.toml`:
-  ```toml
-  [mcp_servers.tersio]
-  command = "tersio"
-  args = ["mcp"]
-  ```
-- **Any client that takes an MCP JSON config** (Cursor, VS Code, and others):
+- **Any client that takes an MCP JSON config**:
   ```json
   { "mcpServers": { "tersio": { "command": "tersio", "args": ["mcp"] } } }
   ```
+  A client with its own `mcp add`-style command takes the same pair: the command `tersio` with the argument `mcp`.
 
 **URL form (local HTTP + Bearer header).** For clients that take a `url` and `headers` entry, like hosted servers do. Start the endpoint once (it prints its address and token; the token is generated on first run and kept in `~/.tersio/state.json`, so your config stays valid):
 
