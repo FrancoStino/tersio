@@ -1,4 +1,4 @@
-## Unreleased
+## v2.25.14
 
 ### Added
  - A **Logs** page in the dashboard's Developer group. It records what Tersio changes on this machine, newest first: mode and preset switches, installs, updates, and removals with their exit state, every file the installer rewrites, and doctor checks and repairs. The CLI and the dashboard write the same `~/.tersio/activity.jsonl`, so a terminal install shows up there too; the file keeps the last 4000 entries and the page rereads it while open.
