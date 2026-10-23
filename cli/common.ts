@@ -79,7 +79,7 @@ function flagValue(name: string): string | undefined {
 const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([
-  '--host', '--port', '--export', '--currency', '--scope',
+  '--host', '--port', '--export', '--currency', '--scope', '--write',
   '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--rtk-default',
 ]);
 const args = process.argv.slice(2);

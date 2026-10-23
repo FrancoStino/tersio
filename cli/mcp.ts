@@ -1,5 +1,7 @@
 // The MCP server: stdio for clients that spawn a command, local HTTP for clients that take a URL and a header.
+import { promises as fs } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
@@ -266,6 +268,46 @@ export function mcpHttpToken(): string {
  * The streamable-HTTP form: one POST endpoint that answers each JSON-RPC message with JSON.
  * Stateless on purpose — every call carries everything, so no session has to survive a restart.
  */
+/** The finished `mcpServers` entry, so nobody assembles JSON by hand from a printed URL and token. */
+export function mcpHttpConfig(url: string, token: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      tersio: {
+        url,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  }, null, 2);
+}
+
+/**
+ * Writes the `tersio` entry into a client's JSON config, keeping every other server and key.
+ * A file that is not a JSON object is refused rather than overwritten.
+ */
+export async function installMcpConfig(file: string, http: { url: string; token: string } | null): Promise<void> {
+  const entry = http
+    ? { url: http.url, headers: { Authorization: `Bearer ${http.token}` } }
+    : { command: 'tersio', args: ['mcp'] };
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await fs.readFile(file, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not a JSON object');
+    existing = parsed as Record<string, unknown>;
+  } catch (e) {
+    // Only a missing file starts empty; a broken one is the user's to fix.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`${file} is not a JSON object: ${(e as Error).message}`);
+  }
+  const servers = typeof existing.mcpServers === 'object' && existing.mcpServers !== null && !Array.isArray(existing.mcpServers)
+    ? existing.mcpServers as Record<string, unknown>
+    : {};
+  servers.tersio = entry;
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify({ ...existing, mcpServers: servers }, null, 2)}\n`, 'utf8');
+  console.log(`[write] MCP entry for tersio in ${file}`);
+}
+
+
 export function startMcpHttpServer(port: number): Promise<{ server: Server; url: string; token: string }> {
   const token = mcpHttpToken();
   const server = createServer((req, res) => {
@@ -314,11 +356,16 @@ export function startMcpHttpServer(port: number): Promise<{ server: Server; url:
   return promise;
 }
 
-/** The `tersio mcp --http` entry: serve until stopped, with the URL and header printed once. */
-export async function runMcpHttpServer(port: number): Promise<void> {
+/** The `tersio mcp --http` entry: serve until stopped, with the URL, the header, and the finished config printed once. */
+export async function runMcpHttpServer(port: number, configFile?: string | null): Promise<void> {
   const { url, token } = await startMcpHttpServer(port);
+  // The config file gets the entry that matches this run's port and token, so a restart with --write re-points it.
+  if (configFile) await installMcpConfig(configFile, { url, token });
   console.log(`[ok] Tersio MCP (HTTP) -> ${url}`);
   console.log(`     Authorization: Bearer ${token}`);
+  // The config is the part a user had to assemble by hand; print it ready to paste.
+  console.log('\nAdd this to your MCP client config:\n');
+  console.log(mcpHttpConfig(url, token));
   const { promise } = Promise.withResolvers<void>();
   await promise;
 }

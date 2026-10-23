@@ -121,7 +121,7 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
   ```
   A client with its own `mcp add`-style command takes the same pair: the command `tersio` with the argument `mcp`.
 
-**URL form (local HTTP + Bearer header).** For clients that take a `url` and `headers` entry, like hosted servers do. Start the endpoint once (it prints its address and token; the token is generated on first run and kept in `~/.tersio/state.json`, so your config stays valid):
+**URL form (local HTTP + Bearer header).** For clients that take a `url` and `headers` entry, like hosted servers do. Start the endpoint once; it prints the finished entry, ready to paste, and the token is kept in `~/.tersio/state.json` so the entry stays valid:
 
 ```bash
 tersio mcp --http            # --port <n> overrides; default 7677, bound to 127.0.0.1
@@ -141,6 +141,15 @@ tersio mcp --http            # --port <n> overrides; default 7677, bound to 127.
 ```
 
 The URL is localhost, because Tersio reads this machine's data; the Bearer token keeps other local processes out. Unlike the command form, this endpoint only answers while it runs.
+
+**Let Tersio write the entry.** `--write <file>` adds or updates the `tersio` entry in a client's JSON config and keeps every other server and key in it:
+
+```bash
+tersio mcp --write ~/.config/my-client/mcp.json           # command form
+tersio mcp --http --write ~/.config/my-client/mcp.json    # URL form, with this run's port and token
+```
+
+A file that is not a JSON object is refused and left untouched.
 
 Four tools become available either way: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
 
