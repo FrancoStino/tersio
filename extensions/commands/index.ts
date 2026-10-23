@@ -8,30 +8,18 @@ import { announceStatus } from '../shared/status.ts';
 import { setExtensionLabel } from '../shared/host.ts';
 import os from 'node:os';
 import path from 'node:path';
-import { appendUsage, readUsage } from '../shared/usage-ledger.ts';
-import { checkAddonsSummary, runAddonUpdate } from '../updater/index.ts';
+import { appendUsage } from '../shared/usage-ledger.ts';
+import { runAddonUpdate } from '../updater/index.ts';
 import type { ExtensionApi, ExtensionCtx } from '../shared/types.ts';
 
 const HELP = [
   '/tersio status — active modes + combo level',
-  '/tersio check — add-on version check',
   '/tersio update <ponytail|rtk|caveman|all> [--dry-run]',
   '/tersio dashboard — open the Dashboard',
-  '/tersio usage — ledger report for this machine',
   '/tersio help — this table',
   'mode switches: /caveman /rtk /combo (tersio) + /ponytail (upstream)',
 ].join('\n');
 
-
-function usageSummary(): string {
-  const rows = readUsage();
-  if (rows.length === 0) return 'tersio usage: no ledger yet — run commands first.';
-  const byKind: Record<string, number> = {};
-  for (const r of rows) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
-  const parts = Object.entries(byKind).map(([k, n]) => `${k}×${n}`);
-  const last = new Date(rows[rows.length - 1].ts).toISOString();
-  return `tersio usage: ${rows.length} rows (${parts.join(', ')}), last write ${last}.`;
-}
 
 async function openScorecard(pi: ExtensionApi, ctx?: ExtensionCtx, offline = false): Promise<void> {
   try {
@@ -76,7 +64,7 @@ export default function tersioCommandsExtension(pi: ExtensionApi): void {
 
 
   pi.registerCommand?.('tersio', {
-    description: 'Tersio root: status|check|update|dashboard|usage|help',
+    description: 'Tersio root: status|update|dashboard|help',
     handler: async (args, ctx) => {
       const parts = String(args || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
       const [sub] = [parts[0]];
@@ -89,10 +77,6 @@ export default function tersioCommandsExtension(pi: ExtensionApi): void {
       }
       if (sub === 'help') {
         ctx?.ui?.notify?.(HELP, 'info');
-        return;
-      }
-      if (sub === 'check') {
-        await checkAddonsSummary(ctx);
         return;
       }
       if (sub === 'update') {
@@ -111,10 +95,6 @@ export default function tersioCommandsExtension(pi: ExtensionApi): void {
       }
       if (sub === 'upstream') {
         await openScorecard(pi, ctx, parts.includes('--offline'));
-        return;
-      }
-      if (sub === 'usage') {
-        ctx?.ui?.notify?.(usageSummary(), 'info');
         return;
       }
       // Removed mode switches redirect to their own commands, so there is one spelling: /caveman, /rtk, /combo, /ponytail.

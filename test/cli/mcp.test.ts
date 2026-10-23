@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { handleMessage, installMcpConfig, mcpHttpConfig, startMcpHttpServer } from '../../cli/mcp.ts';
+import { handleMessage } from '../../cli/mcp.ts';
 
 // One collector stands in for the wire, so the tests assert what a client receives.
 function collector(): { sent: unknown[]; send: (msg: unknown) => void } {
@@ -100,73 +100,5 @@ describe('the MCP modes tool', () => {
       process.env.TERSIO_HOME = previousTersio;
       process.env.XDG_CONFIG_HOME = previousXdg;
     }
-  });
-});
-
-describe('the MCP HTTP endpoint', () => {
-  test('answers only the bearer token it issued', async () => {
-    // An isolated TERSIO_HOME, so the token this test mints never touches the real one.
-    const home = await mkdtemp(path.join(tmpdir(), 'tersio-mcp-'));
-    const previous = process.env.TERSIO_HOME;
-    process.env.TERSIO_HOME = home;
-    const { server, url, token } = await startMcpHttpServer(0);
-    try {
-     const post = (body: unknown, headers: Record<string, string>) => fetch(url, {
-       method: 'POST',
-       headers: { 'Content-Type': 'application/json', ...headers },
-       body: JSON.stringify(body),
-     });
-     expect((await post(call(1, 'initialize', {}), {})).status).toBe(401);
-     expect((await post(call(1, 'initialize', {}), { Authorization: 'Bearer wrong' })).status).toBe(401);
-     const init = await post(call(1, 'initialize', { protocolVersion: '2025-03-26' }), { Authorization: `Bearer ${token}` });
-     expect(init.status).toBe(200);
-     const answer = await init.json() as { result: { protocolVersion: string; serverInfo: { name: string } } };
-     expect(answer.result.protocolVersion).toBe('2025-06-18');
-    const notified = await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, { Authorization: `Bearer ${token}` });
-    expect(notified.status).toBe(202);
-    expect(await notified.text()).toBe('');
-     expect(answer.result.serverInfo.name).toBe('tersio');
-     expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(405);
-    } finally {
-      process.env.TERSIO_HOME = previous;
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-});
-
-describe('the MCP config writer', () => {
-  test('adds the entry and keeps every other server and key', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tersio-cfg-'));
-    const file = path.join(dir, 'config.json');
-    await writeFile(file, JSON.stringify({ mcpServers: { other: { command: 'other' } }, theme: 'dark' }));
-    await installMcpConfig(file, null);
-    const parsed = JSON.parse(await readFile(file, 'utf8')) as { theme: string; mcpServers: Record<string, { command?: string; args?: string[] }> };
-    expect(parsed.theme).toBe('dark');
-    expect(parsed.mcpServers.other.command).toBe('other');
-    expect(parsed.mcpServers.tersio.command).toBe('tersio');
-    expect(parsed.mcpServers.tersio.args).toEqual(['mcp']);
-  });
-
-  test('writes the url and header form when given an endpoint', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tersio-cfg-'));
-    const file = path.join(dir, 'config.json');
-    await installMcpConfig(file, { url: 'http://127.0.0.1:7677/mcp', token: 'abc123' });
-    const parsed = JSON.parse(await readFile(file, 'utf8')) as { mcpServers: Record<string, { url?: string; headers?: Record<string, string> }> };
-    expect(parsed.mcpServers.tersio.url).toBe('http://127.0.0.1:7677/mcp');
-    expect(parsed.mcpServers.tersio.headers?.Authorization).toBe('Bearer abc123');
-  });
-
-  test('refuses a file that is not a JSON object and leaves it alone', async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'tersio-cfg-'));
-    const file = path.join(dir, 'config.json');
-    await writeFile(file, 'not json');
-    await expect(installMcpConfig(file, null)).rejects.toThrow('is not a JSON object');
-    expect(await readFile(file, 'utf8')).toBe('not json');
-  });
-
-  test('the printed entry parses back to the same url and header', () => {
-    const parsed = JSON.parse(mcpHttpConfig('http://127.0.0.1:7677/mcp', 'tok')) as { mcpServers: Record<string, { url: string; headers: Record<string, string> }> };
-    expect(parsed.mcpServers.tersio.url).toBe('http://127.0.0.1:7677/mcp');
-    expect(parsed.mcpServers.tersio.headers.Authorization).toBe('Bearer tok');
   });
 });

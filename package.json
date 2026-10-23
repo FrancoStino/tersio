@@ -57,7 +57,7 @@
     ],
     "features": {
       "updater": {
-        "description": "In-session updater for Ponytail, RTK, and Caveman (/ai-addons)",
+        "description": "In-session updater for Ponytail, RTK, and Caveman (/tersio update)",
         "default": true,
         "extensions": [
           "./extensions/updater/index.ts"

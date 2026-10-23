@@ -96,7 +96,7 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 | `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail). A terminal asks which agent; `--host` pins it and `--yes` keeps Oh My Pi |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
-| `tersio mcp` | Start the Tersio MCP server on stdio, so any MCP client can read usage, activity, and doctor reports, and set the Combo preset |
+| `tersio mcp` | Start the Tersio MCP server on stdio, so any MCP client can read usage, activity, and doctor reports, and set modes |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
@@ -104,54 +104,24 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 
 ### Connecting an MCP client
 
-`tersio mcp` speaks the Model Context Protocol, so any MCP-capable client can read Tersio's data and set its modes mid-session. Two connect forms, the same two every MCP server offers: a command the client spawns, or a URL with a header.
+`tersio mcp` speaks the Model Context Protocol, so any MCP-capable client can read Tersio's data and set its modes mid-session. Nothing to run: the client starts Tersio when it needs it and stops it when done.
 
-**Command form (stdio).** The client starts and stops Tersio itself; nothing to keep running:
-
-- **Any client that takes an MCP JSON config**:
-  ```json
-  {
-    "mcpServers": {
-      "tersio": {
-        "command": "tersio",
-        "args": ["mcp"]
-      }
-    }
-  }
-  ```
-  A client with its own `mcp add`-style command takes the same pair: the command `tersio` with the argument `mcp`.
-
-**URL form (local HTTP + Bearer header).** For clients that take a `url` and `headers` entry, like hosted servers do. Start the endpoint once; it prints the finished entry, ready to paste, and the token is kept in `~/.tersio/state.json` so the entry stays valid:
-
-```bash
-tersio mcp --http            # --port <n> overrides; default 7677, bound to 127.0.0.1
-```
+Add this entry under `mcpServers` in the client's MCP settings:
 
 ```json
 {
   "mcpServers": {
     "tersio": {
-      "url": "http://127.0.0.1:7677/mcp",
-      "headers": {
-        "Authorization": "Bearer <the printed token>"
-      }
+      "command": "tersio",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-The URL is localhost, because Tersio reads this machine's data; the Bearer token keeps other local processes out. Unlike the command form, this endpoint only answers while it runs.
+That is the whole setup. No extra command, no port, no token, and no process to keep alive.
 
-**Let Tersio write the entry.** `--write <file>` adds or updates the `tersio` entry in a client's JSON config and keeps every other server and key in it:
-
-```bash
-tersio mcp --write ~/.config/my-client/mcp.json           # command form
-tersio mcp --http --write ~/.config/my-client/mcp.json    # URL form, with this run's port and token
-```
-
-A file that is not a JSON object is refused and left untouched.
-
-Four tools become available either way: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
+Four tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
 
 ## ⌨️ Commands reference
 
@@ -171,12 +141,9 @@ It is display-only — it never enters the model context, so it costs the sessio
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes, one body at four levels. Review runs as its own skill. |
 | `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: set it on its own, since no preset turns it on; `normal mode` clears it. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
-| `/tersio check` | Add-on version check |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
 | `/tersio dashboard` | Open the Dashboard. |
-| `/tersio usage` | Ledger report for this machine (rows in `~/.tersio/usage.db`, local only) |
 | `/tersio help` | This table |
-| `/ai-addons` | Add-on updater alias, still works. |
 
 ## 🗂️ Files and backups
 

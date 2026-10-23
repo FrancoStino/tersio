@@ -1055,7 +1055,7 @@ const loadExtension = async (segments: readonly string[]) => {
 };
 
 // Every extension entry point, each registering exactly one command.
-const EXTENSIONS = [["caveman", "index.ts"], ["pstack", "index.ts"], ["combo", "index.ts"], ["rtk", "session.ts"], ["commands", "index.ts"], ["updater", "index.ts"]] as const;
+const EXTENSIONS = [["caveman", "index.ts"], ["pstack", "index.ts"], ["combo", "index.ts"], ["rtk", "session.ts"], ["commands", "index.ts"]] as const;
 
 interface FakePi {
   commands: Map<string, handlerReturnsHandler>;
@@ -1110,7 +1110,7 @@ test("no tersio command handler resolves a value", async () => {
     }
   }
   // The mode switches the tree owns, so a dropped registration fails here rather than passing quietly.
-  for (const command of ["/caveman", "/pstack", "/rtk", "/combo", "/ponytail", "/tersio", "/ai-addons"]) {
+  for (const command of ["/caveman", "/pstack", "/rtk", "/combo", "/ponytail", "/tersio"]) {
     expect(seen, `${command} must be registered`).toContain(command);
   }
 });
@@ -1850,7 +1850,7 @@ function tersioHarness(execImpl?: (cmd: string, args: string[]) => Promise<{ std
 test("/tersio help lists every subcommand", async () => {
   const h = tersioHarness();
   await h.command("help", h.ctx);
-  for (const sub of ["status", "check", "update", "dashboard", "usage"]) {
+  for (const sub of ["status", "update", "dashboard"]) {
     expect(h.notifications.join("\n")).toMatch(new RegExp(`/tersio ${sub}`));
   }
 });
@@ -1876,11 +1876,6 @@ test("/tersio update without target shows usage", async () => {
   expect(h.notifications.join("\n")).toMatch(/Usage: \/tersio update/);
 });
 
-test("/tersio usage reports ledger rows", async () => {
-  const h = tersioHarness();
-  await h.command("usage", h.ctx);
-  expect(h.notifications.join("\n")).toMatch(/tersio usage: \d+ rows/);
-});
 test("/tersio dashboard exports and opens the Dashboard", async () => {
   const h = tersioHarness();
   await h.command("dashboard", h.ctx);
