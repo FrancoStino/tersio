@@ -1,5 +1,6 @@
 // Dashboard server + usage APIs. Binds 127.0.0.1; --export writes a file. No Promise.withResolvers (Node 20.12).
 import { spawn } from 'node:child_process';
+import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
@@ -12,16 +13,18 @@ import type { CurrencyCode } from './currency.ts';
 import {
   OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
 } from './common.ts';
-import { BACKUP_SCHEDULES, applyComboPreset, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
+import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
 import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
+import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
-import { findPackageRoot, resolveRtkBinary, ruleBodyProblem } from '../extensions/shared/utils.ts';
+import { detectHosts } from './hosts.ts';
+import { findPackageRoot, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -147,6 +150,51 @@ async function statusJson(): Promise<string> {
     ponytail: profile.ponytailDefault,
     pstack: profile.pstackDefault,
   });
+}
+
+/**
+ * Run a host command in its own process: the installer the terminal runs, with the server free to
+ * answer. The page polls /api/hosts until the host settles, because the child outlives the request.
+ */
+interface HostJob {
+  action: 'install' | 'uninstall' | 'update';
+  startedAt: number;
+  /** `null` while the child runs, then its exit code. */
+  code: number | null;
+}
+
+/** The last command run per host, so the guide can stop waiting the moment it exits. */
+const hostJobs = new Map<string, HostJob>();
+
+/** The favicon types the mark catalog uses, served as the type the bytes actually are. */
+const MARK_TYPES: Readonly<Record<string, string>> = {
+  svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon', webp: 'image/webp', jpg: 'image/jpeg', gif: 'image/gif', avif: 'image/avif',
+};
+const MARK_EXTS = Object.keys(MARK_TYPES);
+const MARK_EXT_OF_TYPE: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.entries(MARK_TYPES).map(([ext, type]) => [type, ext])),
+  'image/vnd.microsoft.icon': 'ico',
+};
+
+function spawnCli(command: 'install' | 'uninstall' | 'update', host: string): boolean {
+  const entry = process.argv[1];
+  if (!entry || !existsSync(entry)) return false;
+  const runtime = entry.endsWith('.ts') ? 'bun' : process.execPath;
+  const child = spawn(runtime, [entry, command, '--host', host, '--yes'], { detached: true, stdio: 'ignore' });
+  const job: HostJob = { action: command, startedAt: Date.now(), code: null };
+  hostJobs.set(host, job);
+  const verb = `${command[0].toUpperCase()}${command.slice(1)}`;
+  recordActivity('agent', `${verb} ${host} started`);
+  child.on('exit', (code) => {
+    job.code = code ?? 0;
+    recordActivity('agent', `${verb} ${host} ${job.code === 0 ? 'finished' : 'failed'}`, undefined, job.code === 0);
+  });
+  child.on('error', (error) => {
+    job.code = -1;
+    recordActivity('agent', `${verb} ${host} failed`, error.message, false);
+  });
+  child.unref();
+  return true;
 }
 
 // Local-only health: find each agent on PATH, run `--version`, report both.
@@ -432,26 +480,31 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
 > {
   const profile = await storedProfile();
+  const events: string[] = [];
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
-    // A preset level only: `custom` is what the four modes say, never a level to write.
+    // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
     Object.assign(profile, applyComboPreset(profile, level));
+    events.push(`Combo preset to ${level}`);
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
     if (!CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
     profile.cavemanDefault = v;
+    events.push(`Caveman to ${v}`);
   }
   if (body.ponytailDefault !== undefined) {
     const v = String(body.ponytailDefault);
     if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
+    events.push(`Ponytail to ${v}`);
   }
   if (body.pstackDefault !== undefined) {
     const v = String(body.pstackDefault);
     if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
     profile.pstackDefault = v;
+    events.push(`pstack to ${v}`);
   }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
@@ -461,12 +514,25 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   if (body.rtkDefault !== undefined) {
     if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
     profile.rtkDefault = body.rtkDefault;
+    events.push(`RTK to ${body.rtkDefault ? 'on' : 'off'}`);
   }
   if (body.devTools !== undefined) {
     if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
     profile.devTools = body.devTools;
   }
+  if (body.accent !== undefined) {
+    const v = String(body.accent);
+    if (!ACCENT_DEFAULTS.has(v)) return { ok: false, error: 'unknown accent' };
+    profile.accent = v;
+    events.push(`Accent to ${v}`);
+  }
+  if (body.sidebarWidth !== undefined) {
+    if (typeof body.sidebarWidth !== 'number') return { ok: false, error: 'sidebarWidth must be a number' };
+    // A drag changes it often, so it is saved without an activity line.
+    profile.sidebarWidth = clampSidebarWidth(body.sidebarWidth);
+  }
   await writePluginSettings(profile, {});
+  for (const title of events) recordActivity('mode', title, 'Applies to new sessions.');
   return {
     ok: true,
     profile: {
@@ -477,6 +543,8 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       pstackDefault: profile.pstackDefault,
       backupSchedule: profile.backupSchedule,
       devTools: profile.devTools,
+      accent: profile.accent,
+      sidebarWidth: profile.sidebarWidth,
     },
   };
 }
@@ -629,6 +697,95 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
       return;
     }
+    if (req.url?.startsWith('/api/mark?') && req.method === 'GET') {
+      // Marks are CDN files. Fetch each once into ~/.tersio/marks, then serve the copy, so a reload
+      // never asks the network again and a CDN hiccup cannot blank a tile.
+      const slug = new URL(req.url, 'http://127.0.0.1').searchParams.get('slug') ?? '';
+      const remote = REMOTE_MARKS[slug];
+      if (!remote) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('unknown mark');
+        return;
+      }
+      // The catalog mixes favicon types, and a host may answer a `.png` URL with WebP; label every file by its bytes.
+      const cacheDir = path.join(tersioHome(), 'marks');
+      const cacheControl = 'public, max-age=604800, stale-while-revalidate=86400';
+      for (const tryExt of MARK_EXTS) {
+        try {
+          // Read before writing: a miss must reach the fetch below with headers unsent.
+          const bytes = await fs.readFile(path.join(cacheDir, `${slug}.${tryExt}`));
+          res.writeHead(200, { 'Content-Type': MARK_TYPES[tryExt], 'Cache-Control': cacheControl });
+          res.end(bytes);
+          return;
+        } catch { /* not cached under this type */ }
+      }
+      try {
+        const answer = await fetch(remote, { signal: AbortSignal.timeout(5000) });
+        if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+        const type = answer.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
+        const saveExt = MARK_EXT_OF_TYPE[type];
+        // A redirect to a login or error page must not cache HTML as a mark.
+        if (!saveExt) throw new Error(`unexpected type ${type}`);
+        const bytes = Buffer.from(await answer.arrayBuffer());
+        await fs.mkdir(cacheDir, { recursive: true });
+        await fs.writeFile(path.join(cacheDir, `${slug}.${saveExt}`), bytes);
+        res.writeHead(200, { 'Content-Type': type, 'Cache-Control': cacheControl });
+        res.end(bytes);
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+        res.end('mark unavailable');
+      }
+      return;
+    }
+    if (req.url?.startsWith('/api/logs') && req.method === 'GET') {
+      const raw = new URL(req.url, 'http://127.0.0.1').searchParams.get('limit');
+      const limit = Math.min(2000, Math.max(1, Number.parseInt(raw ?? '', 10) || 400));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readActivity(limit)));
+      return;
+    }
+    if (req.url === '/api/hosts' && req.method === 'GET') {
+      // What the guide draws as connected: the host directories an install writes, read from disk.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(detectHosts().map((host) => ({
+        id: host.id,
+        label: host.label,
+        installed: host.installed,
+        version: host.version,
+      }))));
+      return;
+    }
+    if (req.url === '/api/hosts/action' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([...hostJobs].map(([host, job]) => ({ host, ...job }))));
+      return;
+    }
+    if (req.url === '/api/hosts/action' && req.method === 'POST') {
+      // Add an agent or turn one off from the guide. The CLI does the work, so the tree on disk and
+      // the guide cannot drift apart.
+      let body: Record<string, unknown> = {};
+      try {
+        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
+      } catch {
+        body = {};
+      }
+      const host = String(body.host ?? '');
+      const action = String(body.action ?? '');
+      const known = detectHosts().some((entry) => entry.id === host);
+      if (!known || (action !== 'install' && action !== 'uninstall' && action !== 'update')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown host or action' }));
+        return;
+      }
+      if (!spawnCli(action, host)) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+        return;
+      }
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, pending: true, host, action }));
+      return;
+    }
     if (req.url === '/settings' && req.method === 'GET') {
       storedProfile().then((profile) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -641,6 +798,8 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           devTools: profile.devTools,
+          accent: profile.accent,
+          sidebarWidth: profile.sidebarWidth,
           currency: options.currency,
         }));
       });
@@ -748,6 +907,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         if (raw === 'daily' || raw === 'weekly' || raw === 'monthly' || raw === 'manual') schedule = raw;
       } catch { /* keep manual */ }
       const report = schedule === 'manual' ? getDoctorReport(true) : setDiagSchedule(schedule);
+      recordActivity('doctor', schedule === 'manual' ? 'Doctor check' : `Check schedule to ${schedule}`, 'From the dashboard.');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(report));
       return;
@@ -756,6 +916,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       try {
         const { runDoctorRepairs } = await import('./doctor-fix.ts');
         const failed = await runDoctorRepairs(['extensions', 'registrations', 'ponytail']);
+        recordActivity('doctor', 'Doctor repair', failed.length === 0 ? 'Extensions, registrations, and Ponytail checked.' : `${failed.length} step(s) failed.`, failed.length === 0);
         getDoctorReport(true);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: failed.length === 0, failed }));

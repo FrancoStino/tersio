@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
 import { parseCurrencyFlag, readStoredCurrency } from './currency.ts';
+import { recordActivity, shortPath } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -41,16 +42,18 @@ interface PluginsPackage {
 }
 
 const CAVEMAN_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra']);
+// The dashboard's accent picker; the ids match lib/accent.ts, and a new port cannot keep them.
+const ACCENT_DEFAULTS = new Set(['emerald', 'violet', 'slate', 'cyan', 'rose', 'amber', 'orange']);
 const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const PSTACK_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 
-// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts, so the combo preset implies all four modes.
-const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string; pstack: string }> = {
-  off: { caveman: 'off', rtk: false, ponytail: 'off', pstack: 'off' },
-  lite: { caveman: 'lite', rtk: true, ponytail: 'lite', pstack: 'on' },
-  balanced: { caveman: 'full', rtk: true, ponytail: 'full', pstack: 'on' },
-  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra', pstack: 'on' },
+// Mirrors COMBO_LEVELS in extensions/shared/session-state.ts: a preset owns three modes, and pstack stays opt-in.
+const COMBO_PRESET_MODES: Record<string, { caveman: string; rtk: boolean; ponytail: string }> = {
+  off: { caveman: 'off', rtk: false, ponytail: 'off' },
+  lite: { caveman: 'lite', rtk: true, ponytail: 'lite' },
+  balanced: { caveman: 'full', rtk: true, ponytail: 'full' },
+  max: { caveman: 'ultra', rtk: true, ponytail: 'ultra' },
 };
 const COMBO_DEFAULTS = new Set(Object.keys(COMBO_PRESET_MODES));
 // The retired name for the lite preset, so a scripted `--combo-default medium` keeps working.
@@ -74,8 +77,13 @@ function flagValue(name: string): string | undefined {
 }
 
 const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, version: true, help: true };
+/** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
+const VALUE_FLAGS = new Set([
+  '--host', '--port', '--export', '--currency', '--scope',
+  '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--rtk-default',
+]);
 const args = process.argv.slice(2);
-const commandArg = args.find((arg) => !arg.startsWith('-'));
+const commandArg = args.find((arg, i) => !arg.startsWith('-') && !VALUE_FLAGS.has(args[i - 1]));
 const command = commandArg?.toLowerCase() || null;
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
@@ -84,7 +92,9 @@ const showVersion = command === 'version' || args.includes('--version') || args.
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
 const applyUpdate = args.includes('--apply-update');
 const dryRun = args.includes('--dry-run');
-const yes = args.includes('--yes') || args.includes('-y') || install || update || applyUpdate;
+const assumeYes = args.includes('--yes') || args.includes('-y');
+// `yes` also quiets the commands that never prompt on their own; `assumeYes` is the operator saying so.
+const yes = assumeYes || install || update || applyUpdate;
 const verbose = args.includes('--verbose');
 // Off by default: an unverified RTK binary runs with the user's privileges.
 const allowUnverified = args.includes('--allow-unverified');
@@ -189,6 +199,7 @@ async function writeIfChanged(dest: string, content: string, options: WriteOptio
     debug(`${path.basename(dest)} → ${path.basename(dest)}.bak`);
   }
   await fs.writeFile(dest, content, 'utf8');
+  recordActivity('file', `Wrote ${shortPath(dest)}`, dest);
   if (verbose && !options.quiet) console.log(`  [write] ${dest}`);
   return true;
 }
@@ -392,10 +403,10 @@ function textTable(headers: string[], rows: string[][], right: boolean[] = [], m
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
-  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS,
+  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand,
   install, update, showVersion, showHelp, applyUpdate, args,
-  dryRun, yes, verbose, doctor, fix, uninstall, dashboard, upstream,
+  dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,

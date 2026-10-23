@@ -539,7 +539,7 @@ test("pi with an upstream ponytail defers to it", async () => {
   }
 });
 
-// The pstack rigor mode. Every combo preset above off turns it on, and /pstack controls it on its own.
+// The pstack rigor mode. Opt-in: no combo preset turns it on, and /pstack controls it on its own.
 const BODY = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "extensions", "pstack", "rule.md"),
   "utf8",
@@ -648,8 +648,8 @@ test("a stored pstack entry restores the mode on a new session", async () => {
   expect(getSharedComboState().pstack).toBe("on");
 });
 
-// The preset contract: a combo preset turns pstack on with the other modes.
-test("a combo preset turns pstack on, so the level matches its modes", async () => {
+// The preset contract: a combo preset owns caveman, RTK and Ponytail, and leaves pstack opt-in.
+test("a combo preset leaves pstack where it was, so the level still matches its modes", async () => {
   resetSharedComboState();
   const entries: SessionEntry[] = [];
   const combo = instantiate(comboToggleExtension, entries);
@@ -658,8 +658,23 @@ test("a combo preset turns pstack on, so the level matches its modes", async () 
   expect(getSharedComboState().pstack).toBe("off");
   await combo.commands.get("combo")!("balanced", ctx);
 
+  expect(getSharedComboState().pstack).toBe("off");
+  expect(statuses.at(-1)).toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF");
+});
+
+test("a combo preset keeps a pstack the session already had", async () => {
+  resetSharedComboState();
+  const entries: SessionEntry[] = [];
+  const combo = instantiate(comboToggleExtension, entries);
+  const pstack = instantiate(pstackSessionExtension, entries);
+  const { statuses, ctx } = context(entries);
+
+  await pstack.commands.get("pstack")!("on", ctx);
+  await combo.commands.get("combo")!("lite", ctx);
+
   expect(getSharedComboState().pstack).toBe("on");
-  expect(statuses.at(-1)).toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=ON");
+  expect(getSharedComboState().level).toBe("lite");
+  expect(statuses.at(-1)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON");
 });
 
 test("deriveLevel maps every preset back to its level, including balanced", () => {
@@ -667,6 +682,12 @@ test("deriveLevel maps every preset back to its level, including balanced", () =
   expect(deriveLevel({ caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on" })).toBe("lite");
   expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "full", pstack: "on" })).toBe("balanced");
   expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on" })).toBe("max");
+});
+
+// pstack is opt-in, so it neither makes nor breaks a preset.
+test("deriveLevel ignores pstack in both directions", () => {
+  expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off" })).toBe("max");
+  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "on" })).toBe("off");
 });
 
 test("the retired `medium` name still resolves to lite", () => {
@@ -680,10 +701,10 @@ test("deriveLevel returns custom for mixed modes", () => {
   expect(deriveLevel({ caveman: "full", rtk: "off", ponytail: "full", pstack: "off" })).toBe("custom");
 });
 
-// A hand-changed mode still leaves every preset behind, with or without pstack.
-test("deriveLevel returns custom when a mode is changed by hand", () => {
-  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "full", pstack: "off" })).toBe("custom");
-  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "on" })).toBe("custom");
+// A hand-changed mode still leaves every preset behind. pstack is not a preset mode, so it never does.
+test("deriveLevel returns custom when a preset mode is changed by hand", () => {
+  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "lite", pstack: "off" })).toBe("custom");
+  expect(deriveLevel({ caveman: "lite", rtk: "off", ponytail: "lite", pstack: "on" })).toBe("custom");
 });
 
 test("isComboPresetActive is true for presets, false for off", () => {
@@ -713,10 +734,10 @@ function run(...args: string[]) {
   return { status: result.status, stdout: result.stdout || "", stderr: result.stderr || "" };
 }
 
-test("combo preset implies caveman, rtk, and ponytail defaults", () => {
+test("combo preset implies caveman, rtk, and ponytail defaults, and leaves pstack off", () => {
   const result = run("install", "--dry-run", "--yes", "--combo-default", "balanced");
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on\)/);
+  expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off\)/);
 });
 
 test("caveman and rtk flags override the combo preset", () => {
@@ -725,7 +746,7 @@ test("caveman and rtk flags override the combo preset", () => {
     "--combo-default", "max", "--caveman-default", "lite", "--rtk-default", "off",
   );
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Defaults: combo=max \(caveman=lite · rtk=off · ponytail=ultra · pstack=on\)/);
+  expect(result.stdout).toMatch(/Defaults: combo=max \(caveman=lite · rtk=off · ponytail=ultra · pstack=off\)/);
 });
 
 test("ruleDir keeps a self-contained tree and falls back to the package's own extension dir", () => {

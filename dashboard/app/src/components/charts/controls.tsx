@@ -22,13 +22,13 @@ export function Segmented<T extends string>({
 }) {
   return (
     <Tabs value={value} onValueChange={(next) => { if (next !== value) onChange(next as T); }} aria-label={label} className={cn("w-fit", className)}>
-      <TabsList className="h-auto rounded-[10px] border border-line bg-panel p-1">
+      <TabsList className="h-auto rounded-lg border border-line bg-panel p-0.5">
         {options.map((option) => (
           <TabsTrigger
             key={option.value}
             value={option.value}
             title={option.title}
-            className="h-auto cursor-pointer px-3 py-1.5 text-xs tracking-normal text-dim data-[state=active]:font-bold"
+            className="h-auto cursor-pointer rounded-[6px] px-2.5 py-1 text-xs tracking-normal text-dim data-[state=active]:font-bold"
           >
             {option.label}
           </TabsTrigger>

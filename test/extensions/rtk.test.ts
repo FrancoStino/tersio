@@ -200,6 +200,37 @@ test("a host without exec registers nothing", () => {
   expect(h.has("tool_result")).toBe(false);
 });
 
+// OpenCode's adapter drives its own before/after tool hooks, so these events never reach an extension there.
+test("a host without a tool lifecycle registers no shell hook", async () => {
+  // The gate runs after the binary lookup, so the test has to supply one; without it a CI runner
+  // stops even earlier and the assertion would pass for the wrong reason.
+  await withFakeRtk(async () => {
+    resetSharedComboState();
+    const handlers = new Map<string, Handler>();
+    const api: Record<string, unknown> = {
+      hostId: "opencode",
+      setLabel() {},
+      registerCommand() {},
+      registerTool() {},
+      appendEntry() {},
+      on(event: string, handler: Handler) { handlers.set(event, handler); },
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      cwd: "/tmp",
+    };
+    rtkFilterExtension(api as unknown as ExtensionApi);
+    expect(handlers.size, "a handler here would never fire").toBe(0);
+
+    // The same host shape without the id is pi, which does fire both events.
+    const piHandlers = new Map<string, Handler>();
+    rtkFilterExtension({
+      ...api,
+      hostId: undefined,
+      on(event: string, handler: Handler) { piHandlers.set(event, handler); },
+    } as unknown as ExtensionApi);
+    expect([...piHandlers.keys()].toSorted()).toEqual(["tool_call", "tool_result"]);
+  });
+});
+
 test("rtkActive prefers the session entry over the shared switch", () => {
   resetSharedComboState();
   setSharedComboMode("rtk", "on");

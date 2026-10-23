@@ -18,7 +18,7 @@ import {
   setSharedComboModes,
   systemPromptIncludes,
 } from '../shared/session-state.ts';
-import { hostSelect, injectPromptText, onHostEvent, setExtensionLabel } from '../shared/host.ts';
+import { hostSelect, injectPromptText, isOpencodeHost, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus } from '../shared/status.ts';
 import {
   isComboSetupComplete,
@@ -84,30 +84,29 @@ async function loadPonytailInstructions(mode: string): Promise<string> {
   return ponytailFallback(mode);
 }
 
-// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies all four. pstackDefault counts as its own default, so a session that stores only it still honors it instead of losing it to the preset's `off`.
+// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies the three it owns. pstackDefault counts as its own default, so a session that stores only it still honors it instead of losing it to the preset.
 function savedModes(): { caveman: string; rtk: string; ponytail: string; pstack: string } {
   const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault'].some((key) => key in readPluginSettings());
   const preset = COMBO_LEVELS[readComboDefault()];
   return hasModeDefaults
     ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault() }
-    : { caveman: preset.caveman, rtk: preset.rtk, ponytail: preset.ponytail, pstack: preset.pstack };
+    : { ...preset, pstack: 'off' };
 }
 
 export default function comboToggleExtension(pi: ExtensionApi): void {
-  setExtensionLabel(pi, 'Combo session toggle (all four add-ons)');
+  setExtensionLabel(pi, 'Combo session toggle (caveman, RTK, Ponytail)');
 
   let setupPrompted = false;
   let lastInjected: string | undefined = undefined;
   // opencode has no UI event stream, so only its empty branch reconciles.
-  const OPENCODE = pi.hostId === 'opencode';
+  const OPENCODE = isOpencodeHost(pi);
 
-  // Siblings restore from these entries, so the fallback must write them too.
+  // Siblings restore from these entries, so the fallback must write them too. A preset owns three modes, so it writes no pstack entry.
   function persistPreset(level: string): void {
     const modes = COMBO_LEVELS[level];
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
     pi.appendEntry?.('rtk-mode', { enabled: modes.rtk === 'on' });
     pi.appendEntry?.('ponytail-mode', { mode: modes.ponytail });
-    pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
     pi.appendEntry?.('combo-level', { level });
   }
   function restoreConfiguredDefaults(): void {
@@ -119,8 +118,8 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
     pi.appendEntry?.('rtk-mode', { enabled: modes.rtk === 'on' });
     pi.appendEntry?.('ponytail-mode', { mode: modes.ponytail });
-    pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
-    if (preset && modes.caveman === preset.caveman && modes.rtk === preset.rtk && modes.ponytail === preset.ponytail && modes.pstack === preset.pstack) {
+    if (modes.pstack !== 'off') pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
+    if (preset && modes.caveman === preset.caveman && modes.rtk === preset.rtk && modes.ponytail === preset.ponytail) {
       pi.appendEntry?.('combo-level', { level: combo });
     }
   }
@@ -142,7 +141,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   }
 
   pi.registerCommand?.('combo', {
-    description: 'Toggle all four Tersio modes at once. Usage: /combo <off|lite|balanced|max|status>',
+    description: 'Toggle caveman, RTK and Ponytail at once. Usage: /combo <off|lite|balanced|max|status>',
     handler: async (args, ctx) => {
       listen(ctx);
       const arg = String(args || '').trim().toLowerCase();
@@ -155,10 +154,11 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
 
       if (arg === 'help') {
         ctx?.ui?.notify?.(
-          '/combo off      — disables every mode (caveman, rtk, ponytail, pstack)\n' +
-          '/combo lite     — light: caveman=lite, rtk=on, ponytail=lite, pstack=on\n' +
-          '/combo balanced — middle: caveman=full, rtk=on, ponytail=full, pstack=on\n' +
-          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra, pstack=on',
+          '/combo off      — disables caveman, rtk and ponytail. pstack keeps its own setting\n' +
+          '/combo lite     — light: caveman=lite, rtk=on, ponytail=lite\n' +
+          '/combo balanced — middle: caveman=full, rtk=on, ponytail=full\n' +
+          '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra\n' +
+          'pstack is not part of a preset. Set it on its own with /pstack on|off',
           'info'
         );
         return;
@@ -204,11 +204,11 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     if (setupPrompted || !ctx?.hasUI || !ctx.ui?.select || isComboSetupComplete()) return;
     setupPrompted = true;
     const choice = await hostSelect(pi, ctx.ui, 'Session-start defaults — Combo preset', [
-      { label: 'off', description: 'Keep every Tersio mode inactive' },
-      { label: 'lite', description: 'caveman=lite, rtk=on, ponytail=lite, pstack=on' },
-      { label: 'balanced', description: 'caveman=full, rtk=on, ponytail=full, pstack=on' },
-      { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra, pstack=on' },
-    ], { selectionMarker: 'radio', helpText: 'You can change this later with /tersio settings.' });
+      { label: 'off', description: 'Keep caveman, RTK and Ponytail inactive' },
+      { label: 'lite', description: 'caveman=lite, rtk=on, ponytail=lite' },
+      { label: 'balanced', description: 'caveman=full, rtk=on, ponytail=full' },
+      { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra' },
+    ], { selectionMarker: 'radio', helpText: 'You can change this later with /tersio settings. pstack is separate.' });
     const level = choice || 'off';
     if (saveComboSetup(level) && level !== 'off') {
       persistPreset(level);
@@ -235,13 +235,19 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   });
 
   // Resume, branch, and compaction re-announce; dedupe keeps repeats silent.
-  for (const event of ['session_branch', 'session_tree', 'agent_start', 'session_switch', 'session_compact']) {
+  for (const event of sessionChangeEvents(pi)) {
     onHostEvent(pi, event, async (_event, ctx) => {
       track(ctx);
       announceStatus(ctx);
-      if (event === 'agent_start') await runFirstRunSetup(ctx);
     });
   }
+
+  // The first interactive turn also runs the one-time setup prompt, which a restore event never does.
+  onHostEvent(pi, 'agent_start', async (_event, ctx) => {
+    track(ctx);
+    announceStatus(ctx);
+    await runFirstRunSetup(ctx);
+  });
 
   pi.on<SystemPromptEvent>('before_agent_start', async (event, ctx) => {
     if (ctx?.hasUI) reconcile(ctx);

@@ -86,10 +86,10 @@ export function isComboSetupComplete(): boolean {
 }
 
 const COMBO_MODE_DEFAULTS = {
-  off: { cavemanDefault: 'off', rtkDefault: false, ponytailDefault: 'off', pstackDefault: 'off' },
-  lite: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite', pstackDefault: 'on' },
-  balanced: { cavemanDefault: 'full', rtkDefault: true, ponytailDefault: 'full', pstackDefault: 'on' },
-  max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra', pstackDefault: 'on' },
+  off: { cavemanDefault: 'off', rtkDefault: false, ponytailDefault: 'off' },
+  lite: { cavemanDefault: 'lite', rtkDefault: true, ponytailDefault: 'lite' },
+  balanced: { cavemanDefault: 'full', rtkDefault: true, ponytailDefault: 'full' },
+  max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra' },
 } as const;
 
 export function saveComboSetup(level: string): boolean {

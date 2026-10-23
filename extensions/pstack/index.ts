@@ -1,10 +1,10 @@
-// /pstack session mode: injects the pstack rigor body. Every preset above off turns it on.
+// /pstack session mode: injects the pstack rigor body. Opt-in, so no preset turns it on.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, normalizeInputCommand, normalizeMode, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
-import { injectPromptText, onHostEvent, setExtensionLabel } from '../shared/host.ts';
+import { injectPromptText, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus } from '../shared/status.ts';
 import { readPstackDefault } from '../shared/plugin-settings.ts';
 import { ruleDir } from '../shared/utils.ts';
@@ -101,21 +101,12 @@ export default function pstackSessionExtension(pi: ExtensionApi): void {
     restoreMode(ctx);
   });
 
-  onHostEvent(pi, 'session_branch', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  pi.on('session_tree', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  onHostEvent(pi, 'session_switch', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
-
-  onHostEvent(pi, 'session_compact', async (_event, ctx) => {
-    restoreMode(ctx);
-  });
+  // The host adapter names the switch events it emits, so this stays free of any one host's naming.
+  for (const event of sessionChangeEvents(pi)) {
+    onHostEvent(pi, event, async (_event, ctx) => {
+      restoreMode(ctx);
+    });
+  }
 
   pi.on('before_agent_start', async (event: SystemPromptEvent) => {
     const mode = isOmpSubagentPrompt(event.systemPrompt) ? getSharedComboState().pstack : currentMode;

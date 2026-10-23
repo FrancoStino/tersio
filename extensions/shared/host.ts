@@ -35,17 +35,39 @@ export interface StringArraySpec {
 interface HostAdapter {
   label(pi: HostHandle, text: string): void;
   on<E>(pi: ExtensionApi, event: string, handler: (event: E, ctx: ExtensionCtx) => unknown): void;
+  /** The resume, branch, and compaction events this host emits. A mode restores on each of them. */
+  sessionChanges: readonly string[];
+  /** True when the host emits `tool_call` and `tool_result`, so a shell hook can rewrite and filter there. */
+  toolLifecycle: boolean;
   select(ui: UiApi | undefined, title: string, options: SelectOption[], dialogOptions?: Record<string, unknown>): Promise<string | undefined>;
   inject(event: SystemPromptEvent, block: PromptBlock): PromptInjection | undefined;
   stringArray(pi: ExtensionApi, name: string, spec: StringArraySpec): ToolParams;
 }
 
+/** The stale block is dropped by its marker, then the new block is appended as its own prompt part. */
+function appendBlock(event: SystemPromptEvent, block: PromptBlock): PromptInjection {
+  const marker = block.staleMarker?.replace(/^[^\w]+/, '').trim();
+  const kept = marker ? asPromptArray(event.systemPrompt).filter((part) => !part.includes(marker)) : asPromptArray(event.systemPrompt);
+  return { systemPrompt: [...kept, block.text] };
+}
+
+/** A JSON Schema array parameter, which pi and OpenCode both accept. OMP wants zod, so it builds its own. */
+function jsonArrayParams(name: string, spec: StringArraySpec): ToolParams {
+  const array: Record<string, unknown> = { type: 'array', items: { type: 'string' } };
+  if (spec.minItems) array.minItems = spec.minItems;
+  if (spec.description) array.description = spec.description;
+  return { type: 'object', properties: { [name]: array }, required: [name] };
+}
+
+// pi reports a branch switch as session_tree and emits no session_branch.
 const piAdapter: HostAdapter = {
   label() { /* no label surface */ },
   on(pi, event, handler) {
     if (event === 'session_branch') return;
     pi.on(event, handler);
   },
+  sessionChanges: ['session_tree', 'session_switch', 'session_compact'],
+  toolLifecycle: true,
   async select(ui, title, options, dialogOptions) {
     if (!ui?.select) return undefined;
     const shown = options.map((o) => (o.description ? `${o.label} — ${o.description}` : o.label));
@@ -70,24 +92,22 @@ const piAdapter: HostAdapter = {
     return { systemPrompt: `${dropStale(asPromptArray(event.systemPrompt)).join('\n\n')}\n\n${block.text}` };
   },
   stringArray(_pi, name, spec) {
-    const array: Record<string, unknown> = { type: 'array', items: { type: 'string' } };
-    if (spec.minItems) array.minItems = spec.minItems;
-    if (spec.description) array.description = spec.description;
-    return { type: 'object', properties: { [name]: array }, required: [name] };
+    return jsonArrayParams(name, spec);
   },
 };
 
+// OMP emits every switch event, including session_branch and its own session_tree.
 const ompAdapter: HostAdapter = {
   label(pi, text) { pi.setLabel?.(text); },
   on(pi, event, handler) { pi.on(event, handler); },
+  sessionChanges: ['session_tree', 'session_branch', 'session_switch', 'session_compact'],
+  toolLifecycle: true,
   async select(ui, title, options, dialogOptions) {
     if (!ui?.select) return undefined;
     return ui.select(title, options, dialogOptions);
   },
   inject(event, block) {
-    const marker = block.staleMarker?.replace(/^[^\w]+/, '').trim();
-    const dropStale = (parts: string[]): string[] => (marker ? parts.filter((part) => !part.includes(marker)) : parts);
-    return { systemPrompt: [...dropStale(asPromptArray(event.systemPrompt)), block.text] };
+    return appendBlock(event, block);
   },
   stringArray(pi, name, spec) {
     const { z } = pi.zod as { z: ZodFactory['z'] };
@@ -97,43 +117,55 @@ const ompAdapter: HostAdapter = {
   },
 };
 
+// OpenCode drives one session per hook payload, so only the start event is replayed for an unseen session.
 const opencodeAdapter: HostAdapter = {
   label() { /* no label surface */ },
   on(pi, event, handler) { pi.on(event, handler); },
+  sessionChanges: [],
+  // server.ts drives its own before/after tool hooks, so these events never reach an extension here.
+  toolLifecycle: false,
   async select(ui, title, options, dialogOptions) {
     if (!ui?.select) return undefined;
     return ui.select(title, options, dialogOptions);
   },
   inject(event, block) {
-    const marker = block.staleMarker?.replace(/^[^\w]+/, '').trim();
-    const dropStale = (parts: string[]): string[] => (marker ? parts.filter((part) => !part.includes(marker)) : parts);
-    return { systemPrompt: [...dropStale(asPromptArray(event.systemPrompt)), block.text] };
+    return appendBlock(event, block);
   },
   stringArray(_pi, name, spec) {
-    const array: Record<string, unknown> = { type: 'array', items: { type: 'string' } };
-    if (spec.minItems) array.minItems = spec.minItems;
-    if (spec.description) array.description = spec.description;
-    return { type: 'object', properties: { [name]: array }, required: [name] };
+    return jsonArrayParams(name, spec);
   },
 };
 
-// Explicit hostId wins; the legacy zod sniff keeps old callers working.
+// One host derivation, so the adapters and the predicates below cannot disagree about who is running.
+function hostOf(pi: HostHandle): 'pi' | 'omp' | 'opencode' {
+  if (pi.hostId === 'opencode') return 'opencode';
+  if (pi.hostId === 'omp') return 'omp';
+  if (pi.hostId === 'pi') return 'pi';
+  // The zod factory is the only host signal a caller without hostId can offer.
+  return pi.zod ? 'omp' : 'pi';
+}
+
+const ADAPTERS: Record<ReturnType<typeof hostOf>, HostAdapter> = {
+  pi: piAdapter,
+  omp: ompAdapter,
+  opencode: opencodeAdapter,
+};
+
 function adapterFor(pi: HostHandle): HostAdapter {
-  if (pi.hostId === 'opencode') return opencodeAdapter;
-  if (pi.hostId === 'omp') return ompAdapter;
-  if (pi.hostId === 'pi') return piAdapter;
-  return pi.zod ? ompAdapter : piAdapter;
+  return ADAPTERS[hostOf(pi)];
 }
 
 export function isPiHost(pi: HostHandle): boolean {
-  return !pi.zod;
+  return hostOf(pi) === 'pi';
 }
 
-/** The omp runtime carries a zod factory; pi and opencode do not. */
+/** The omp runtime carries a zod factory; pi and OpenCode do not. */
 export function isOmpHost(pi: HostHandle): boolean {
-  if (pi.hostId === 'omp') return true;
-  if (pi.hostId === 'pi' || pi.hostId === 'opencode') return false;
-  return Boolean(pi.zod);
+  return hostOf(pi) === 'omp';
+}
+
+export function isOpencodeHost(pi: HostHandle): boolean {
+  return hostOf(pi) === 'opencode';
 }
 
 export function setExtensionLabel(pi: HostHandle, text: string): void {
@@ -142,6 +174,16 @@ export function setExtensionLabel(pi: HostHandle, text: string): void {
 
 export function onHostEvent<E>(pi: ExtensionApi, event: string, handler: (event: E, ctx: ExtensionCtx) => unknown): void {
   adapterFor(pi).on<E>(pi, event, handler);
+}
+
+/** The resume, branch, and compaction events this host emits, so a mode restores without naming any host. */
+export function sessionChangeEvents(pi: HostHandle): readonly string[] {
+  return adapterFor(pi).sessionChanges;
+}
+
+/** True when a shell hook may register `tool_call` and `tool_result` on this host. */
+export function hasToolLifecycle(pi: HostHandle): boolean {
+  return adapterFor(pi).toolLifecycle;
 }
 
 export async function hostSelect(

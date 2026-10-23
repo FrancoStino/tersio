@@ -272,8 +272,16 @@ function SidebarTrigger({
   )
 }
 
-function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
-  const { toggleSidebar } = useSidebar()
+function SidebarRail({
+  className,
+  onResize,
+  ...props
+}: React.ComponentProps<"button"> & {
+  /** Drags the rail wider or narrower; a click without movement still toggles it. */
+  onResize?: (width: number, final: boolean) => void
+}) {
+  const { toggleSidebar, state } = useSidebar()
+  const drag = React.useRef<{ startX: number; startWidth: number; moved: boolean } | null>(null)
 
   return (
     <button
@@ -281,7 +289,33 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
       data-slot="sidebar-rail"
       aria-label="Toggle Sidebar"
       tabIndex={-1}
-      onClick={toggleSidebar}
+      onClick={() => {
+        const finished = drag.current
+        drag.current = null
+        if (finished?.moved) return
+        toggleSidebar()
+      }}
+      onPointerDown={(event) => {
+        // A collapsed rail is an icon strip; its width is fixed, so only a click applies there.
+        if (!onResize || state === 'collapsed') return
+        const box = event.currentTarget.parentElement?.getBoundingClientRect()
+        if (!box) return
+        drag.current = { startX: event.clientX, startWidth: box.width, moved: false }
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current
+        if (!start || !onResize) return
+        const dx = event.clientX - start.startX
+        if (Math.abs(dx) > 3) start.moved = true
+        if (start.moved) onResize(start.startWidth + dx, false)
+      }}
+      onPointerUp={(event) => {
+        const start = drag.current
+        if (!start || !onResize || !start.moved) return
+        onResize(start.startWidth + (event.clientX - start.startX), true)
+      }}
+      onPointerCancel={() => { drag.current = null }}
       className={cn(
         "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",

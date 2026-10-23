@@ -14,6 +14,8 @@ export interface Column<T> {
   align?: "left" | "right";
   /** Fixed width in px. */
   width?: number;
+  /** Applied to the header and every cell, for hiding a column at a narrow width. */
+  className?: string;
   /** Sort value. A column without one is not sortable. */
   sort?: (row: T) => number | string;
   render: (row: T) => React.ReactNode;
@@ -101,7 +103,7 @@ export function DataTable<T>({
                   scope="col"
                   style={column.width ? { width: column.width } : undefined}
                   aria-sort={active ? (sort?.dir === "asc" ? "ascending" : "descending") : "none"}
-                  className={cn("relative h-9 px-3", column.align === "right" && "text-right")}
+                  className={cn("relative h-9 px-3", column.align === "right" && "text-right", column.className)}
                 >
                   {column.title ? <HoverTip content={column.title}>{head}</HoverTip> : head}
                   {column.sort && (
@@ -132,7 +134,7 @@ export function DataTable<T>({
                   {columns.map((column) => (
                     <TableCell
                       key={column.key}
-                      className={cn("px-3 py-2 align-middle", column.align === "right" && "text-right tabular-nums")}
+                      className={cn("px-3 py-2 align-middle", column.align === "right" && "text-right tabular-nums", column.className)}
                     >
                       {column.render(row)}
                     </TableCell>

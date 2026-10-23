@@ -27,8 +27,8 @@ Tersio installs into Oh My Pi, pi, or OpenCode, and cuts those costs:
 | 🪨 **Caveman** | Shorter replies. Answer first, filler gone, and code, commands, paths, and errors stay exact. |
 | 🗜️ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
 | 🧠 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
-| 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. |
-| 🧩 **Combo** | One command sets all of the above, at three strengths. |
+| 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. Opt-in, on its own switch. |
+| 🧩 **Combo** | One command sets Caveman, RTK, and Ponytail, at three strengths. |
 | 📊 **Dashboard** | What you spent, per model and per day. |
 
 Every mode is a text block you can read in the repo. Measured savings and prompt overhead are published per mode in [docs/BENCHMARK_GUIDE.md](./docs/BENCHMARK_GUIDE.md). No total-bill claim: the tests measure reply tokens, prompt overhead, and command output only.
@@ -93,7 +93,7 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 | Command | Purpose |
 |---|---|
 | `tersio install` | Install (user scope: all OMP sessions) |
-| `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail) |
+| `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail). A terminal asks which agent; `--host` pins it and `--yes` keeps Oh My Pi |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
@@ -113,11 +113,11 @@ It is display-only — it never enters the model context, so it costs the sessio
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|lite\|balanced\|max\|status` | One preset for all four modes (start here): lite = caveman lite · rtk on · ponytail lite · pstack on, balanced = full/full/on/on, max = ultra/ultra/on/on, and off disables every mode; per-mode tweaks drop to `custom`. |
+| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. pstack is separate and no preset changes it. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies at six levels. `full`, `ultra`, and `megacave-full` ship upstream's bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own, for registers upstream defines but no longer ships, and each names its upstream row. Legacy `wenyan` spellings still resolve: `wenyan`/`wenyan-full` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-ultra` → `megacave-ultra`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes, one body at four levels. Review runs as its own skill. |
-| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). The lite, balanced, and max presets turn it on; `normal mode` clears it. |
+| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: set it on its own, since no preset turns it on; `normal mode` clears it. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio check` | Add-on version check |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |

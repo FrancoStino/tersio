@@ -73,6 +73,14 @@ const LAYOUT: Record<SectionId, readonly Block[]> = {
     { grid: "md:grid-cols-2", cards: [{ body: "bars", rows: 5 }, { body: "bars", rows: 5 }] },
     { cards: [{ body: "table", rows: 8 }] },
   ],
+  // The guide reads no store, so it paints at once; the shapes below only matter if the shell ever waits on it.
+  "how-to": [
+    { cards: [{ body: "chart" }] },
+    { cards: [{ body: "table", rows: 4 }] },
+  ],
+  logs: [
+    { cards: [{ body: "table", rows: 10 }] },
+  ],
 };
 
 /** One figure, in the shape `Stat` draws: a small label over a bold value. */

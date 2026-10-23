@@ -63,9 +63,9 @@ describe("remote marks", () => {
 
   test("a colored mark draws as an image and a monochrome one as a mask", () => {
     expect(maskMark("cerebras")).toBeNull();
-    expect(imageMark("cerebras")).toBe("https://cdn.sanity.io/images/e4qjo92p/production/e7a55ae5ab7e2c4fdfd4e66a51f628d1f2f44207-967x967.png?w=256&h=256&fit=max");
+    expect(imageMark("cerebras")).toBe("/api/mark?slug=cerebras");
     expect(imageMark("anthropic")).toBeNull();
-    expect(maskMark("anthropic")).toBe("https://cdn.jsdelivr.net/npm/simple-icons@16/icons/anthropic.svg");
+    expect(maskMark("anthropic")).toBe("/api/mark?slug=anthropic");
     expect(maskMark("not-a-vendor")).toBeNull();
   });
 
@@ -94,8 +94,8 @@ describe("remote marks", () => {
     (globalThis as { __TERSIO_MARKS?: Record<string, string> | null }).__TERSIO_MARKS = { anthropic: "data:image/svg+xml,%3Csvg%3E%3C/svg%3E" };
     try {
       expect(maskMark("anthropic")).toBe("data:image/svg+xml,%3Csvg%3E%3C/svg%3E");
-      // A mark the inlined set does not carry still falls back to its host.
-      expect(maskMark("groq")).toBe("https://groq.com/favicon.svg");
+      // A mark the inlined set does not carry falls back to the dashboard, which caches it on disk.
+      expect(maskMark("groq")).toBe("/api/mark?slug=groq");
     } finally {
       (globalThis as { __TERSIO_MARKS?: Record<string, string> | null }).__TERSIO_MARKS = null;
     }

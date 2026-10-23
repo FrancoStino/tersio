@@ -8,7 +8,7 @@ import {
 } from './common.ts';
 import { PONYTAIL_PKG } from './manifest.ts';
 import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } from './interactive.ts';
-import { detectHosts, hostHint, hostLabel, parseHostArg } from './hosts.ts';
+import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { fileURLToPath } from 'node:url';
@@ -194,11 +194,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
       return false;
     }
     if (installed.length > 1) {
-      const choice = await askInteractiveChoice('Uninstall Tersio from which agent?', installed.map((h) => ({
-        value: h.id,
-        label: hostLabel(h),
-        hint: hostHint(h),
-      })), host);
+      const choice = await askInteractiveChoice('Uninstall Tersio from which agent?', hostOptions(installed), host);
       if (choice.status !== 'selected') {
         closeRL();
         return false;

@@ -925,7 +925,8 @@ test("uninstall dry-run never prompts for confirmation", () => {
 test("dashboard --export writes a self-contained html file", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-dash-"));
   const out = path.join(dir, "dash.html");
-  const result = spawnSync(process.execPath, [installer, "dashboard", "--export", out], {
+  // The stored currency is the operator's, so the assertion pins it instead of reading this machine.
+  const result = spawnSync(process.execPath, [installer, "dashboard", "--export", out, "--currency", "USD"], {
     encoding: "utf8",
     cwd: root,
     env: {

@@ -24,6 +24,8 @@ import { TracesPage } from "./components/agents/traces";
 import { ToolsPage } from "./components/agents/tools";
 import { ProjectsPage } from "./components/agents/projects";
 import { UpstreamPage } from "./components/agents/upstream";
+import { HowToPage } from "./components/agents/how-to";
+import { LogsPage } from "./components/agents/logs";
 import { SettingsDialog } from "@/components/dialogs";
 import { ShareDialog } from "@/components/agents/share-dialog";
 import { ToasterProvider } from "@/components/toaster";
@@ -97,8 +99,9 @@ function useReveal(): void {
 }
 
 /** The session-start modes the navbar banner names, from GET /settings; null for a file export. */
-function useModeState(): readonly [ModeState | null, () => void] {
+function useModeState(): readonly [ModeState | null, () => void, boolean] {
   const [modes, setModes] = useState<ModeState | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => {
     alive.current = false;
@@ -119,13 +122,14 @@ function useModeState(): readonly [ModeState | null, () => void] {
           pstackDefault: typeof d.pstackDefault === "string" ? d.pstackDefault : "off",
         });
       })
-      .catch(() => { /* no server: the banner stays hidden */ });
+      .catch(() => { /* no server: the banner keeps its placeholder */ })
+      .finally(() => setLoaded(true));
   }, []);
   useEffect(() => {
     load();
   }, [load]);
 
-  return [modes, load] as const;
+  return [modes, load, loaded] as const;
 }
 
 function Dashboard() {
@@ -133,12 +137,13 @@ function Dashboard() {
   useReveal();
   const { fx, money, applyCurrency } = useFx();
   const { section: route, range, session, setSection, setRange, setSession } = useHashRoute();
-  // Upstream is a developer surface: the About switch hides it, and a bookmarked route lands on Overview.
+  // Upstream and Logs are developer surfaces: the About switch hides them, and a bookmarked route lands on Overview.
   const dev = useDevMode();
-  const section = route === "upstream" && !dev ? "overview" : route;
+  const section = (route === "upstream" || route === "logs") && !dev ? "overview" : route;
   // The smallest view still answers "is there an agent database".
   // Upstream is not an agent view: the scorecard has its own store, and the hook keeps the shell uniform.
-  const view: AgentView = section === "upstream" ? "all" : section;
+  // Neither the scorecard nor the guide is an agent view; the hook keeps the shell uniform.
+  const view: AgentView = section === "upstream" || section === "how-to" || section === "logs" ? "all" : section;
   // Only the request log pages through the range; every other view wants the newest rows.
   const [requestOffset, setRequestOffset] = useState(0);
   const { agent, loading, stale } = useAgentData(range, view, section === "requests" ? requestOffset : 0);
@@ -148,7 +153,9 @@ function Dashboard() {
   const [shareOpen, setShareOpen] = useState(false);
   const [request, setRequest] = useState<AgentRequestRow | null>(null);
   // The session-start modes the navbar's banner names, reloaded when Settings closes.
-  const [modes, reloadModes] = useModeState();
+  const [modes, reloadModes, modesLoaded] = useModeState();
+  // The rail draws its own skeleton until the first data answer, so its items do not pop in.
+  const agentPending = loading && !agent;
 
   useShortcuts({ onRange: setRange, onSection: setSection });
   // A new range renumbers the log, so a page held across the switch would point at different rows.
@@ -168,6 +175,10 @@ function Dashboard() {
     if (section === "traces" && session) {
       return <SessionTrace key={session} sessionFile={session} money={money} onClose={() => setSession(null)} />;
     }
+    // The guide, the log, and the scorecard read their own sources, so none waits on an agent database.
+    if (section === "how-to") return <HowToPage modes={modes} onModesChanged={reloadModes} />;
+    if (section === "upstream") return <UpstreamPage />;
+    if (section === "logs") return <LogsPage onClose={() => setSection("overview")} />;
     if (loading && !agent) return <PageSkeleton section={section} />;
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
@@ -223,8 +234,6 @@ function Dashboard() {
         return <ToolsPage agent={agent} money={money} />;
       case "projects":
         return <ProjectsPage agent={agent} money={money} />;
-      case "upstream":
-        return <UpstreamPage />;
       default:
         return null;
     }
@@ -238,7 +247,9 @@ function Dashboard() {
         range={range}
         onRange={setRange}
         modes={modes}
+        modesLoaded={modesLoaded}
         agentAvailable={agentAvailable}
+        agentPending={agentPending}
         onSettings={() => setSettingsOpen(true)}
         onShare={() => setShareOpen(true)}
       >

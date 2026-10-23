@@ -1,5 +1,5 @@
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
-import { injectPromptText, isOmpHost, onHostEvent, setExtensionLabel, stringArrayToolParams } from '../shared/host.ts';
+import { injectPromptText, isOmpHost, onHostEvent, sessionChangeEvents, setExtensionLabel, stringArrayToolParams } from '../shared/host.ts';
 import { readRtkDefault } from '../shared/plugin-settings.ts';
 import { resolveRtkBinary, shimCommand } from '../shared/utils.ts';
 import { announceStatus } from '../shared/status.ts';
@@ -128,21 +128,12 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
     restoreEnabled(ctx);
   });
 
-  onHostEvent(pi, 'session_branch', async (_event, ctx) => {
-    restoreEnabled(ctx);
-  });
-
-  pi.on('session_tree', async (_event, ctx) => {
-    restoreEnabled(ctx);
-  });
-
-  onHostEvent(pi, 'session_switch', async (_event, ctx) => {
-    restoreEnabled(ctx);
-  });
-
-  onHostEvent(pi, 'session_compact', async (_event, ctx) => {
-    restoreEnabled(ctx);
-  });
+  // The host adapter names the switch events it emits, so this stays free of any one host's naming.
+  for (const event of sessionChangeEvents(pi)) {
+    onHostEvent(pi, event, async (_event, ctx) => {
+      restoreEnabled(ctx);
+    });
+  }
 
   pi.on<SystemPromptEvent>('before_agent_start', async (event) => {
     const active = isOmpSubagentPrompt(event.systemPrompt) ? getSharedComboState().rtk === 'on' : enabled;

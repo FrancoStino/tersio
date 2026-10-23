@@ -2,12 +2,13 @@
 import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
+  ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
   verbose,
 } from './common.ts';
 import type { WriteOptions } from './common.ts';
 import os from 'node:os';
 import { DEFAULT_CURRENCY, isCurrencyCode } from './currency.ts';
+import { recordActivity } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
 import { readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
@@ -28,9 +29,12 @@ interface Profile {
   pstackDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
-  // The dashboard's Developer tools switch. It lives here, not in browser storage, so it survives a
-  // new port and a new browser: the dashboard binds a fresh origin each run.
+  // The dashboard's Developer tools switch and accent. Both live here, not in browser storage, so
+  // they survive a new port and a new browser: the dashboard binds a fresh origin each run.
   devTools: boolean;
+  accent: string;
+  /** The rail's expanded width in px, from the dashboard's drag handle. */
+  sidebarWidth: number;
   // Empty means the built-in default.
   subagentMarkers: string[];
 }
@@ -48,8 +52,15 @@ function defaultProfile(): Profile {
     currency: DEFAULT_CURRENCY,
     backupSchedule: 'monthly',
     devTools: false,
+    accent: 'emerald',
+    sidebarWidth: 216,
     subagentMarkers: [],
   };
+}
+
+/** The rail keeps enough room for a label and never eats the page. */
+function clampSidebarWidth(px: number): number {
+  return Math.min(420, Math.max(180, Math.round(px)));
 }
 
 interface StoredSettings {
@@ -61,6 +72,8 @@ interface StoredSettings {
   currency?: unknown;
   backupSchedule?: unknown;
   devTools?: unknown;
+  accent?: unknown;
+  sidebarWidth?: unknown;
   subagentMarkers?: unknown;
 }
 
@@ -86,6 +99,8 @@ function applyStored(base: Profile, stored: StoredSettings): void {
     base.backupSchedule = stored.backupSchedule as BackupSchedule;
   }
   if (typeof stored.devTools === 'boolean') base.devTools = stored.devTools;
+  if (typeof stored.accent === 'string' && ACCENT_DEFAULTS.has(stored.accent)) base.accent = stored.accent;
+  if (typeof stored.sidebarWidth === 'number') base.sidebarWidth = clampSidebarWidth(stored.sidebarWidth);
   if (Array.isArray(stored.subagentMarkers)) {
     // An empty marker would match every turn.
     base.subagentMarkers = stored.subagentMarkers.filter((m): m is string => typeof m === 'string' && m.trim() !== '');
@@ -143,6 +158,7 @@ async function mirrorPonytailDefault(mode: string, options: WriteOptions): Promi
 // Persist profile where every host reads it. `omp plugin config get` no longer reports it; `tersio settings` does.
 async function writePluginSettings(profile: Profile, options: WriteOptions): Promise<void> {
   const file = tersioSettingsFile();
+  const before = parseStored(await readTextIfExists(file));
   const values = {
     ...(parseStored(await readTextIfExists(file)) ?? {}),
     comboDefault: profile.comboDefault,
@@ -154,6 +170,8 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     devTools: profile.devTools,
+    accent: profile.accent,
+    sidebarWidth: profile.sidebarWidth,
     ...(profile.subagentMarkers.length > 0 ? { subagentMarkers: profile.subagentMarkers } : {}),
   };
   if (options.dryRun) {
@@ -162,6 +180,10 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   }
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
+  // Only a mode write is a session default; an accent or currency save is not, and would mislabel one.
+  const modesChanged = !before || ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault']
+    .some((key) => before[key as keyof StoredSettings] !== values[key as keyof typeof values]);
+  if (modesChanged) recordActivity('mode', 'Session defaults saved', formatProfile(profile));
   console.log(`  [write] Session defaults in ${file}`);
   await mirrorPonytailDefault(profile.ponytailDefault, options);
 }
@@ -170,10 +192,10 @@ function formatProfile(profile: Profile): string {
   return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault}) · currency=${profile.currency}`;
 }
 
-export { defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
+export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
 export type { Profile };
 
-/** A combo level writes all four modes, so the level names the preset that produced them. */
+/** A combo level writes the three modes it owns, so the level names the preset that produced them. */
 export function applyComboPreset(profile: Profile, level: string): Profile {
   const preset = COMBO_PRESET_MODES[level] ?? COMBO_PRESET_MODES.off;
   return {
@@ -182,22 +204,17 @@ export function applyComboPreset(profile: Profile, level: string): Profile {
     cavemanDefault: preset.caveman,
     rtkDefault: preset.rtk,
     ponytailDefault: preset.ponytail,
-    pstackDefault: preset.pstack,
   };
 }
 
-/** The level a status line may claim: a preset only while all four modes still match it. */
+/** The level a status line may claim: a preset only while the three modes it owns still match it. */
 export function comboLevelOf(profile: Profile): string {
-  const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault, pstackDefault } = profile;
-  if (comboDefault === 'off' && cavemanDefault === 'off' && !rtkDefault && ponytailDefault === 'off' && pstackDefault === 'off') {
-    return 'off';
-  }
+  const { comboDefault, cavemanDefault, rtkDefault, ponytailDefault } = profile;
   const preset = COMBO_PRESET_MODES[comboDefault];
   const matches = preset !== undefined
     && preset.caveman === cavemanDefault
     && preset.rtk === rtkDefault
-    && preset.ponytail === ponytailDefault
-    && preset.pstack === pstackDefault;
+    && preset.ponytail === ponytailDefault;
   return matches ? comboDefault : 'custom';
 }
 

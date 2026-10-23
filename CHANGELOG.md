@@ -1,6 +1,35 @@
+## Unreleased
+
+### Added
+ - A **Logs** page in the dashboard's Developer group. It records what Tersio changes on this machine, newest first: mode and preset switches, installs, updates, and removals with their exit state, every file the installer rewrites, and doctor checks and repairs. The CLI and the dashboard write the same `~/.tersio/activity.jsonl`, so a terminal install shows up there too; the file keeps the last 4000 entries and the page rereads it while open.
+- A **Quick start** page in the dashboard, first in the rail. It draws the pipeline as one canvas: the three agents loading the same extensions, the four prompt blocks in injection order, then one output node for the whole turn. Each agent node opens its own menu with Update, Install, and Uninstall, and a dashed slot under the agents offers only the agents this machine is missing; an uninstalled agent leaves the canvas, and the slot goes when there is nothing left to add. The Combo preset sits centred against the agent column. The canvas scales to the card width and picks one of three layouts (wide, tablet, phone), so the diagram is drawn at every size instead of being replaced by a list. It reads this machine's settings and installed hosts, so a mode that is off or an agent that is not installed draws dimmed, and an active connector carries a travelling dash. Clicking a node opens a menu beside it with its role and the command that changes it, a mode switches to any of its levels from that menu, and the canvas pans and zooms. It reads no usage store, so it paints before any snapshot arrives and costs no query.
+
+### Changed
+ - The dashboard now remembers the accent color and the rail width you pick. Both survive a restart and a different browser, because Tersio stores them with your other settings instead of leaving them in the browser.
+ - The rail, the mode banner, the Quick start canvas, and the Logs page show a placeholder while they load. A fast disk read settles first, so the placeholder never flickers.
+ - The share card fits its content. The calendar card is shorter, so its figures sit nearer the calendar.
+ - The rail reads "Tersio Dashboard" instead of "Tersio stats", and its first group is named "Setup".
+ - The Quick start canvas moves with its state. An agent that joins or leaves slides the column into place, a mode switch fades its node and pulses its ring, and a connector fades as it lights or dims.
+ - The Settings dialog no longer carries a Connection pane. Each agent's CLI version now shows on its node in the pipeline, and no file path is drawn.
+ - `tersio update` now asks which agent to refresh. It used to default to Oh My Pi and never ask, so an update on a pi or OpenCode machine refreshed the wrong tree while the help said a terminal asks. `--host` still pins the agent, and `--yes` keeps the old default for scripts.
+ - pstack is now opt-in, and no Combo preset turns it on. A preset sets Caveman, RTK, and Ponytail, and leaves pstack where you had it. This makes the preset cheaper for anyone who does not want the rigor mode, and lets you keep pstack on across a preset change. Set it on its own with `/pstack on` or the pstack row in Settings, which stays editable while a preset is active.
+ - One host derivation replaces three. `isPiHost` tested for a missing zod factory, which is also true on OpenCode, so it answered `pi` there while the adapter table answered `opencode`. Every predicate and adapter now reads the same function, and `isOpencodeHost` is new.
+ - Each host adapter now names the session events it emits, so a mode loops over that list instead of hard-coding five event names. OpenCode emits none of them, and its dead handler registrations are gone.
+
+### Fixed
+ - Provider and vendor logos are now saved on your machine the first time they load. The dashboard used to request them from the internet on every visit, so a slow answer left an empty tile and every icon downloaded again each time. A logo that cannot load now shows the provider's first letter instead of a blank square.
+ - Some logos came back blank because Tersio assumed every logo was the same file type. It now handles every type these sites use, including the ones a host converts on the way, so the icon always matches its actual file.
+ - `tersio update` run from a source checkout applies the update with that checkout. It delegated to the published package, which cannot carry unshipped changes, so an update in progress failed with `Unknown command: pi`. The global install is skipped there too, because it would replace the tree the checkout lives in.
+ - `tersio update --host <agent>` failed with `Unknown command: omp`. The command reader treated a flag's value as the command name, so the inner run the update delegates to printed the help text and exited 1. A flag's value is skipped now, and a test covers the delegated form.
+ - The caveman row in Settings offers the retired Wenyan names, and the CLI rejects them: picking one failed with `unknown caveman level`. The row names the Megacave levels now, which is what the mode banner has shown since the rename.
+ - Update picks the right package manager when `HOME` itself is a symlink. The running copy was resolved but the `~/.bun` prefix was not, so a bun install under a symlinked home was refreshed through npm. Both sides now resolve the same way.
+ - Updating no longer loops when the command is a symlink. The bin at `~/.bun/bin/tersio` points into the bun global tree, and the update read the link's own path, so it still chose npm and the loop survived. It now resolves the link first.
+ - The RTK shell hook registers only on a host that emits `tool_call` and `tool_result`. OpenCode drives its own tool hooks, so the shared filter registered two handlers there that could never fire.
+
 ## v2.25.13
 
 ### Fixed
+ - Update picks the right package manager when `HOME` itself is a symlink. The running copy was resolved but the `~/.bun` prefix was not, so a bun install under a symlinked home was refreshed through npm. Both sides now resolve the same way.
  - Updating no longer loops when the command is a symlink. The bin at `~/.bun/bin/tersio` points into the bun global tree, and the update read the link's own path, so it still chose npm and the loop survived. It now resolves the link first.
 
 ## v2.25.12
@@ -16,7 +45,7 @@
  - The pstack mode ships one more skill, the TypeScript one. It is the only upstream skill that does not need a special command or Cursor, so it comes with its examples. The mode now points at it, because this app cannot trigger a skill by file type the way Cursor does.
 
 ### Fixed
- - Tersio now installs and starts on pi. pi could not find the app's list of extensions, so it tried to load every file in the folder and crashed on one meant for OpenCode. The app now says which files to load. Tested on the real package in a clean setup: the crash is gone, all eight extensions load, and the six Ponytail skills come with them.
+ - Tersio now installs and starts on pi. pi could not find the app's list of extensions, so it tried to load every file in the folder and crashed on one meant for OpenCode. The app now says which files to load. Tested on the real package in a clean setup: the crash is gone, all eight extensions load, and the six Ponytail skills come with them. Thanks to @casperdcl, who found the missing `pi` key and sent the fix in #61.
  - Tersio now works on OpenCode without breaking your permissions. OpenCode decides what a command may do, and Tersio used to rewrite the command in a way that could let a blocked command through. It now asks OpenCode first and leaves the command alone when the answer is no. If your OpenCode is too old to ask, it falls back to the old behaviour.
  - Checking for updates no longer stops at npm. A release can now be found through GitHub as well, so a version that is tagged but not yet on npm is still offered.
  - `tersio update` now tells you what it did. The report it built was being thrown away, so you never saw which version your Caveman rules came from. It also works when GitHub limits anonymous requests.

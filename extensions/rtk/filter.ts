@@ -6,7 +6,7 @@ import { resolveRtkBinary } from '../shared/utils.ts';
 import { readRtkDefault } from '../shared/plugin-settings.ts';
 import { getSharedComboState, lastCustomValue, sessionEntries } from '../shared/session-state.ts';
 import { appendUsage } from '../shared/usage-ledger.ts';
-import { isPiHost } from '../shared/host.ts';
+import { hasToolLifecycle, isPiHost } from '../shared/host.ts';
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from '../shared/types.ts';
 
 /** Tool name to `rtk pipe --filter` name. Exported so the OpenCode host reuses one map. */
@@ -107,9 +107,10 @@ async function rewriteCommand(
 export default function rtkFilterExtension(pi: ExtensionApi): void {
   const bin = resolveRtkBinary();
   const exec = pi.exec;
-  if (!bin || !exec) return;
+  // A host that drives its own tool hooks never fires these events, so a handler here would be dead weight.
+  if (!bin || !exec || !hasToolLifecycle(pi)) return;
   // omp records the post-hook command in its transcript, so only pi leaves an audit row here:
-  // opencode rewrites in its own plugin hook, and an omp row would double-count the transcript.
+  // an omp row would double-count, and OpenCode never reaches this hook at all.
   const auditHost = isPiHost(pi) ? 'pi' : null;
   // Registered synchronously, unlike the rtk-init hook, whose async version probe can miss the first call of a fast session.
   pi.on('tool_call', async (event, ctx: ExtensionCtx) => {

@@ -10,7 +10,9 @@ export type SectionId =
   | "traces"
   | "tools"
   | "projects"
-  | "upstream";
+  | "upstream"
+  | "logs"
+  | "how-to";
 
 export interface NavItem {
   id: SectionId;
@@ -30,6 +32,13 @@ export interface NavGroup {
 }
 
 export const NAV: readonly NavGroup[] = [
+  {
+    // The guide leads the rail, so a first visit has somewhere to start before any statistics load.
+    heading: "Setup",
+    items: [
+      { id: "how-to", label: "Quick start", icon: "workflow", hotkey: "h", agentOnly: false },
+    ],
+  },
   {
     heading: "Usage",
     items: [
@@ -61,6 +70,7 @@ export const NAV: readonly NavGroup[] = [
     heading: "Developer",
     items: [
       { id: "upstream", label: "Upstream", icon: "git-branch", hotkey: "s", agentOnly: false, devOnly: true },
+      { id: "logs", label: "Logs", icon: "scroll-text", hotkey: "l", agentOnly: false, devOnly: true },
     ],
   },
 ];

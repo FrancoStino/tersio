@@ -1,4 +1,5 @@
 // Brand marks served, not vendored: a tile resolves its mark's URL, inlined once by the CLI export for offline use.
+import { useState } from "react";
 import { cn } from "cn";
 import { MARK_BG, MARK_SCALE, contrastInk } from "../../../../extensions/shared/brand-marks.ts";
 import { providerColor, providerMeta, vendorOf } from "@/lib/format";
@@ -46,6 +47,7 @@ const MARK_INK = 0.78;
 
 /** One tile, one mark: image, mask, monogram, glyph; no findable mark keeps the monogram, not a logo. */
 function Mark({ slug, initial, color, small, tiny, row }: { slug: string; initial: string; color: string; small?: boolean; tiny?: boolean; row?: boolean }) {
+  const [broken, setBroken] = useState(false);
   // Only a mark whose art overruns its own box scales back, so no tile crops the ink.
   const scale = slug ? (MARK_SCALE[slug] ?? 1) : 1;
   // One size class: the art's share of its tile, which is full bleed outside a table row.
@@ -62,15 +64,16 @@ function Mark({ slug, initial, color, small, tiny, row }: { slug: string; initia
       </span>
     );
   }
-  const image = slug ? imageMark(slug) : null;
+  const image = slug && !broken ? imageMark(slug) : null;
   if (image) {
     return (
       <span className={cn(tile, surface)} style={fill} aria-hidden="true">
-        <img src={image} alt="" loading="lazy" className={cn(glyph, "object-contain")} />
+        {/* A mark that never arrives falls back to the monogram rather than leaving an empty tile. */}
+        <img src={image} alt="" loading="lazy" onError={() => setBroken(true)} className={cn(glyph, "object-contain")} />
       </span>
     );
   }
-  const mask = slug ? maskMark(slug) : null;
+  const mask = slug && !broken ? maskMark(slug) : null;
   if (mask) {
     return (
       <span className={cn(tile, surface)} style={fill} aria-hidden="true">
@@ -79,9 +82,10 @@ function Mark({ slug, initial, color, small, tiny, row }: { slug: string; initia
     );
   }
   if (!initial) {
+    // A glyph fills its own box edge to edge, unlike a logo, so it takes a smaller share of the tile.
     return (
       <span className={cn(tile, "bg-transparent text-dim")} aria-hidden="true">
-        <Icon name="bot" className={`grid ${glyph}`} />
+        <Icon name="bot" className="size-[58%]" />
       </span>
     );
   }
