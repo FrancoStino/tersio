@@ -159,32 +159,35 @@ interface UpdatePlan {
   rule: [string | null, string | null];
   // Bundled with tersio: only the local copy is probed. Missing marks stale; present is never stale on its own.
   ponytail: string | null;
+  // The Caveman release tag names the bodies the update would install; the hashes only decide staleness.
+  ruleTag: string | null;
 }
 
-/** The two upstream bodies at the newest release, so the plan compares against a published version. */
-async function cavemanRemoteHashes(signal: AbortSignal): Promise<string | null> {
+/** The tag and the two upstream bodies at the newest release, so the plan compares against a published version. */
+async function cavemanRemoteRule(signal: AbortSignal): Promise<{ tag: string; hashes: string } | null> {
   const tag = await cavemanRelease();
   if (!tag) return null;
   const texts = await Promise.all([
     httpsGet(`${CAVEMAN_RAW}/${tag}/${CAVEMAN_BODY_PATHS.ultra}`, { signal }),
     httpsGet(`${CAVEMAN_RAW}/${tag}/${CAVEMAN_BODY_PATHS.megacave}`, { signal }),
   ]);
-  return texts.map((t) => sha256Hex(t).slice(0, 8)).join('+');
+  return { tag, hashes: texts.map((t) => sha256Hex(t).slice(0, 8)).join('+') };
 }
 
 // Current → latest per add-on. Probes are capped and nullable; the plan prints `unknown` for anything unreachable.
 async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePlan> {
   const rtkBin = resolveRtkBinary();
-  const ponytailPkg = path.join(OMP_PLUGINS_DIR, 'node_modules', '@dietrichgebert', 'ponytail', 'package.json');
+  // Ponytail ships inside this package; the separate sibling the old probe read was removed on install.
+  const ponytailPkg = path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'ponytail', 'package.json');
   // rule.md ships with the release; only the tracked bodies can go stale.
-const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
+  const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
   const controller = new AbortController();
   const [rtkLocal, rtkRelease, ruleLocal, ruleRemote, ponytailLocalText] = await Promise.all([
     settle(rtkBin ? execP(rtkBin, ['--version'], { timeout: 5000 }).then((r) => normalizeRtkVersion(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
     settle(httpsGet(RTK_RELEASE_API, { signal: controller.signal }).then((text) => normalizeRtkVersion((JSON.parse(text) as RtkRelease).tag_name) || null), 1500),
     Promise.all([readTextIfExists(tersioRule('rule-ultra.md')), readTextIfExists(tersioRule('rule-megacave.md'))])
       .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null)),
-    settle(cavemanRemoteHashes(controller.signal), 1500),
+    settle(cavemanRemoteRule(controller.signal), 1500),
     readTextIfExists(ponytailPkg),
   ]);
   controller.abort();
@@ -193,7 +196,8 @@ const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', 
     cliSource: release?.source ?? null,
     npm: release?.npm ?? null,
     rtk: [rtkLocal, rtkRelease],
-    rule: [ruleLocal, ruleRemote],
+    rule: [ruleLocal, ruleRemote?.hashes ?? null],
+    ruleTag: ruleRemote?.tag ?? null,
     ponytail: ponytailLocalText ? parseJsonObject<{ version?: string }>(ponytailLocalText)?.version ?? null : null,
   };
 }
@@ -217,7 +221,14 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
     status.push(`npm serves ${plan.npm}; the release feed has ${plan.cli}`);
   }
   push('RTK', plan.rtk[0], plan.rtk[1]);
-  push('Caveman rule', plan.rule[0], plan.rule[1]);
+  // The rule carries no local version; the release tag names what the bodies match or would install.
+  const [ruleLocal, ruleLatest] = plan.rule;
+  if (ruleLocal && ruleLatest && ruleLocal === ruleLatest) status.push(`Caveman rule: ${plan.ruleTag} (up to date)`);
+  else if (ruleLatest) {
+    status.push(`Caveman rule: ${ruleLocal ?? 'missing'} → ${plan.ruleTag}`);
+    stale.push(`Caveman rule: ${ruleLocal ?? 'missing'} → ${plan.ruleTag}`);
+  } else if (ruleLocal) status.push(`Caveman rule: ${ruleLocal} (latest unknown)`);
+  else status.push('Caveman rule: unknown');
   if (plan.ponytail) status.push(`Ponytail: ${plan.ponytail} (bundled with tersio)`);
   else {
     status.push('Ponytail: missing → bundled reinstall');

@@ -36,6 +36,11 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 The entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
 
+## 2026-10-23 — An update probe kept reading a path a migration had removed
+**What happened:** every `tersio update` reported "Ponytail: missing → bundled reinstall" and listed it as a change, because the probe still read the standalone package's `package.json` after Ponytail had moved inside the tersio package and the installer had learned to delete that sibling.
+**Root cause:** the migration changed where the files live and who deletes the old copy, but the read-side probe that reported their state was not migrated with it.
+**Prevention rule:** when a migration moves or removes an artifact, list every reader of its old path — checks, probes, doctors, dashboards — and migrate them in the same change.
+
 ## 2026-10-23 — A proxied icon served every file under one type
 **What happened:** the new mark route labelled every cached favicon `image/svg+xml`, so the browser dropped the ICO and PNG marks (kilo, magpie, commandcode, trae) and the tile fell back to a letter. A second pass broke stepfun and inclusionai because their host answers a `.png` URL with WebP bytes, and the cache name still said PNG.
 **Root cause:** the cache filename came from the URL's extension and the response type was hard-coded, so the bytes and the label could disagree with nothing to catch it.

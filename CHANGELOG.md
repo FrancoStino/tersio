@@ -1,3 +1,9 @@
+## Unreleased
+
+### Fixed
+ - The update check now names the Caveman rule's release version instead of a code fingerprint, so the line reads like the others.
+ - The update check no longer reports the bundled Ponytail as missing. It looked for the separate package an older install carried, so every update claimed to reinstall it and listed it as a change even when nothing changed.
+
 ## v2.25.14
 
 ### Added

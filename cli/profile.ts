@@ -151,7 +151,8 @@ async function mirrorPonytailDefault(mode: string, options: WriteOptions): Promi
     if (existing.defaultMode === mode) return;
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, `${JSON.stringify({ ...existing, defaultMode: mode }, null, 2)}\n`, 'utf8');
-    console.log(`  [write] Ponytail default in ${file}`);
+    // A mirror of the session default, not a save of its own; the settings write above is the report.
+    if (verbose) console.log(`  [write] Ponytail default in ${file}`);
   } catch { /* upstream's config is best-effort; its own default stands */ }
 }
 
