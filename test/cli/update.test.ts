@@ -527,6 +527,24 @@ test("--host still pins the agent, and no prompt appears when stdin is a pipe", 
   expect(result.stdout).toMatch(/--host pi/);
 });
 
+// The delegated command repeats `--host`, and the inner run used to read the host as its command.
+test("the delegated form parses --host instead of taking it for a command", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-update-host-"));
+  try {
+    const result = spawnSync(process.execPath, [installer, "--apply-update", "--dry-run", "--yes", "--host", "pi"], {
+      cwd: root,
+      encoding: "utf8",
+      env: cliEnv(home),
+      timeout: 15000,
+    });
+
+    expect(result.stderr).not.toMatch(/Unknown command/);
+    expect(result.status, result.stderr).toBe(0);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // The prompt is Clack's, so only a real terminal proves it appears. Select the second row (pi) with
 // an arrow key and Enter, then read what the delegated command was told.
 const PROMPT_PY = [

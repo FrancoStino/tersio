@@ -277,6 +277,21 @@ async function runLatestUpdate(): Promise<void> {
   }
   console.log(`Updating ${stale.join(', ')}`);
 
+  // A checkout runs its own entry: the published CLI cannot carry unshipped changes, and the global
+  // install would replace the tree this copy lives in.
+  const sourceEntry = process.argv[1]?.endsWith('.ts') ? process.argv[1] : null;
+  if (sourceEntry) {
+    try {
+      await execInherit(process.execPath, [sourceEntry, '--apply-update', ...forwardedArgs]);
+      console.log(`Done — tersio ${PACKAGE_VERSION} and add-ons updated.`);
+      await refreshPrices().catch(() => { /* pricing is best-effort; update already succeeded */ });
+    } catch (e) {
+      console.error(`[fail] Could not run ${sourceEntry}: ${(e as Error).message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   // Broken payloads (v2.20.0) crash on boot — smoke-check the target before touching anything installed.
   const smokeArgs = IS_WINDOWS
     ? ['/d', '/s', '/c', 'npm', 'exec', '--yes', '--prefer-online', `--package=${PACKAGE_NAME}${target}`, '--', PACKAGE_BIN, '--version']

@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
 import { parseCurrencyFlag, readStoredCurrency } from './currency.ts';
+import { recordActivity, shortPath } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
 
 const IS_WINDOWS = process.platform === 'win32';
@@ -74,8 +75,13 @@ function flagValue(name: string): string | undefined {
 }
 
 const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, version: true, help: true };
+/** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
+const VALUE_FLAGS = new Set([
+  '--host', '--port', '--export', '--currency', '--scope',
+  '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--rtk-default',
+]);
 const args = process.argv.slice(2);
-const commandArg = args.find((arg) => !arg.startsWith('-'));
+const commandArg = args.find((arg, i) => !arg.startsWith('-') && !VALUE_FLAGS.has(args[i - 1]));
 const command = commandArg?.toLowerCase() || null;
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
@@ -191,6 +197,7 @@ async function writeIfChanged(dest: string, content: string, options: WriteOptio
     debug(`${path.basename(dest)} → ${path.basename(dest)}.bak`);
   }
   await fs.writeFile(dest, content, 'utf8');
+  recordActivity('file', `Wrote ${shortPath(dest)}`, dest);
   if (verbose && !options.quiet) console.log(`  [write] ${dest}`);
   return true;
 }
