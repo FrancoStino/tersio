@@ -25,7 +25,11 @@
     "websiteURL": "https://github.com/KurutoDenzeru/tersio",
     "defaultPrompt": [
       "Show my Tersio mode status",
-      "Show my local agent usage"
+      "Show my local agent usage",
+      "Set combo lite",
+      "Enable RTK",
+      "Set ponytail full",
+      "Enable pstack"
     ],
     "brandColor": "#D97706"
   }

@@ -50,13 +50,16 @@ test("the Codex plugin carries a tested hook manifest and a bundled launcher", (
   expect(manifest.mcpServers).toBe("./.mcp.json");
   expect(manifest.skills).toBe("./skills/");
   const hooks = JSON.parse(files["hooks/hooks.json"]) as { hooks?: Record<string, unknown> };
-  // One prompt hook owns the mode block.
-  expect(Object.keys(hooks.hooks ?? {})).toEqual(["UserPromptSubmit"]);
+  // One prompt hook owns the mode block; one PreToolUse hook owns the rtk rewrite.
+  expect(Object.keys(hooks.hooks ?? {})).toEqual(["UserPromptSubmit", "PreToolUse"]);
   const mcp = JSON.parse(files[".mcp.json"]) as { mcpServers?: { tersio?: { env?: Record<string, string> } } };
   expect(mcp.mcpServers?.tersio?.env?.TERSIO_MCP_RUNTIME).toBe("node");
   expect(files.tersio).toMatch(/dist\/tersio\.js/);
   expect(JSON.parse(files["hooks/hooks.json"])).toMatchObject({
     hooks: { UserPromptSubmit: [{ hooks: [{ command: `"${process.execPath}" "\${PLUGIN_ROOT}/tersio" codex-hook user-prompt-submit` }] }] },
+  });
+  expect(JSON.parse(files["hooks/hooks.json"])).toMatchObject({
+    hooks: { PreToolUse: [{ matcher: "^Bash$", hooks: [{ command: `"${process.execPath}" "\${PLUGIN_ROOT}/tersio" codex-hook pre-tool-use` }] }] },
   });
   const bundledMcp = JSON.parse(files[".mcp.json"]) as {
     mcpServers?: { tersio?: { command?: string; args?: string[] } };

@@ -22,12 +22,21 @@ export function codexPersonalMarketplaceFile(): string {
 export function codexPersonalPluginDir(): string {
   return path.join(homeDir(), '.tersio', 'codex-plugin');
 }
-/** The five files a marketplace plugin carries. Its commands use the Tersio CLI on PATH. */
+/** Skill folders the plugin ships; each SKILL.md drives one Tersio mode through the MCP tool. */
+export const CODEX_PLUGIN_SKILL_FILES = [
+  'skills/status/SKILL.md',
+  'skills/combo/SKILL.md',
+  'skills/caveman/SKILL.md',
+  'skills/rtk/SKILL.md',
+  'skills/ponytail/SKILL.md',
+  'skills/pstack/SKILL.md',
+] as const;
+/** The files a marketplace plugin carries. Its commands use the Tersio CLI on PATH. */
 export const CODEX_MARKETPLACE_PLUGIN_FILES = [
   '.codex-plugin/plugin.json',
   '.mcp.json',
   'hooks/hooks.json',
-  'skills/status/SKILL.md',
+  ...CODEX_PLUGIN_SKILL_FILES,
   'package.json',
 ] as const;
 /** The complete local fallback: the marketplace files plus a self-contained CLI runtime. */
@@ -85,11 +94,56 @@ export function codexPluginManifest(): string {
       category: 'Developer Tools',
       capabilities: ['Read', 'Write', 'Lifecycle hooks'],
       websiteURL: 'https://github.com/KurutoDenzeru/tersio',
-      defaultPrompt: ['Show my Tersio mode status', 'Show my local agent usage'],
+      defaultPrompt: [
+        'Show my Tersio mode status',
+        'Show my local agent usage',
+        'Set combo lite',
+        'Enable RTK',
+        'Set ponytail full',
+        'Enable pstack',
+      ],
       brandColor: '#D97706',
     },
   }, null, 2)}\n`;
 }
+
+/** Skill bodies, inlined so a published CLI can generate the plugin without the repo tree. */
+function skill(name: string, description: string, body: string): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
+}
+
+const SKILL_TEXTS: Readonly<Record<(typeof CODEX_PLUGIN_SKILL_FILES)[number], string>> = {
+  'skills/status/SKILL.md': skill(
+    'status',
+    'Use when the user asks for Tersio mode status or local agent usage.',
+    '# Tersio status\n\nRead the current mode defaults from `~/.tersio/settings.json`.\n\nCall the `tersio_stats` MCP tool for usage totals.\nState the range and the source of each figure.',
+  ),
+  'skills/combo/SKILL.md': skill(
+    'tersio-combo',
+    'Use when the user asks to set a Tersio Combo preset: off, lite, balanced, or max. The preset sets caveman, rtk, and ponytail together.',
+    '# Tersio Combo\n\nCall the `tersio_modes` MCP tool with the requested `combo` value: off, lite, balanced, or max.\nState the new level and the modes it set. pstack is separate; a preset never changes it.',
+  ),
+  'skills/caveman/SKILL.md': skill(
+    'tersio-caveman',
+    'Use when the user asks to set the Caveman reply level: off, lite, full, ultra, megacave-lite, megacave-full, or megacave-ultra.',
+    '# Tersio Caveman\n\nCall the `tersio_modes` MCP tool with the requested `caveman` value.\nState the new level. Lower levels keep more explanation; megacave levels are the tersest.',
+  ),
+  'skills/rtk/SKILL.md': skill(
+    'tersio-rtk',
+    'Use when the user asks to turn RTK condensed shell output on or off.',
+    '# Tersio RTK\n\nCall the `tersio_modes` MCP tool with `rtk` set to on or off.\nState the new state. On means shell commands run condensed with every signal kept.',
+  ),
+  'skills/ponytail/SKILL.md': skill(
+    'tersio-ponytail',
+    'Use when the user asks to set the Ponytail lean-code level: off, lite, full, or ultra.',
+    '# Tersio Ponytail\n\nCall the `tersio_modes` MCP tool with the requested `ponytail` value.\nState the new level. Higher levels delete or reuse before adding.',
+  ),
+  'skills/pstack/SKILL.md': skill(
+    'tersio-pstack',
+    'Use when the user asks to turn the pstack rigor mode on or off.',
+    '# Tersio pstack\n\nCall the `tersio_modes` MCP tool with `pstack` set to on or off.\nState the new state. pstack applies a design principle when the moment fits.',
+  ),
+};
 
 /**
  * The plugin files. A bundled plugin runs its own CLI with the absolute Node path that installed it.
@@ -113,6 +167,7 @@ export function codexPluginFiles(
       },
     }, null, 2)}\n`,
     'hooks/hooks.json': `${JSON.stringify({
+      description: 'Tersio lifecycle hooks for Codex.',
       hooks: {
         // UserPromptSubmit runs before every prompt, including startup and resume.
         // It owns the context so one turn never receives the same mode block twice.
@@ -123,20 +178,20 @@ export function codexPluginFiles(
             statusMessage: 'Refreshing Tersio modes',
           }],
         }],
+        // Rewrites eligible shell commands through rtk when the RTK default is on.
+        // Exit 0 with no rewrite leaves the call alone; the hook never denies.
+        PreToolUse: [{
+          matcher: '^Bash$',
+          hooks: [{
+            type: 'command',
+            command: `${command} codex-hook pre-tool-use`,
+            timeout: 5,
+            statusMessage: 'Checking RTK rewrite',
+          }],
+        }],
       },
     }, null, 2)}\n`,
-    'skills/status/SKILL.md': `---
-name: status
-description: Use when the user asks for Tersio mode status or local agent usage.
----
-
-# Tersio status
-
-Read the current mode defaults from \`~/.tersio/settings.json\`.
-
-Call the \`tersio_stats\` MCP tool for usage totals.
-State the range and the source of each figure.
-`,
+    ...SKILL_TEXTS,
     'package.json': read(ROOT, 'package.json'),
   };
   if (bundled) files.tersio = `#!/usr/bin/env node\nimport ${JSON.stringify('./dist/tersio.js')};\n`;
@@ -277,6 +332,12 @@ function storedModes(): Pick<ComboState, 'caveman' | 'rtk' | 'ponytail' | 'pstac
   return { ...COMBO_LEVELS[readComboDefault()] ?? COMBO_LEVELS.off, pstack: 'off' };
 }
 
+/**
+ * The RTK block the prompt hook adds. The PreToolUse hook rewrites eligible commands itself,
+ * so this text explains the condensed results rather than asking the model to type `rtk`.
+ */
+const CODEX_RTK_CONTEXT = `RTK mode active for this session. Eligible shell commands (searches, listings, reads, package and test runs, version control, containers, linters, and data tools) are rewritten through the local rtk binary before they run, so their results arrive condensed: every signal kept, costly noise dropped. Treat a condensed result as complete. Re-run something unfiltered only when its result is empty, garbled, or contradicts its exit code. Call rtk directly for what the rewrite cannot express: rtk read <file>, rtk smart <file>, rtk err <cmd>, rtk gain, and rtk test <cmd>.`;
+
 /** The mode blocks a Codex hook adds as developer context. Off modes add no text. */
 export function codexModeContext(): string {
   const modes = storedModes();
@@ -290,6 +351,7 @@ export function codexModeContext(): string {
     const home = `Leaves, playbooks, and skills live at: ${EXTENSIONS}/pstack.`;
     blocks.push(`pstack mode active for this session.\n${rule('pstack', 'rule.md')}\n${home}`);
   }
+  if (modes.rtk === 'on') blocks.push(CODEX_RTK_CONTEXT);
   return blocks.join('\n\n');
 }
 
