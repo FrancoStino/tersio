@@ -276,12 +276,12 @@ const STEPS = [
   {
     title: "Pick a preset",
     body: "Combo sets caveman, RTK, and Ponytail together. It leaves pstack where you had it, because pstack is opt-in.",
-    command: "/combo balanced · Codex: $tersio-combo",
+    command: "/combo balanced · Codex: /prompts:tersio-combo balanced",
   },
   {
     title: "Turn a mode on its own",
     body: "Each mode answers to its own command, and a switch reaches every sibling through the shared bridge without a reload.",
-    command: "/pstack on · Codex: $tersio-pstack",
+    command: "/pstack on · Codex: /prompts:tersio-pstack on",
   },
   {
     title: "Check what ran",
