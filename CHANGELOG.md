@@ -2,6 +2,11 @@
 
 ### Added
 - **Codex slash commands.** `tersio install --host codex` now writes `/combo`, `/caveman`, `/rtk`, `/ponytail`, `/pstack`, and `/tersio` to `~/.codex/prompts/`. Each one sets its mode from the level you type after it, and `/caveman status` reports one value. The installer also adds a plugin-scoped MCP approval policy, so `tersio_modes` works in a session that cannot prompt for approval. A new `tersio modes <mode> <level>` command reads or writes the same defaults.
+- **Full Codex command parity.** `/combo help`, `/rtk enable|disable|true|false`, every legacy `wenyan` caveman spelling, `/tersio help`, `/tersio upstream [--offline]`, and `/tersio update <target> [--dry-run]` now work in Codex. The dashboard Quick start lists all six commands, the restart step, and the `/hooks` trust step.
+- **Ponytail workflow skills in Codex.** The plugin now ships `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, and `ponytail-review` beside the six mode skills.
+- **`rtk_run` MCP tool.** Codex can run an explicit command through rtk when RTK mode is on, and run it plainly when RTK mode is off.
+- **Codex stop phrases.** `stop caveman`, `stop ponytail`, and `normal mode` now clear the stored defaults, so the next prompt block does not keep a stopped mode active.
+- **Codex install checks.** `tersio doctor` reports missing slash commands and a missing MCP approval policy. `tersio update --host codex` rewrites both, and uninstall removes only Tersio's approval table.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
  - **Codex is a fourth host.** `tersio install --host codex` adds the Tersio repo marketplace and installs `tersio@tersio`. If that source is unavailable, it writes a self-contained plugin at `~/.tersio/codex-plugin/` and registers it through `~/.agents/plugins/marketplace.json`. The plugin has a status skill, the Tersio MCP server, and one `UserPromptSubmit` hook that keeps the stored modes active.
  - Codex joins install, update, doctor, and uninstall. `tersio update --host codex` follows the installed layout, `tersio doctor --fix codex` repairs or enables the plugin, and the dashboard counts Codex sessions and labels them as Codex.
@@ -12,6 +17,8 @@
  - The repository marketplace is at `.agents/plugins/marketplace.json`. The shipped plugin is at `plugins/tersio/`.
 
 ### Fixed
+- `tersio modes <mode>` now reads the current state instead of failing with "needs a level". The Codex slash commands use that form for `/combo status`, `/caveman status`, and the other status values.
+- `tersio doctor` now names rtk's standalone `rtk init -g --codex` hook. That hook bypasses `/rtk off`, so Tersio reports the duplicate and keeps its own mode-aware plugin hook.
 - A Codex mode switch no longer fails with "MCP tool call requires approval" when approvals are off. The slash commands run the CLI, and the installer pre-approves only Tersio's own MCP server.
 - A Codex row reads its model's own author. `codex/openai/zcode/glm-5.3-flash` shows "Z.ai - GLM-5.3-Flash" with the Z.ai mark; it used to borrow OpenAI's name and mark from the host prefix.
 - The dashboard draws Codex's own mark in its provider tiles and on the Upstream page. The tile showed a "C" monogram, which read as a different product from the Codex logo on Quick start.

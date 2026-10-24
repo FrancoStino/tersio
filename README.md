@@ -136,17 +136,18 @@ It is display-only — it never enters the model context, so it costs the sessio
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. pstack is separate and no preset changes it. |
+| `/combo off\|lite\|balanced\|max\|status\|help` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. `help` prints the preset table and changes nothing. pstack is separate and no preset changes it. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies at six levels. `full`, `ultra`, and `megacave-full` ship upstream's bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own, for registers upstream defines but no longer ships, and each names its upstream row. Legacy `wenyan` spellings still resolve: `wenyan`/`wenyan-full` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-ultra` → `megacave-ultra`. |
-| `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
+| `/rtk on\|off\|enable\|disable\|true\|false\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. `enable`/`true` mean `on`; `disable`/`false` mean `off`. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes, one body at four levels. Review runs as its own skill. |
 | `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: set it on its own, since no preset turns it on; `normal mode` clears it. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
+| `/tersio upstream [--offline]` | Compare the ported mode bodies with their upstream projects. |
 | `/tersio dashboard` | Open the Dashboard. |
-
-In Codex, `tersio install --host codex` writes the same commands: `/combo`, `/caveman`, `/rtk`, `/ponytail`, `/pstack`, and `/tersio status`. Pass the level after the command, for example `/caveman ultra`. The plugin also ships the modes as skills, so `$tersio-combo` and `/skills` work, and the `tersio_modes` MCP tool switches a mode from a plain sentence.
 | `/tersio help` | This table |
+
+In Codex, `tersio install --host codex` writes the same six commands: `/combo`, `/caveman`, `/rtk`, `/ponytail`, `/pstack`, and `/tersio`. Pass the level after the command, for example `/caveman ultra`; `/combo help` prints the preset table. The plugin also ships the modes as skills, so `$tersio-combo` and `/skills` work, and the `tersio_modes` MCP tool switches a mode from a plain sentence. The five Ponytail workflows (`ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, and `ponytail-review`) ship as skills too. Codex calls `rtk_run` for an explicit condensed shell command. `rtk init -g --codex` is not required: the plugin hook replaces it and respects `/rtk off`. Restart Codex after install, then trust both Tersio entries in `/hooks`.
 
 ## 🗂️ Files and backups
 

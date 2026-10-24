@@ -422,3 +422,8 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** A first marketplace install skipped its success message. `codexPluginState()` returned a plugin ID for a cache directory that did not exist, so the installer entered the repair branch.
 **Root cause:** A state object reported the ID that the path would have, not the state that the path had.
 **Prevention rule:** A partial-state branch must first prove the directory exists. Test the normal success path, not only the repair path.
+
+## 2026-10-25 — A generated marketplace plugin overwrote hand-written files
+**What happened:** Regenerating `plugins/tersio/` from the bundled generator replaced the richer mode skills and its hand-written `package.json` with minimal generated copies.
+**Root cause:** The generator owns the bundled contract, but the marketplace tree is hand-maintained and carries more text.
+**Prevention rule:** Generate into a temporary directory for comparison. Copy only the files that a change adds, and never write the marketplace tree in place with the bundled generator.

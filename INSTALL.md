@@ -94,7 +94,9 @@ codex plugin add tersio@tersio
 
 If that source is unavailable, the installer writes `~/.tersio/codex-plugin/` and adds it to `~/.agents/plugins/marketplace.json`. This local plugin carries its own runtime.
 
-The plugin carries six skills (`$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, `$tersio-pstack`, and the status skill) and two hooks. The `UserPromptSubmit` hook adds the current mode block before each prompt. The `PreToolUse` hook rewrites eligible shell calls through `rtk` when the RTK default is on; it reads `~/.tersio/settings.json`, so the same defaults work in every host.
+The plugin carries six mode skills (`$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, `$tersio-pstack`, and the status skill), the five Ponytail workflows (`ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, and `ponytail-review`), and two hooks. The `UserPromptSubmit` hook adds the current mode block before each prompt and clears caveman or Ponytail on `stop caveman`, `stop ponytail`, or `normal mode`. The `PreToolUse` hook rewrites eligible shell calls through `rtk` when the RTK default is on; it reads `~/.tersio/settings.json`, so the same defaults work in every host.
+
+RTK 1.0.1 supports `rtk init -g --codex`, but that global hook does not read Tersio's mode state. Tersio uses its own plugin hook instead, so `/rtk off` can stop a rewrite. If you ran `rtk init -g --codex` earlier, `tersio doctor` names the duplicate. Remove the standalone hook with `rtk init -g --codex --uninstall` when you want Tersio to own RTK.
 
 The installer also writes the same slash commands the other hosts use to `~/.codex/prompts/`:
 
@@ -105,11 +107,16 @@ The installer also writes the same slash commands the other hosts use to `~/.cod
 /ponytail full
 /pstack on
 /tersio status
+/combo help
+/rtk enable
+/caveman wenyan
+/tersio upstream --offline
+/tersio update all --dry-run
 ```
 
-Codex names each command after its file, so `~/.codex/prompts/rtk.md` is `/rtk`. Codex reads that folder at session start, so restart Codex after an install. Each mode command runs `tersio modes`, which writes the same settings file the MCP tool writes and needs no tool approval. The installer adds `[plugins."tersio@…".mcp_servers.tersio] default_tools_approval_mode = "approve"` to `~/.codex/config.toml`, so the `tersio_modes` tool also works in a session that cannot prompt. A skill is still available with `$skill-name` or `/skills`.
+Codex names each command after its file, so `~/.codex/prompts/rtk.md` is `/rtk`. Codex reads that folder at session start, so restart Codex after an install. Each mode command runs `tersio modes`, which writes the same settings file the MCP tool writes and needs no tool approval. The README spellings still work: `/rtk enable`, `/rtk disable`, `/caveman wenyan`, `/combo help`, and `/tersio update <target> --dry-run`. The installer adds `[plugins."tersio@…".mcp_servers.tersio] default_tools_approval_mode = "approve"` to `~/.codex/config.toml`, so the `tersio_modes` tool also works in a session that cannot prompt. The `rtk_run` tool runs an explicit command through rtk when the RTK default is on, and plainly when it is off. A skill is still available with `$skill-name` or `/skills`.
 
-`tersio update --host codex` keeps the layout already on disk. A bundled install stays bundled. A marketplace install refreshes its marketplace, then runs `codex plugin add` again.
+`tersio update --host codex` keeps the layout already on disk. A bundled install stays bundled. A marketplace install refreshes its marketplace, then runs `codex plugin add` again. Both layouts rewrite the slash commands and the approval policy, so an update repairs a deleted prompt.
 
 `tersio uninstall --host codex` removes the Tersio plugin and its settings. It keeps `~/.codex/plugins/data/tersio-tersio`, because that directory holds plugin data.
 
