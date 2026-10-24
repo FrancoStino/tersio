@@ -825,6 +825,7 @@ export function hostFix(id: string, version: string | null): string {
 async function checkHosts(): Promise<HostRow[]> {
   const rows: HostRow[] = [];
   for (const host of detectHosts()) {
+    if (host.id === 'codex') continue;
     const treeId = host.id === 'omp' ? 'opencode' : host.id;
     const base = host.id === 'omp' ? (host.dir ? path.join(host.dir, 'extensions') : null) : hostExtensionsDir(host.id);
     if (!host.installed || !base) {
