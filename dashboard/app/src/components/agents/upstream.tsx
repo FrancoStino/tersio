@@ -541,7 +541,7 @@ export function UpstreamPage() {
               <PagedTable columns={SOURCE_COLUMNS} rows={card.sources} rowKey={(row) => row.source} ariaLabel="Ports" perPage={10} />
             </Card>
 
-            <Card title="Agents" icon="layers" description="What each agent carries against this build's own tree, and the two still to come." flush>
+            <Card title="Agents" icon="layers" description="What each agent carries against this build's own tree, and the one still to come." flush>
               <PagedTable columns={AGENT_COLUMNS} rows={agentTableRows} rowKey={(row) => row.host} ariaLabel="Agents" perPage={10} />
             </Card>
           </div>
