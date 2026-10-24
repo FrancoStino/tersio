@@ -14,8 +14,8 @@ import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import {
   CODEX_LEGACY_PROMPTS, CODEX_PLUGIN_ID, CODEX_PROMPTS, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalMarketplaceFile,
-  codexPersonalPluginId, codexPromptFile,
-  codexPluginDir, codexPluginIdForDir, removeCodexPersonalMarketplace,
+  codexConfigFile, codexPersonalPluginId, codexPromptFile,
+  codexPluginDir, codexPluginIdForDir, removeCodexMcpPolicy, removeCodexPersonalMarketplace,
 } from '../extensions/shared/codex-plugin.ts';
 
 function shortError(e: unknown): string {
@@ -285,6 +285,15 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     await removeUninstallTarget(codexLegacyPluginDir(), shouldDryRun);
     for (const name of [...CODEX_PROMPTS, ...CODEX_LEGACY_PROMPTS]) {
       await removeUninstallTarget(codexPromptFile(name), shouldDryRun, false);
+    }
+    // The MCP policy names the plugin, so it goes with the plugin and leaves every other table alone.
+    const configFile = codexConfigFile();
+    const configText = await readTextIfExists(configFile);
+    const policyId = installedId ?? CODEX_PLUGIN_ID;
+    const withoutPolicy = removeCodexMcpPolicy(configText, policyId);
+    if (!shouldDryRun && withoutPolicy !== null && withoutPolicy !== configText) {
+      await fs.writeFile(configFile, withoutPolicy, 'utf8');
+      sayTagged(`  [write] removed the Tersio MCP policy from ${configFile}`);
     }
     if (!shouldDryRun) {
       const marketplace = await readTextIfExists(personalMarketplaceFile);

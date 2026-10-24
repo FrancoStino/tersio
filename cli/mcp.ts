@@ -7,6 +7,9 @@ import { formatCurrency, readStoredCurrency } from './currency.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
+import { normalizeMode } from '../extensions/shared/session-state.ts';
+import { readRtkDefault } from '../extensions/shared/plugin-settings.ts';
+import { resolveRtkBinary, shimCommand } from '../extensions/shared/utils.ts';
 import type { RangeKey } from '../extensions/shared/agent-stats.ts';
 
 /** The spec version this server speaks; a client naming another is answered with this one. */
@@ -41,6 +44,10 @@ interface ModesToolArgs {
   rtk?: unknown;
   ponytail?: unknown;
   pstack?: unknown;
+}
+
+interface RtkRunToolArgs {
+  args?: unknown;
 }
 
 /** One validated value per mode a call may set; null means the call left that mode alone. */
@@ -121,9 +128,15 @@ export async function runModes(argv: string[]): Promise<void> {
   };
   const valid = sets[mode];
   if (valid === undefined) throw new Error(`unknown mode: ${mode}. Valid: ${Object.keys(sets).join(', ')}`);
-  if (rawLevel === undefined) throw new Error(`${mode} needs a level: ${[...valid].join(', ')}`);
-  const level = rawLevel.trim().toLowerCase();
-  if (!valid.has(level)) throw new Error(`invalid ${mode} level: ${rawLevel}. Valid: ${[...valid].join(', ')}`);
+  // The slash commands call `<mode>` with no level to read the current state.
+  if (rawLevel === undefined || rawLevel.trim().toLowerCase() === 'status') {
+    console.log(await modesText({ combo: null, caveman: null, rtk: null, ponytail: null, pstack: null }));
+    return;
+  }
+  const typed = rawLevel.trim().toLowerCase();
+  // The extension tree owns every mode alias; Combo has no separate normalizer because its levels are its own.
+  const level = mode === 'combo' ? typed : normalizeMode(mode as 'caveman' | 'rtk' | 'ponytail' | 'pstack', typed);
+  if (level === null || !valid.has(level)) throw new Error(`invalid ${mode} level: ${rawLevel}. Valid: ${[...valid].join(', ')}`);
   const one = (value: string): 'on' | 'off' => (value === 'on' ? 'on' : 'off');
   console.log(await modesText({
     combo: mode === 'combo' ? level : null,
@@ -166,12 +179,28 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'rtk_run',
+    description: 'Run a shell command through the installed `rtk` binary when RTK mode is on, and run it plainly when RTK mode is off. The Codex PreToolUse hook covers most shell calls; use this when the model needs an explicit condensed run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          description: "Arguments passed to rtk, e.g. ['git','status'] or ['read','src/index.ts']",
+        },
+      },
+      required: ['args'],
+    },
+  },
 ] as const;
 
 async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const call = (params ?? {}) as { name?: unknown; arguments?: unknown };
   const name = typeof call.name === 'string' ? call.name : null;
-  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs;
+  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs & RtkRunToolArgs;
   if (name === 'tersio_stats') {
     if (args.range !== undefined && !isRangeKey(args.range)) throw new RpcError(-32602, `range must be one of ${RANGES.join(', ')}`);
     return { content: [{ type: 'text', text: statsText(isRangeKey(args.range) ? args.range : '24h') }] };
@@ -188,18 +217,38 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
       if (typeof value !== 'string' || !set.has(value)) throw new RpcError(-32602, `${label} must be one of ${[...set].join(', ')}`);
       return value;
     };
+    const modeValue = (value: unknown, mode: 'caveman' | 'rtk' | 'ponytail' | 'pstack', set: Set<string>, label: string): string | null => {
+      if (value === undefined) return null;
+      const picked = normalizeMode(mode, value);
+      if (picked === null || !set.has(picked)) throw new RpcError(-32602, `${label} must be one of ${[...set].join(', ')}`);
+      return picked;
+    };
     const rtkOrPstack = (value: unknown, set: Set<string>, label: string): 'on' | 'off' | null => {
-      const picked = oneOf(value, set, label);
+      const picked = modeValue(value, label === 'pstack' ? 'pstack' : 'rtk', set, label);
       return picked === null ? null : (picked as 'on' | 'off');
     };
     const want: ModeWants = {
       combo: oneOf(args.combo, COMBO_DEFAULTS, 'combo'),
-      caveman: oneOf(args.caveman, CAVEMAN_DEFAULTS, 'caveman'),
+      caveman: modeValue(args.caveman, 'caveman', CAVEMAN_DEFAULTS, 'caveman'),
       rtk: rtkOrPstack(args.rtk, RTK_DEFAULTS, 'rtk'),
-      ponytail: oneOf(args.ponytail, PONYTAIL_DEFAULTS, 'ponytail'),
+      ponytail: modeValue(args.ponytail, 'ponytail', PONYTAIL_DEFAULTS, 'ponytail'),
       pstack: rtkOrPstack(args.pstack, PSTACK_DEFAULTS, 'pstack'),
     };
     return { content: [{ type: 'text', text: await modesText(want) }] };
+  }
+  if (name === 'rtk_run') {
+    const argv = args.args;
+    if (!Array.isArray(argv) || argv.length === 0 || !argv.every((part) => typeof part === 'string')) {
+      throw new RpcError(-32602, 'args must be a non-empty array of strings');
+    }
+    const on = readRtkDefault();
+    const bin = on ? resolveRtkBinary() : null;
+    if (on && bin === null) throw new RpcError(-32000, 'RTK mode is on but the rtk binary is not installed. Run: tersio update');
+    // With RTK off the first argument is the command; passing the whole array would repeat it.
+    const shim = bin === null ? shimCommand(argv[0], argv.slice(1)) : shimCommand(bin, argv);
+    const run = spawnSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 120_000, windowsHide: true });
+    const text = [run.stdout, run.stderr, run.error?.message].filter(Boolean).join('\n') || `exited ${run.status ?? 'unknown'}`;
+    return { content: [{ type: 'text', text }], isError: run.status !== 0 };
   }
   throw new RpcError(-32602, `unknown tool: ${name}`);
 }
@@ -222,7 +271,7 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'tersio', version: PACKAGE_VERSION },
-        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, and read or set session modes with tersio_modes.',
+        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, read or set session modes with tersio_modes, and run an explicit condensed shell command with rtk_run.',
       };
     } else if (method === 'ping') result = {};
     else if (method === 'tools/list') result = { tools: TOOLS };

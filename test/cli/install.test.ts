@@ -170,6 +170,11 @@ test("installer accepts session-default flags and reports them", () => {
   expect(retired.status, retired.stderr).toBe(0);
   expect(retired.stdout).toMatch(/Defaults: combo=lite/);
   expect(retired.stdout).not.toMatch(/Invalid --combo-default/);
+
+  // The README still offers the old `wenyan` spelling.
+  const wenyan = run("install", "--dry-run", "--yes", "--caveman-default", "wenyan");
+  expect(wenyan.status, wenyan.stderr).toBe(0);
+  expect(wenyan.stdout).toMatch(/Defaults: .*caveman=megacave-full/);
 });
 
 test("installer rejects invalid default values", () => {

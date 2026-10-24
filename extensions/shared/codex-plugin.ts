@@ -22,6 +22,15 @@ export function codexPersonalMarketplaceFile(): string {
 export function codexPersonalPluginDir(): string {
   return path.join(homeDir(), '.tersio', 'codex-plugin');
 }
+/** The vendored Ponytail skills, copied as published; each one is a review or reference workflow. */
+export const PONYTAIL_SKILL_NAMES = [
+  'ponytail-audit',
+  'ponytail-debt',
+  'ponytail-gain',
+  'ponytail-help',
+  'ponytail-review',
+] as const;
+
 /** Skill folders the plugin ships; each SKILL.md drives one Tersio mode through the MCP tool. */
 export const CODEX_PLUGIN_SKILL_FILES = [
   'skills/status/SKILL.md',
@@ -31,12 +40,15 @@ export const CODEX_PLUGIN_SKILL_FILES = [
   'skills/ponytail/SKILL.md',
   'skills/pstack/SKILL.md',
 ] as const;
+/** The vendored Ponytail workflows, shipped as published skills beside the mode skills. */
+export const PONYTAIL_SKILL_FILES = PONYTAIL_SKILL_NAMES.map((name) => `skills/${name}/SKILL.md`);
 /** The files a marketplace plugin carries. Its commands use the Tersio CLI on PATH. */
 export const CODEX_MARKETPLACE_PLUGIN_FILES = [
   '.codex-plugin/plugin.json',
   '.mcp.json',
   'hooks/hooks.json',
   ...CODEX_PLUGIN_SKILL_FILES,
+  ...PONYTAIL_SKILL_FILES,
   'package.json',
 ] as const;
 /** The complete local fallback: the marketplace files plus a self-contained CLI runtime. */
@@ -162,13 +174,50 @@ export function codexPromptFile(name: string): string {
   return path.join(codexPromptsDir(), `${name}.md`);
 }
 
+/** Every command file this build writes, missing ones first. */
+export function missingCodexPrompts(): string[] {
+  return CODEX_PROMPTS
+    .map((name) => codexPromptFile(name))
+    .filter((file) => !existsSync(file));
+}
+
+/** True when Codex's config pre-approves Tersio's own MCP server. */
+export function codexMcpPolicyInstalled(pluginId = CODEX_PLUGIN_ID): boolean {
+  let text = '';
+  try { text = readFileSync(codexConfigFile(), 'utf8'); } catch { return false; }
+  const header = `[plugins."${pluginId}".mcp_servers.${CODEX_PLUGIN_NAME}]`;
+  const start = text.split('\n').findIndex((line) => line.trim() === header);
+  if (start === -1) return false;
+  const lines = text.split('\n');
+  const end = lines.findIndex((line, i) => i > start && /^\s*\[/.test(line));
+  return lines.slice(start + 1, end === -1 ? undefined : end)
+    .some((line) => /^\s*default_tools_approval_mode\s*=\s*"approve"/.test(line));
+}
+
+/** `rtk init -g --codex` writes a global hook that cannot read Tersio's RTK mode. */
+export function codexStandaloneRtkHook(): boolean {
+  try {
+    const hooks = readFileSync(path.join(homeDir(), '.codex', 'hooks.json'), 'utf8');
+    return /\brtk(?:\.exe)?\s+hook\s+codex\b/i.test(hooks);
+  } catch {
+    return false;
+  }
+}
+
 /** The values each command takes. `status` reads the current value and changes nothing. */
 const PROMPT_LEVELS: Readonly<Record<CodexPromptMode, readonly string[]>> = {
-  combo: ['off', 'lite', 'balanced', 'max'],
-  caveman: ['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'status'],
-  rtk: ['on', 'off', 'status'],
+  combo: ['off', 'lite', 'balanced', 'max', 'status', 'help'],
+  caveman: ['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'wenyan', 'wenyan-lite', 'wenyan-full', 'wenyan-ultra', 'status'],
+  rtk: ['on', 'enable', 'enabled', 'true', 'off', 'disable', 'disabled', 'false', 'status'],
   ponytail: ['off', 'lite', 'full', 'ultra', 'status'],
   pstack: ['on', 'off', 'status'],
+};
+
+/** Every spelling that means the same level; the first name is the one the CLI writes. */
+const LEVEL_ALIASES: Readonly<Record<string, string>> = {
+  enable: 'on', enabled: 'on', true: 'on',
+  disable: 'off', disabled: 'off', false: 'off',
+  wenyan: 'megacave-full', 'wenyan-lite': 'megacave-lite', 'wenyan-full': 'megacave-full', 'wenyan-ultra': 'megacave-ultra',
 };
 
 /**
@@ -179,14 +228,15 @@ export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
   if (name === 'tersio') {
     return [
       '---',
-      'description: Tersio status, help, update, or dashboard',
-      'argument-hint: <status|help|update|dashboard>',
+      'description: Tersio status, help, update, upstream, or dashboard',
+      'argument-hint: <status|help|update <ponytail|rtk|caveman|all> [--dry-run]|upstream [--offline]|dashboard>',
       '---',
       '',
       'Run the Tersio command named by `$1`.',
       '',
       '- `status`: read `~/.tersio/settings.json` for the mode defaults, then call the `tersio_stats` MCP tool for usage. State the range and the source of each figure.',
-      `- \`update\`: run \`${cli} update\`.`,
+      `- \`update ponytail\`, \`update rtk\`, \`update caveman\`, or \`update all\`: run \`${cli} update --host codex\`. Add \`--dry-run\` for a preview. Codex refreshes these add-ons together.`,
+      `- \`upstream\`: run \`${cli} upstream\`. With \`--offline\`, add that flag.`,
       `- \`dashboard\`: run \`${cli} dashboard\`.`,
       '- `help` or empty: list the Tersio commands and their values.',
       '',
@@ -195,24 +245,31 @@ export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
   const mode = name;
   const levels = PROMPT_LEVELS[mode];
   const asked = '$1';
-  const readOnly = mode !== 'combo';
   const body = [
     `Set the Tersio ${mode} mode. The user's argument is \`${asked}\`, and it is one of ${levels.join(', ')}.`,
-    readOnly
-      ? `If \`${asked}\` is empty or \`status\`, run \`${cli} modes ${mode}\` and report the current value.`
-      : `If \`${asked}\` is empty, ask for one of those levels and stop.`,
+    `If \`${asked}\` is empty or \`status\`, run \`${cli} modes ${mode}\` and report the current value.`,
+    mode === 'combo' ? 'If `$1` is `help`, print the preset table and change nothing.' : '',
     '',
     // Each level is written out, so the model never has to expand `$1` itself.
     'Use the shell tool. Run the one command that matches the argument, then report its output verbatim:',
     '',
-    ...levels.map((level) => (level === 'status'
+    ...levels.filter((level) => level !== 'help').map((level) => (level === 'status'
       ? `- \`status\`: \`${cli} modes ${mode}\``
-      : `- \`${level}\`: \`${cli} modes ${mode} ${level}\``)),
+      : `- \`${level}\`: \`${cli} modes ${mode} ${LEVEL_ALIASES[level] ?? level}\``)),
     '',
     mode === 'combo' ? 'pstack is separate: a Combo preset never changes it.' : '',
     'These are Codex session defaults. Say that the change applies to new Codex sessions; do not name another host.',
   ].filter((line) => line !== '').join('\n');
   return `---\ndescription: Set the Tersio ${mode} mode (${levels.join(', ')})\nargument-hint: <${levels.join('|')}>\n---\n\n${body}\n`;
+}
+
+/** The vendored Ponytail workflows, read from the tree so the published body is the one that ships. */
+function ponytailSkillTexts(): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const name of PONYTAIL_SKILL_NAMES) {
+    files[`skills/${name}/SKILL.md`] = read(PONYTAIL, `skills/${name}/SKILL.md`);
+  }
+  return files;
 }
 
 /**
@@ -262,6 +319,7 @@ export function codexPluginFiles(
       },
     }, null, 2)}\n`,
     ...SKILL_TEXTS,
+    ...ponytailSkillTexts(),
     'package.json': read(ROOT, 'package.json'),
   };
   if (bundled) files.tersio = `#!/usr/bin/env node\nimport ${JSON.stringify('./dist/tersio.js')};\n`;
@@ -599,6 +657,18 @@ export function addCodexMcpPolicy(existing: string | null, pluginId: string): st
   }
   const base = (existing ?? '').trimEnd();
   return `${base}${base ? '\n\n' : ''}${header}\n${TERTSIO_MCP_POLICY}\n`;
+}
+
+/** Remove only Tersio's server table, so the user's other plugin policy stays byte for byte. */
+export function removeCodexMcpPolicy(existing: string | null, pluginId: string): string | null {
+  if (existing === null) return null;
+  const lines = existing.split('\n');
+  const header = `[plugins."${pluginId}".mcp_servers.${CODEX_PLUGIN_NAME}]`;
+  const start = lines.findIndex((line) => line.trim() === header);
+  if (start === -1) return existing;
+  const end = lines.findIndex((line, i) => i > start && /^\s*\[/.test(line));
+  const kept = [...lines.slice(0, start), ...lines.slice(end === -1 ? lines.length : end)];
+  return `${kept.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
 }
 
 /** The first complete install, and its manifest version when the manifest is readable. */

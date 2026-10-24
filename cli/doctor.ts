@@ -23,7 +23,8 @@ import { readState } from '../extensions/shared/state.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
 import { newerThan } from './update.ts';
 import {
-  codexExistingPluginDirs, codexInstalledPlugin, codexPluginState,
+  CODEX_PROMPTS, codexExistingPluginDirs, codexInstalledPlugin, codexMcpPolicyInstalled, codexPluginIdForDir,
+  codexPluginState, codexStandaloneRtkHook, missingCodexPrompts,
 } from '../extensions/shared/codex-plugin.ts';
 
 /** Bytes at the scale a transcript gap reads in: `5.6M`, not `5571992`. */
@@ -291,6 +292,18 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
         : state.enabled
           ? `v${state.version ?? PACKAGE_VERSION}`
           : 'not enabled — run: tersio install --host codex');
+      // The prompts and the MCP policy live outside the plugin tree, so the plugin alone is not a full install.
+      const missingPrompts = missingCodexPrompts();
+      check('Codex slash commands', missingPrompts.length === 0, missingPrompts.length
+        ? `missing ${missingPrompts.length}: ${missingPrompts.map((file) => path.basename(file)).join(', ')} — run: tersio install --host codex`
+        : `all ${CODEX_PROMPTS.length} commands`);
+      const pluginId = codexPluginIdForDir(state.dir);
+      check('Codex mode approval', pluginId !== null && codexMcpPolicyInstalled(pluginId), pluginId !== null && codexMcpPolicyInstalled(pluginId)
+        ? 'tersio MCP server pre-approved'
+        : 'not set — run: tersio install --host codex');
+      if (codexStandaloneRtkHook()) {
+        warnLine('Codex RTK hook', 'rtk init also runs a global hook, so /rtk off cannot stop it — run: rtk init -g --codex --uninstall');
+      }
     }
   }
 

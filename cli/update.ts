@@ -299,9 +299,12 @@ async function runLatestUpdate(): Promise<void> {
     }
     console.log(`Checking for updates:\n  ${status.join('\n  ')}`);
     if (bundled) {
-      const { stepCodexBundled } = await import('./install.ts');
+      const { stepCodexBundled, stepCodexMcpPolicy, stepCodexPrompts } = await import('./install.ts');
       try {
         await stepCodexBundled({ dryRun: false, verbose, yes: true, reinstall: true });
+        // The prompts and the MCP policy live outside the plugin tree, so the update writes them too.
+        await stepCodexPrompts({ dryRun: false, verbose, yes: true, reinstall: true });
+        await stepCodexMcpPolicy({ dryRun: false, verbose, yes: true, reinstall: true });
       } catch (e) {
         console.error(`[fail] Codex plugin update: ${(e as Error).message.split('\n')[0]}`);
         process.exitCode = 1;
@@ -323,6 +326,10 @@ async function runLatestUpdate(): Promise<void> {
       process.exitCode = 1;
       return;
     }
+    // The marketplace plugin has no prompts or policy of its own, so refresh both beside it.
+    const { stepCodexMcpPolicy, stepCodexPrompts } = await import('./install.ts');
+    await stepCodexPrompts({ dryRun: false, verbose, yes: true, reinstall: true });
+    await stepCodexMcpPolicy({ dryRun: false, verbose, yes: true, reinstall: true });
     console.log(`Done — tersio ${PACKAGE_VERSION} and the Codex plugin updated.`);
     await refreshPrices().catch(() => { /* pricing is best-effort; update already succeeded */ });
     return;

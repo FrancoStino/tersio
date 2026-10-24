@@ -9,7 +9,7 @@ import {
   CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, CODEX_PROMPTS, addCodexMcpPolicy,
   addCodexPersonalMarketplace, codexInstalledPlugin,
   codexMarketplacePluginFiles, codexModeContext, codexPersonalPluginId, codexPluginFiles, codexPluginInstalled,
-  codexPluginState, codexPromptFile, codexPromptText, removeCodexPersonalMarketplace,
+  codexPluginState, codexPromptFile, codexPromptText, codexStandaloneRtkHook, removeCodexPersonalMarketplace,
 } from "../../extensions/shared/codex-plugin.ts";
 import { cliEnv } from "../helpers/env.ts";
 
@@ -144,6 +144,35 @@ test("every mode has a Codex slash command that runs the CLI", () => {
   expect(codexPromptText("rtk", '"/usr/bin/node" "/plugin/tersio"')).toContain('"/plugin/tersio" modes rtk on');
 });
 
+test("the Codex commands keep the README aliases and the update and upstream targets", () => {
+  const combo = codexPromptText("combo", "tersio");
+  expect(combo).toContain("`$1` is `help`");
+  expect(combo).toContain("tersio modes combo balanced");
+  const rtk = codexPromptText("rtk", "tersio");
+  expect(rtk).toContain("`enable`: `tersio modes rtk on`");
+  expect(rtk).toContain("`disable`: `tersio modes rtk off`");
+  const caveman = codexPromptText("caveman", "tersio");
+  expect(caveman).toContain("`wenyan`: `tersio modes caveman megacave-full`");
+  expect(caveman).toContain("`wenyan-ultra`: `tersio modes caveman megacave-ultra`");
+  const tersio = codexPromptText("tersio", "tersio");
+  expect(tersio).toContain("update --host codex");
+  expect(tersio).toContain("Add `--dry-run` for a preview");
+  expect(tersio).toContain("tersio upstream");
+  expect(tersio).toContain("upstream [--offline]");
+});
+
+test("the plugin carries every vendored Ponytail workflow", () => {
+  const names = ["ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"];
+  const files = codexPluginFiles();
+  for (const name of names) {
+    const file = `skills/${name}/SKILL.md`;
+    expect(files[file]).toContain(`name: ${name}`);
+    expect(files[file]).toContain("ponytail");
+    expect(existsSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../..", "plugins", "tersio", file))).toBe(true);
+  }
+  expect(Object.keys(files)).toEqual(expect.arrayContaining(names.map((name) => `skills/${name}/SKILL.md`)));
+});
+
 test("the mode command reads and writes the same defaults the MCP tool does", async () => {
   await withHome(async (home) => {
     const { runModes } = await import("../../cli/mcp.ts");
@@ -162,6 +191,24 @@ test("the mode command reads and writes the same defaults the MCP tool does", as
     expect(settings.rtkDefault).toBe(true);
     expect(settings.pstackDefault).toBe("on");
     expect(logs.at(-1)).toContain("caveman=ultra");
+    // The README keeps the old `wenyan` spelling; both the CLI and the prompt resolve it.
+    await runModes(["caveman", "wenyan"]);
+    const aliased = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(aliased.cavemanDefault).toBe("megacave-full");
+    await runModes(["rtk", "disable"]);
+    const disabled = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(disabled.rtkDefault).toBe(false);
+    await runModes(["rtk", "enable"]);
+    const enabled = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(enabled.rtkDefault).toBe(true);
+    // Combo levels are not mode aliases; the CLI still maps its own preset name.
+    await runModes(["combo", "off"]);
+    const cleared = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(cleared.comboDefault).toBe("off");
+    expect(cleared.cavemanDefault).toBe("off");
+    expect(cleared.rtkDefault).toBe(false);
+    await runModes(["combo"]);
+    expect(logs.at(-1)).toContain("combo=off");
     await expect(runModes(["caveman", "huge"])).rejects.toThrow("invalid caveman level");
     await expect(runModes(["nope", "on"])).rejects.toThrow("unknown mode");
   });
@@ -179,6 +226,17 @@ test("the MCP policy pre-approves only the Tersio server and keeps every other l
   expect(addCodexMcpPolicy(null, "tersio@tersio")).toBe(
     '[plugins."tersio@tersio".mcp_servers.tersio]\ndefault_tools_approval_mode = "approve"\n',
   );
+});
+
+test("the doctor can name rtk's standalone Codex hook", async () => {
+  await withHome((home) => {
+    expect(codexStandaloneRtkHook()).toBe(false);
+    mkdirSync(path.join(home, ".codex"), { recursive: true });
+    writeFileSync(path.join(home, ".codex", "hooks.json"), JSON.stringify({
+      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "rtk hook codex" }] }] },
+    }), "utf8");
+    expect(codexStandaloneRtkHook()).toBe(true);
+  });
 });
 
 test("Codex mode context follows the stored defaults and leaves off modes out", async () => {
@@ -225,6 +283,37 @@ test("the Codex hook command prints the active mode block", () => {
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Caveman lite active/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("the Codex prompt hook clears a mode on its stop phrase", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-codex-stop-"));
+  try {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    const settings = path.join(home, ".tersio", "settings.json");
+    writeFileSync(settings, JSON.stringify({
+      cavemanDefault: "ultra",
+      ponytailDefault: "full",
+      pstackDefault: "on",
+      rtkDefault: true,
+    }), "utf8");
+    const result = spawnSync(process.execPath, [path.join(root, "dist", "tersio.js"), "codex-hook", "user-prompt-submit"], {
+      encoding: "utf8",
+      env: cliEnv(home),
+      input: JSON.stringify({ prompt: "Normal mode." }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/Caveman .* active/);
+    expect(result.stdout).not.toMatch(/PONYTAIL MODE ACTIVE/);
+    const stored = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
+    expect(stored.cavemanDefault).toBe("off");
+    expect(stored.ponytailDefault).toBe("off");
+    // A stop phrase owns only the modes it names.
+    expect(stored.pstackDefault).toBe("on");
+    expect(stored.rtkDefault).toBe(true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

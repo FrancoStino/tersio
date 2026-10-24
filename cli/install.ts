@@ -40,7 +40,7 @@ import {
   CODEX_LEGACY_PROMPTS, CODEX_PROMPTS,
   CODEX_RUNTIME_PACKAGES,
   addCodexMcpPolicy, addCodexPersonalMarketplace, codexConfigFile, codexInstalledPlugin, codexLegacyPluginDir,
-  codexPersonalPluginId, codexPromptFile, codexPromptText,
+  codexPersonalPluginId, codexPromptFile, codexPromptText, codexStandaloneRtkHook,
   codexPluginDir, codexPluginFiles, codexPluginIdForDir, codexPluginState, codexRegisteredPluginState,
   codexPersonalMarketplaceFile,
 } from '../extensions/shared/codex-plugin.ts';
@@ -353,10 +353,15 @@ async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 
 }
 
 /**
- * Codex reads the same RTK binary, but its rewrite runs through the plugin's `PreToolUse` hook,
- * not `rtk init`: rtk ships no codex agent. The step only guarantees the binary exists.
+ * rtk 1.0.1 also ships `rtk init -g --codex`, but that global hook cannot read Tersio's mode state.
+ * The plugin's own `PreToolUse` hook replaces it, so this step only guarantees the binary exists.
  */
 async function stepRtkCodex(binDir: string, options: InstallOptions): Promise<void> {
+  const noteStandalone = (): void => {
+    if (!options.quiet && codexStandaloneRtkHook()) {
+      console.log('  [note] ~/.codex/hooks.json also runs `rtk hook codex`; it ignores `/rtk off`. Run: rtk init -g --codex --uninstall');
+    }
+  };
   const binDest = path.join(binDir, RTK_BINARY_NAME);
   const found = resolveRtkBinary();
   if (found && !applyUpdate) {
@@ -364,6 +369,7 @@ async function stepRtkCodex(binDir: string, options: InstallOptions): Promise<vo
       const where = verbose ? ` (${found})` : '';
       console.log(`  RTK — already installed${where}, the Codex hook rewrites eligible shell calls`);
     }
+    noteStandalone();
     return;
   }
   if (options.dryRun) {
@@ -372,7 +378,8 @@ async function stepRtkCodex(binDir: string, options: InstallOptions): Promise<vo
   }
   if (!options.quiet) console.log('  RTK — download binary for the Codex hook');
   await stepRtk(binDir, options, 'opencode');
-  if (!options.quiet) console.log('  RTK rewrite runs inside the Tersio Codex plugin — no rtk init needed');
+  if (!options.quiet) console.log('  RTK rewrite runs inside the Tersio Codex plugin — rtk init is not needed');
+  noteStandalone();
 }
 
 /**
@@ -1164,4 +1171,4 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   closeRL();
 }
 export { runInstall, verifyRtkArchive };
-export { stepCodexBundled };
+export { stepCodexBundled, stepCodexMcpPolicy, stepCodexPrompts };

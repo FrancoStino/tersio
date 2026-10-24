@@ -1,7 +1,8 @@
 // Codex lifecycle hooks: the prompt hook prints mode context, the PreToolUse hook applies the rtk rewrite.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { readRtkDefault } from '../extensions/shared/plugin-settings.ts';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { readRtkDefault, tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { codexModeContext } from '../extensions/shared/codex-plugin.ts';
 import { resolveRtkBinary, shimCommand } from '../extensions/shared/utils.ts';
 
@@ -53,6 +54,28 @@ function runPreToolUse(): void {
   })}\n`);
 }
 
+/** The whole prompt, ignoring case and trailing punctuation, so a mention inside a task never turns a mode off. */
+function normalizedPrompt(text: unknown): string {
+  return String(text ?? '').trim().toLowerCase().replace(/[.!?\s]+$/, '');
+}
+
+/**
+ * Codex re-adds the mode block on every prompt, so a stop phrase must clear the stored default.
+ * OMP does the same on its own input event; without this, caveman and ponytail stay on.
+ */
+function applyStopPhrase(prompt: unknown): void {
+  const text = normalizedPrompt(prompt);
+  if (text !== 'stop caveman' && text !== 'stop ponytail' && text !== 'normal mode') return;
+  const file = tersioSettingsFile();
+  let stored: Record<string, unknown> = {};
+  mkdirSync(path.dirname(file), { recursive: true });
+  try { stored = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>; } catch { /* no file yet */ }
+  // `normal mode` clears both; a single stop clears only its own mode.
+  if (text !== 'stop ponytail') stored.cavemanDefault = 'off';
+  if (text !== 'stop caveman') stored.ponytailDefault = 'off';
+  writeFileSync(file, `${JSON.stringify({ ...stored }, null, 2)}\n`, 'utf8');
+}
+
 export function runCodexHook(event: string): void {
   if (event === 'pre-tool-use') {
     runPreToolUse();
@@ -62,6 +85,15 @@ export function runCodexHook(event: string): void {
     console.error(`[fail] Unknown Codex hook event: ${event}`);
     process.exitCode = 1;
     return;
+  }
+  if (event === 'user-prompt-submit') {
+    let text = '';
+    if (!process.stdin.isTTY) {
+      try { text = readFileSync(0, 'utf8'); } catch { text = ''; }
+    }
+    let prompt: unknown;
+    try { prompt = (JSON.parse(text) as { prompt?: unknown }).prompt; } catch { prompt = undefined; }
+    applyStopPhrase(prompt);
   }
   const context = codexModeContext();
   if (context) process.stdout.write(`${context}\n`);

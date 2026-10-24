@@ -416,7 +416,7 @@ test("install --host codex registers a personal plugin with hooks and a bundled 
     expect(hooks).not.toMatch(/SessionStart/);
     expect(existsSync(path.join(home, ".agents", "plugins", "marketplace.json"))).toBe(true);
     expect(existsSync(path.join(home, ".codex", "plugins", "tersio"))).toBe(false);
-    expect(result.stdout).toMatch(/Codex plugin: 20 files/);
+    expect(result.stdout).toMatch(/Codex plugin: 25 files/);
     expect(result.stdout).toMatch(/Done — restart Codex/);
     expect(result.stdout).toMatch(/Review and trust the Tersio hooks/);
   } finally {
@@ -432,7 +432,7 @@ test("install --host codex keeps a bundled install on a second run", () => {
     expect(first.status, first.stderr).toBe(0);
     const result = run(home, ["install", "--host", "codex", "--yes"], bin);
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Codex plugin: 20 files/);
+    expect(result.stdout).toMatch(/Codex plugin: 25 files/);
     expect(existsSync(path.join(home, ".tersio", "codex-plugin", "hooks", "hooks.json"))).toBe(true);
     const marketplace = JSON.parse(readFileSync(path.join(home, ".agents", "plugins", "marketplace.json"), "utf8")) as {
       plugins?: Array<{ name?: string }>;
@@ -786,10 +786,18 @@ test("update --host codex rebuilds a bundled plugin", () => {
     const plugin = path.join(home, ".tersio", "codex-plugin");
     const hooks = path.join(plugin, "hooks", "hooks.json");
     writeFileSync(hooks, "stale", "utf8");
+    const prompt = path.join(home, ".codex", "prompts", "rtk.md");
+    rmSync(prompt, { force: true });
+    writeFileSync(path.join(home, ".codex", "config.toml"), 'model = "gpt-6-luna"\n', "utf8");
     const result = run(home, ["update", "--host", "codex", "--yes"], bin);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/bundled Codex plugin/);
     expect(readFileSync(hooks, "utf8")).toMatch(/codex-hook user-prompt-submit/);
+    // Prompts and the MCP policy live outside the plugin tree; an update restores both.
+    expect(readFileSync(prompt, "utf8")).toMatch(/modes rtk/);
+    const config = readFileSync(path.join(home, ".codex", "config.toml"), "utf8");
+    expect(config).toMatch(/model = "gpt-6-luna"/);
+    expect(config).toMatch(/default_tools_approval_mode = "approve"/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -804,12 +812,18 @@ test("uninstall --host codex removes a bundled plugin and keeps plugin data", ()
     const data = path.join(home, ".codex", "plugins", "data", "tersio-tersio-personal");
     mkdirSync(data, { recursive: true });
     writeFileSync(path.join(data, "keep.txt"), "keep", "utf8");
+    const configFile = path.join(home, ".codex", "config.toml");
+    writeFileSync(configFile, `model = "gpt-6-luna"\n\n${readFileSync(configFile, "utf8")}`, "utf8");
     const result = run(home, ["uninstall", "--host", "codex", "--yes"], bin);
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(path.join(home, ".tersio", "codex-plugin"))).toBe(false);
     expect(existsSync(path.join(home, ".agents", "plugins", "marketplace.json"))).toBe(false);
     expect(existsSync(path.join(home, ".tersio", "settings.json"))).toBe(false);
     expect(readFileSync(path.join(data, "keep.txt"), "utf8")).toBe("keep");
+    // The Tersio approval table goes; the user's own Codex lines stay.
+    const config = readFileSync(configFile, "utf8");
+    expect(config).toContain('model = "gpt-6-luna"');
+    expect(config).not.toContain("default_tools_approval_mode");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
