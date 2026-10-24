@@ -758,9 +758,15 @@ const VENDOR_RES: Array<[RegExp, string]> = [
   [/devin|cognition|^swe[-/]/i, 'Cognition'],
 ];
 
+/**
+ * The model's author. A Codex id reads `codex/<provider>/<model>`, so the host and the provider
+ * id are dropped first; a Z.ai run under Codex must not read as an OpenAI model.
+ */
 function modelVendor(model: string): string {
+  const segs = model.split('/').filter(Boolean);
+  const id = segs[0] === 'codex' && segs.length > 2 ? segs.slice(2).join('/') : model;
   for (const [re, name] of VENDOR_RES) {
-    if (re.test(model)) return name;
+    if (re.test(id)) return name;
   }
   return 'Other';
 }
@@ -794,6 +800,7 @@ export function displayModelId(model: string): string {
     if (low === 'openai') return 'OpenAI';
     if (low === 'gpt') return 'GPT';
     if (low === 'swe') return 'SWE';
+    if (low === 'glm') return 'GLM';
     if (low === 'ai') return 'AI';
     if (/^\d+[a-z]+$/.test(low)) return low.toUpperCase();
     if (s.length <= 2) return s.toUpperCase();
@@ -802,11 +809,13 @@ export function displayModelId(model: string): string {
   const seg = (s: string): string => s.split('.').map(cap).join('.');
   const words = (s: string): string => s.split(/[-_:]+/).filter(Boolean).map(seg).join('-');
   const segs = bare.split('/').filter(Boolean);
-  const tail = segs[segs.length - 1] ?? bare;
+  // A Codex id names the host and its provider first; the label reads the model's own id.
+  const rest = segs[0] === 'codex' && segs.length > 2 ? segs.slice(2) : segs;
+  const tail = rest[rest.length - 1] ?? bare;
   // One free model under two spellings; fold the alpha variant onto it.
   const pretty = /^space-bunny(-alpha)?$/i.test(tail) ? 'Space-Bunny' : words(tail);
   const vendor = modelVendor(bare);
-  if (vendor === 'Other') return segs.length > 1 ? `${words(segs[segs.length - 2])} - ${pretty}` : pretty;
+  if (vendor === 'Other') return rest.length > 1 ? `${words(rest[rest.length - 2])} - ${pretty}` : pretty;
   const claude = pretty.match(/^claude[-_](.+)$/i);
   if (vendor === 'Anthropic' && claude) return `Anthropic - Claude - ${claude[1]}`;
   if (pretty.toLowerCase().startsWith(vendor.toLowerCase())) return pretty;
