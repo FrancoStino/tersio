@@ -545,6 +545,10 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
     const ms = ts === undefined ? NaN : typeof ts === 'number' ? ts : Date.parse(ts);
     const t = Number.isFinite(ms) ? ms : null;
     if (parsed.kind === 'token_row') {
+      // A timing-only row (`task_complete`) is not usage; skip it here, the pass above kept its turn.
+      if (!parsed.usage && !parsed.ms) {
+        continue;
+      }
       const turn = parsed.turnId ? pendingTurns.get(parsed.turnId) : lastTurnTiming;
       const provider = parsed.provider ?? codexProvider;
       const usage = parsed.usage ?? {};
