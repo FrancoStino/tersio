@@ -1,6 +1,8 @@
 # Codex host research
 
-Status: Phase 1 research for [issue #63](https://github.com/KurutoDenzeru/tersio/issues/63).
+Status: Implemented for [issue #63](https://github.com/KurutoDenzeru/tersio/issues/63).
+
+Phase 1 research led to the Phase 2 host support in this branch.
 
 Tested with Codex CLI `0.163.0-alpha.11.2` on macOS on 2026-10-24.
 
@@ -13,6 +15,7 @@ Tested with Codex CLI `0.163.0-alpha.11.2` on macOS on 2026-10-24.
 - Keep `AGENTS.md` as an opt-in fallback.
 - Use rollout JSONL for usage totals. Do not use MCP as the stats source.
 - Keep RTK integration out of v1.
+- Keep one prompt hook. Do not add a `SessionStart` hook.
 
 The compatibility manifest is the only tested layout that loads plugin hooks in this build. A root `plugin.json` loads skills. Its `extensions.com.openai.hooks` field did not run a hook. A root `hooks` field did not load either.
 
@@ -71,6 +74,19 @@ Do not add a root `plugin.json` beside it. The mixed test did not run the hook, 
 
 Revisit the portable layout when a Codex release loads portable hooks. The compatibility format can remain until then.
 
+The shipped marketplace plugin has five files:
+
+```text
+plugins/tersio/
+  .codex-plugin/plugin.json
+  .mcp.json
+  hooks/hooks.json
+  skills/status/SKILL.md
+  package.json
+```
+
+The plugin calls `tersio` from `PATH`. It carries no build output and no dependencies.
+
 ## 2. Marketplace publication
 
 ### Options
@@ -120,6 +136,35 @@ Publish the repo marketplace first.
 
 The installer can add the repo marketplace, then install `tersio@tersio`. It can write a personal marketplace only when the repo marketplace is not suitable.
 
+The repo marketplace is at `.agents/plugins/marketplace.json`. Its source path is `./plugins/tersio`.
+
+The personal marketplace is at `~/.agents/plugins/marketplace.json`. The installer reads its existing name and keeps every other plugin entry. The plugin ID follows that name, such as `tersio@my-market`.
+
+The personal marketplace path resolves from `$HOME` at call time. Tests can then use a temporary home without a stale module-level path.
+
+The local fallback is a 15-file bundled plugin at `~/.tersio/codex-plugin/`:
+
+```text
+codex-plugin/
+  .codex-plugin/plugin.json
+  .mcp.json
+  hooks/hooks.json
+  skills/status/SKILL.md
+  package.json
+  tersio
+  dist/tersio.js
+  extensions/caveman/rule.md
+  extensions/caveman/rule-lite.md
+  extensions/caveman/rule-ultra.md
+  extensions/caveman/rule-megacave-lite.md
+  extensions/caveman/rule-megacave.md
+  extensions/caveman/rule-megacave-ultra.md
+  extensions/ponytail/hooks/ponytail-instructions.js
+  extensions/pstack/rule.md
+```
+
+The bundled plugin also copies its runtime dependencies and dashboard. Its hook uses the absolute Node path that installed it. Its MCP launcher uses the absolute cache path, because Codex expands `PLUGIN_ROOT` in hooks but not in MCP arguments.
+
 ### Version flow
 
 The marketplace is a Git source. `codex plugin marketplace upgrade` refreshes the marketplace snapshot. The plugin entry points at the released plugin version.
@@ -132,6 +177,13 @@ Tersio update should:
 2. Read the available plugin version.
 3. Install the plugin only when the version differs.
 4. Report the version that Codex will load.
+
+The shipped update follows the layout on disk:
+
+- **Bundled:** rebuild the bundled plugin. Do not switch to the marketplace.
+- **Marketplace:** run `codex plugin marketplace upgrade tersio`, then `codex plugin add tersio@tersio`.
+
+The update does not migrate one layout to the other. Two MCP servers would remain until the old cache is removed.
 
 ## 3. Mode injection
 
@@ -169,11 +221,17 @@ Non-managed hooks stayed trust-gated. The tests used `--dangerously-bypass-hook-
 
 Use hooks for always-on modes:
 
-- `SessionStart` injects the initial mode block.
-- `UserPromptSubmit` restores or refreshes the block.
+- `UserPromptSubmit` injects the current mode block.
 - Each hook reads `~/.tersio/settings.json`.
 - Each hook writes the current block to stdout.
-- The block keeps its stale marker so a later turn can replace it.
+
+`UserPromptSubmit` runs for startup, resume, and every prompt. One hook therefore covers every turn without a second block from `SessionStart`.
+
+The real test used Codex CLI `0.163.0-alpha.11.2` with a temporary `CODEX_HOME`:
+
+- The lite preset produced one `Caveman lite active` block.
+- The rollout JSONL recorded the block as a `developer` message.
+- The same result held for the marketplace and bundled layouts.
 
 Keep `AGENTS.md` as an opt-in fallback. The installer can add one managed block when the user asks for it. It must not rewrite unrelated project instructions.
 
@@ -220,7 +278,7 @@ Tersio already classifies Codex token rows in:
 
 The parser reads provider and model context. It then writes token rows with the `codex` host.
 
-The source path is missing. `sessionsDirs()` in `extensions/shared/usage-ledger.ts` reads only omp and pi today. Phase 2 must add `~/.codex/sessions`.
+`sessionsDirs()` in `extensions/shared/usage-ledger.ts` reads `~/.codex/sessions` with the omp and pi paths.
 
 ### Decision
 
@@ -247,27 +305,34 @@ Read the installed plugin version from the cache path or the plugin manifest. Do
 
 The installer should:
 
-1. Run `codex plugin marketplace add KurutoDenzeru/tersio --sparse .agents/plugins`.
+1. Run `codex plugin marketplace add KurutoDenzeru/tersio --sparse .agents/plugins --sparse plugins/tersio`.
 2. Run `codex plugin add tersio@tersio`.
 3. Report that the plugin hooks need trust review in `/hooks`.
 4. Leave `AGENTS.md` unchanged unless the user chooses the fallback.
 
 If the marketplace is already configured, keep the existing source.
 
-If `codex plugin add` fails, do not write a fake cache entry. Report the failure. Keep the marketplace source.
+If the marketplace install fails, write the bundled fallback. The fallback writes a personal marketplace and runs `codex plugin add tersio@<personal-marketplace>`.
+
+A disabled plugin runs `codex plugin add` again. Codex then enables it.
+
+If `codex plugin add` fails, do not write a fake cache entry. Report the failure.
 
 ### Uninstall
 
 The installer should:
 
 1. Run `codex plugin remove tersio@tersio`.
-2. Run `codex plugin marketplace remove tersio`.
-3. Remove `~/.tersio/settings.json` only with the normal Tersio settings cleanup.
-4. Keep `~/.codex/plugins/data/tersio-tersio` unless the user asks for data removal.
+2. Remove the Tersio entry from the personal marketplace.
+3. Remove `~/.tersio/codex-plugin/` and the unregistered legacy directory.
+4. Remove `~/.tersio/settings.json` only with the normal Tersio settings cleanup.
+5. Keep `~/.codex/plugins/data/tersio-tersio` unless the user asks for data removal.
 
 The tested remove command deleted the installed cache. It kept the plugin data directory. The installer must not delete `PLUGIN_DATA` by default.
 
 Do not remove unrelated Codex plugins, marketplaces, or user hooks.
+
+The installer does not remove the repo marketplace. It belongs to the user and can serve future installs.
 
 ## 6. RTK and tool filtering
 
@@ -295,16 +360,17 @@ Phase 2 can add RTK only after tests prove:
 3. The hooks work after trust review.
 4. The user can disable RTK without leaving a rewrite path active.
 
-## Phase 2 scope
+## Phase 2 implementation
 
-Add only these parts first:
+The implementation has these parts:
 
 - `HostId: 'codex'`
 - Codex detection in `cli/hosts.ts`
-- Codex install and uninstall paths
+- Codex install, update, doctor, and uninstall paths
 - `~/.codex/sessions` in `sessionsDirs()`
 - Codex hook commands
 - Repo marketplace and plugin package
+- Dashboard host and session support
 
 Do not add RTK.
 
@@ -321,7 +387,7 @@ It has:
 - `hooks/hooks.json`
 - `skills/status/SKILL.md`
 
-This example is a shape reference. The installer and plugin package are Phase 2 work.
+This example is a shape reference. The shipped plugin adds `package.json`.
 
 ## Sources
 

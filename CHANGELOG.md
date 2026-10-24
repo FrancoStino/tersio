@@ -2,8 +2,12 @@
 
 ### Added
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
+ - **Codex is a fourth host.** `tersio install --host codex` adds the Tersio repo marketplace and installs `tersio@tersio`. If that source is unavailable, it writes a self-contained plugin at `~/.tersio/codex-plugin/` and registers it through `~/.agents/plugins/marketplace.json`. The plugin has a status skill, the Tersio MCP server, and one `UserPromptSubmit` hook that keeps the stored modes active.
+ - Codex joins install, update, doctor, and uninstall. `tersio update --host codex` follows the installed layout, `tersio doctor --fix codex` repairs or enables the plugin, and the dashboard counts Codex sessions and labels them as Codex.
+ - The repository marketplace is at `.agents/plugins/marketplace.json`. The shipped plugin is at `plugins/tersio/`.
 
 ### Fixed
+ - A plugin hook block appears once per Codex turn. One `UserPromptSubmit` hook owns the mode context, so startup and resume do not add a second block.
  - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.
  - The update check no longer reports the bundled Ponytail as missing. It looked for the separate package an older install carried, so every update claimed to reinstall it and listed it as a change even when nothing changed.
 
