@@ -139,7 +139,7 @@ State the range and the source of each figure.
 `,
     'package.json': read(ROOT, 'package.json'),
   };
-  if (bundled) files.tersio = '#!/usr/bin/env node\nimport "./dist/tersio.js";\n';
+  if (bundled) files.tersio = `#!/usr/bin/env node\nimport ${JSON.stringify('./dist/tersio.js')};\n`;
   return files;
 }
 
