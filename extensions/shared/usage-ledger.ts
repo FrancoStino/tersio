@@ -196,10 +196,10 @@ function addInto(into: TokenBreakdown, u: { input?: unknown; output?: unknown; c
 export function sessionsDirs(): string[] {
   const override = process.env.TERSIO_SESSIONS_DIR;
   if (override) return [override];
-  // Both hosts, not just the running one: a pi session is missing if we stop at the first existing directory.
+  // Every host, not just the running one: a session is missing if we stop at the first existing directory.
   const dirs = isPiProcess()
-    ? [path.join(piAgentDir(), 'sessions'), path.join(homeDir(), '.omp', 'agent', 'sessions')]
-    : [path.join(homeDir(), '.omp', 'agent', 'sessions'), path.join(piAgentDir(), 'sessions')];
+    ? [path.join(piAgentDir(), 'sessions'), path.join(homeDir(), '.omp', 'agent', 'sessions'), path.join(homeDir(), '.codex', 'sessions')]
+    : [path.join(homeDir(), '.omp', 'agent', 'sessions'), path.join(piAgentDir(), 'sessions'), path.join(homeDir(), '.codex', 'sessions')];
   const found = dirs.filter((dir) => fs.existsSync(dir));
   return found.length > 0 ? found : [dirs[0]];
 }
