@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, addCodexPersonalMarketplace, codexInstalledPlugin,
@@ -142,7 +143,7 @@ test("Codex sessions are scanned and labelled as the codex host", async () => {
 });
 
 test("the Codex hook command prints the active mode block", () => {
-  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-codex-hook-"));
   try {
     mkdirSync(path.join(home, ".tersio"), { recursive: true });
@@ -260,7 +261,7 @@ test("Codex token rows become codex host rows with model and cache usage", async
 });
 
 test("the repository marketplace package matches the generated plugin contract", () => {
-  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const marketplace = JSON.parse(readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8")) as {
     name?: string;
     plugins?: Array<{ name?: string; source?: { path?: string } }>;
@@ -310,7 +311,7 @@ test("a partial marketplace cache is reported as an enabled plugin with missing 
 });
 
 test("the repository marketplace plugin runs the installed Tersio CLI", () => {
-  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const mcp = JSON.parse(readFileSync(path.join(root, "plugins", "tersio", ".mcp.json"), "utf8")) as {
     mcpServers?: { tersio?: { command?: string; args?: string[] } };
   };
