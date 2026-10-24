@@ -102,10 +102,9 @@ test("a Codex install writes the slash commands, the approval policy, and uninst
 
     const prompts = readdirSync(path.join(codexDir, "prompts")).filter((name) => name.endsWith(".md")).sort();
     expect(prompts).toEqual([
-      "tersio-caveman.md", "tersio-combo.md", "tersio-ponytail.md",
-      "tersio-pstack.md", "tersio-rtk.md", "tersio-status.md",
+      "caveman.md", "combo.md", "ponytail.md", "pstack.md", "rtk.md", "tersio.md",
     ]);
-    const caveman = readFileSync(path.join(codexDir, "prompts", "tersio-caveman.md"), "utf8");
+    const caveman = readFileSync(path.join(codexDir, "prompts", "caveman.md"), "utf8");
     expect(caveman).toContain("modes caveman ultra");
     // A bundled install runs its own launcher, so `tersio` need not be on PATH.
     expect(caveman).toContain(path.join(home, ".tersio", "codex-plugin", "tersio"));

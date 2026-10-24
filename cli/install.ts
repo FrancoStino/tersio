@@ -37,7 +37,7 @@ import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.
 import type { HostEntry, HostId } from './hosts.ts';
 import {
   CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_NAME, CODEX_MARKETPLACE_SOURCE, CODEX_MARKETPLACE_SPARSE, CODEX_PLUGIN_ID, CODEX_PLUGIN_NAME,
-  CODEX_PROMPT_MODES,
+  CODEX_LEGACY_PROMPTS, CODEX_PROMPTS,
   CODEX_RUNTIME_PACKAGES,
   addCodexMcpPolicy, addCodexPersonalMarketplace, codexConfigFile, codexInstalledPlugin, codexLegacyPluginDir,
   codexPersonalPluginId, codexPromptFile, codexPromptText,
@@ -384,8 +384,12 @@ async function stepCodexPrompts(options: InstallOptions): Promise<void> {
   // The bundled plugin carries its own CLI, so a machine without `tersio` on PATH still runs the command.
   const bundled = codexInstalledPlugin()?.layout === 'bundled';
   const cli = bundled ? `"${process.execPath}" "${path.join(codexPluginDir(), 'tersio')}"` : 'tersio';
-  for (const mode of CODEX_PROMPT_MODES) {
-    await writeIfChanged(codexPromptFile(mode), codexPromptText(mode, cli), options);
+  for (const name of CODEX_PROMPTS) {
+    await writeIfChanged(codexPromptFile(name), codexPromptText(name, cli), options);
+  }
+  // Drop the names an older build wrote, so one mode never appears twice in the menu.
+  for (const name of CODEX_LEGACY_PROMPTS) {
+    await fs.rm(codexPromptFile(name), { force: true });
   }
 }
 

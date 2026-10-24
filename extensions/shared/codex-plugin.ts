@@ -145,58 +145,69 @@ const SKILL_TEXTS: Readonly<Record<(typeof CODEX_PLUGIN_SKILL_FILES)[number], st
   ),
 };
 
-/** The slash commands Tersio writes: each mode, plus a read-only status command. */
-export const CODEX_PROMPT_MODES = ['combo', 'caveman', 'rtk', 'ponytail', 'pstack', 'status'] as const;
+/** The slash commands Tersio writes. Codex names each command after its file: `rtk.md` is `/rtk`. */
+export const CODEX_PROMPT_MODES = ['combo', 'caveman', 'rtk', 'ponytail', 'pstack'] as const;
 export type CodexPromptMode = (typeof CODEX_PROMPT_MODES)[number];
+export const CODEX_PROMPTS = [...CODEX_PROMPT_MODES, 'tersio'] as const;
+export type CodexPromptName = (typeof CODEX_PROMPTS)[number];
+/** Older Tersio builds wrote a `tersio-` prefix; Codex then showed `/prompts:tersio-*`, so they are removed. */
+export const CODEX_LEGACY_PROMPTS: readonly string[] = [...CODEX_PROMPT_MODES, 'status'].map((name) => `tersio-${name}`);
 
-/**
- * Codex reads custom prompts from `~/.codex/prompts/*.md` and shows each one as `/prompts:<file>`.
- * A plugin cannot carry them, so the installer writes these files and uninstall removes them.
- */
+/** Codex reads custom prompts from `~/.codex/prompts/*.md`; a plugin cannot carry them. */
 export function codexPromptsDir(): string {
   return path.join(homeDir(), '.codex', 'prompts');
 }
 
-export function codexPromptFile(mode: CodexPromptMode): string {
-  return path.join(codexPromptsDir(), `tersio-${mode}.md`);
+export function codexPromptFile(name: string): string {
+  return path.join(codexPromptsDir(), `${name}.md`);
 }
 
-const PROMPT_LEVELS: Readonly<Record<Exclude<CodexPromptMode, 'status'>, readonly string[]>> = {
+/** The values each command takes. `status` reads the current value and changes nothing. */
+const PROMPT_LEVELS: Readonly<Record<CodexPromptMode, readonly string[]>> = {
   combo: ['off', 'lite', 'balanced', 'max'],
-  caveman: ['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra'],
-  rtk: ['on', 'off'],
-  ponytail: ['off', 'lite', 'full', 'ultra'],
-  pstack: ['on', 'off'],
+  caveman: ['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra', 'status'],
+  rtk: ['on', 'off', 'status'],
+  ponytail: ['off', 'lite', 'full', 'ultra', 'status'],
+  pstack: ['on', 'off', 'status'],
 };
 
 /**
  * A custom prompt body. `$1` is the level the user typed after the command, so
- * `/prompts:tersio-caveman full` reads as a mode change without a second question.
+ * `/caveman full` reads as a mode change without a second question.
  */
-export function codexPromptText(mode: CodexPromptMode, cli = 'tersio'): string {
-  if (mode === 'status') {
+export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
+  if (name === 'tersio') {
     return [
       '---',
-      'description: Show the current Tersio modes and local agent usage',
+      'description: Tersio status, help, update, or dashboard',
+      'argument-hint: <status|help|update|dashboard>',
       '---',
       '',
-      'Show the Tersio state for this machine.',
+      'Run the Tersio command named by `$1`.',
       '',
-      'Read the current mode defaults from `~/.tersio/settings.json`.',
-      'Call the `tersio_stats` MCP tool for usage totals, and state the range and the source of each figure.',
+      '- `status`: read `~/.tersio/settings.json` for the mode defaults, then call the `tersio_stats` MCP tool for usage. State the range and the source of each figure.',
+      `- \`update\`: run \`${cli} update\`.`,
+      `- \`dashboard\`: run \`${cli} dashboard\`.`,
+      '- `help` or empty: list the Tersio commands and their values.',
       '',
     ].join('\n');
   }
+  const mode = name;
   const levels = PROMPT_LEVELS[mode];
-  const asked = `$1`;
+  const asked = '$1';
+  const readOnly = mode !== 'combo';
   const body = [
     `Set the Tersio ${mode} mode. The user's argument is \`${asked}\`, and it is one of ${levels.join(', ')}.`,
-    `If \`${asked}\` is empty, ask for one of those levels and stop.`,
+    readOnly
+      ? `If \`${asked}\` is empty or \`status\`, run \`${cli} modes ${mode}\` and report the current value.`
+      : `If \`${asked}\` is empty, ask for one of those levels and stop.`,
     '',
     // Each level is written out, so the model never has to expand `$1` itself.
-    'Use the shell tool for this. Run the one command that matches the argument, then report its output verbatim:',
+    'Use the shell tool. Run the one command that matches the argument, then report its output verbatim:',
     '',
-    ...levels.map((level) => `- \`${level}\`: \`${cli} modes ${mode} ${level}\``),
+    ...levels.map((level) => (level === 'status'
+      ? `- \`status\`: \`${cli} modes ${mode}\``
+      : `- \`${level}\`: \`${cli} modes ${mode} ${level}\``)),
     '',
     mode === 'combo' ? 'pstack is separate: a Combo preset never changes it.' : '',
     'These are Codex session defaults. Say that the change applies to new Codex sessions; do not name another host.',

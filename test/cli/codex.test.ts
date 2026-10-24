@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, CODEX_PROMPT_MODES, addCodexMcpPolicy,
+  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, CODEX_PROMPTS, addCodexMcpPolicy,
   addCodexPersonalMarketplace, codexInstalledPlugin,
   codexMarketplacePluginFiles, codexModeContext, codexPersonalPluginId, codexPluginFiles, codexPluginInstalled,
   codexPluginState, codexPromptFile, codexPromptText, removeCodexPersonalMarketplace,
@@ -120,19 +120,26 @@ test("an empty personal marketplace uses its own name", () => {
 });
 
 test("every mode has a Codex slash command that runs the CLI", () => {
-  expect(CODEX_PROMPT_MODES).toEqual(["combo", "caveman", "rtk", "ponytail", "pstack", "status"]);
-  for (const mode of CODEX_PROMPT_MODES) {
+  // Codex names the command after the file, so these read as /combo, /caveman, /rtk, and so on.
+  expect(CODEX_PROMPTS).toEqual(["combo", "caveman", "rtk", "ponytail", "pstack", "tersio"]);
+  expect(CODEX_PROMPTS.map((name) => codexPromptFile(name).split("/").pop())).toEqual([
+    "combo.md", "caveman.md", "rtk.md", "ponytail.md", "pstack.md", "tersio.md",
+  ]);
+  for (const mode of CODEX_PROMPTS) {
     const text = codexPromptText(mode, "tersio");
     // Front matter names the command in the menu, and the body is one runnable line.
     expect(text.startsWith("---\ndescription: ")).toBe(true);
     expect(text).toContain("---\n\n");
-    if (mode === "status") {
+    if (mode === "tersio") {
       expect(text).toContain("tersio_stats");
+      expect(text).toContain("tersio dashboard");
       continue;
     }
     expect(text).toContain(`tersio modes ${mode} off`);
     expect(text).toContain("argument-hint:");
   }
+  // A mode command reports its own value for `status`.
+  expect(codexPromptText("caveman", "tersio")).toContain("`tersio modes caveman`");
   // The bundled layout points at the plugin's own CLI, so a machine without `tersio` on PATH still runs it.
   expect(codexPromptText("rtk", '"/usr/bin/node" "/plugin/tersio"')).toContain('"/plugin/tersio" modes rtk on');
 });
