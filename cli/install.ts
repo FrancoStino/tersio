@@ -350,6 +350,29 @@ async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 
   await bind(binDest);
 }
 
+/**
+ * Codex reads the same RTK binary, but its rewrite runs through the plugin's `PreToolUse` hook,
+ * not `rtk init`: rtk ships no codex agent. The step only guarantees the binary exists.
+ */
+async function stepRtkCodex(binDir: string, options: InstallOptions): Promise<void> {
+  const binDest = path.join(binDir, RTK_BINARY_NAME);
+  const found = resolveRtkBinary();
+  if (found && !applyUpdate) {
+    if (!options.quiet) {
+      const where = verbose ? ` (${found})` : '';
+      console.log(`  RTK — already installed${where}, the Codex hook rewrites eligible shell calls`);
+    }
+    return;
+  }
+  if (options.dryRun) {
+    if (verbose && !options.quiet) sayTagged(`  [dry-run] would download the rtk binary to ${binDest}`);
+    return;
+  }
+  if (!options.quiet) console.log('  RTK — download binary for the Codex hook');
+  await stepRtk(binDir, options, 'opencode');
+  if (!options.quiet) console.log('  RTK rewrite runs inside the Tersio Codex plugin — no rtk init needed');
+}
+
 // First entry is required; the rest are optional companions.
 async function copySources(extDir: string, files: Array<[string, string]>, skipLabel: string, options: WriteOptions): Promise<boolean> {
   const src = await readTextIfExists(files[0][0]);
@@ -1047,6 +1070,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
 
   if (targetHost === 'codex') {
     await capture('codex plugin', () => stepCodex(installOptions));
+    await capture('rtk', () => stepRtkCodex(BUN_BIN_DIR, installOptions));
     await capture('settings', () => writePluginSettings(profile, installOptions));
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(profile.comboDefault === 'off'
