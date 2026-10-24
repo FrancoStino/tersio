@@ -28,6 +28,7 @@ export const REMOTE_MARKS: Readonly<Record<string, string>> = {
   instagram: `${SIMPLE_ICONS}/instagram.svg`,
   reddit: `${SIMPLE_ICONS}/reddit.svg`,
   // Owner-hosted, nominative use.
+  codex: "https://registry.npmmirror.com/@lobehub/icons-static-svg/1.98.0/files/icons/codex.svg",
   groq: "https://groq.com/favicon.svg",
   poolside: "https://poolside.ai/favicon/favicon.svg",
   // AWS owns Kiro; Wikimedia hosts its vector, as AWS serves only a 16x16 ICO that cannot grow into a tile.

@@ -155,6 +155,9 @@ test("provider-prefixed keys fold into vendor-first labels", () => {
   expect(displayModel("opencode/nvidia/minimaxai/minimax-m2.7")).toBe("Minimax-M2.7");
   expect(displayModel("opencode/nvidia/google/gemma-4-31b-it")).toBe("Google - Gemma-4-31B-IT");
   expect(displayModel("opencode/kilo/stealth/space-bunny-alpha")).toBe("Stealth - Space-Bunny");
+  // Codex wraps the gateway and the provider, so the model's own id supplies both the name and the mark.
+  expect(displayModel("codex/openai/zcode/glm-5.3-flash")).toBe("Z.ai - GLM-5.3-Flash");
+  expect(vendorOf("codex/openai/zcode/glm-5.3-flash")).toMatchObject({ name: "Z.ai", slug: "zdotai" });
 });
 
 test("folded labels pass through untouched", () => {

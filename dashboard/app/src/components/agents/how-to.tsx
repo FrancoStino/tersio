@@ -295,6 +295,16 @@ const STEPS = [
   },
 ] as const;
 
+/** Every Codex prompt Tersio writes, with the values the command accepts. */
+const CODEX_PROMPTS = [
+  { command: "/combo", values: "off · lite · balanced · max · help · status" },
+  { command: "/caveman", values: "off · lite · full · ultra · megacave-* · wenyan-* · status" },
+  { command: "/rtk", values: "on · off · enable · disable · true · false · status" },
+  { command: "/ponytail", values: "off · lite · full · ultra · status" },
+  { command: "/pstack", values: "on · off · status" },
+  { command: "/tersio", values: "status · help · update <ponytail|rtk|caveman|all> [--dry-run] · upstream [--offline] · dashboard" },
+] as const;
+
 /** Each host's own install path, so the guide never sends a Codex user to the extension tree. */
 const INSTALL_METHODS = [
   {
@@ -1091,6 +1101,27 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
             </li>
           ))}
         </ol>
+      </Card>
+
+      <Card
+        title="Codex commands"
+        icon="terminal"
+        description="Codex reads these prompts from ~/.codex/prompts. Restart Codex after an install or update, then trust both Tersio entries in /hooks."
+      >
+        <div className="grid gap-2 md:grid-cols-2">
+          {CODEX_PROMPTS.map((prompt) => (
+            <div key={prompt.command} className="grid gap-1 rounded-xl border border-line px-3 py-2.5">
+              <code className="mono text-[12px] font-semibold text-ink">{prompt.command}</code>
+              <span className="text-[11px] leading-relaxed text-dim">{prompt.values}</span>
+            </div>
+          ))}
+        </div>
+        <p className="m-0 mt-3 text-[11px] leading-relaxed text-dim">
+          The five Ponytail workflows are skills, not slash commands: <span className="mono">ponytail-audit</span>,{" "}
+          <span className="mono">ponytail-debt</span>, <span className="mono">ponytail-gain</span>,{" "}
+          <span className="mono">ponytail-help</span>, and <span className="mono">ponytail-review</span>. Invoke one with{" "}
+          <span className="mono">$&lt;skill-name&gt;</span>.
+        </p>
       </Card>
 
       <Card
