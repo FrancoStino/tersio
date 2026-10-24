@@ -12,7 +12,7 @@ flowchart TB
     UP["cli/upstream.ts<br/>scorecard vs pinned upstreams"]
     UPDT["cli/dashboard-update.ts<br/>update view, apply, cadence"]
     SRV["cli/dashboard.ts<br/>127.0.0.1, or --export one file"]
-    MCP["cli/mcp.ts<br/>stdio MCP server, four tools"]
+    MCP["cli/mcp.ts<br/>stdio MCP server, three tools"]
   end
   subgraph APP["dashboard/app (Vite + React)"]
     UI["hash routes, one page per view"]
@@ -224,12 +224,11 @@ flowchart LR
   subgraph PROC["tersio mcp (one process per client)"]
     BUN{"bun on PATH?"}
     SRV["cli/mcp.ts<br/>JSON-RPC over stdio"]
-    TOOLS["four tools"]
+    TOOLS["three tools"]
   end
   subgraph DATA["what the tools read"]
     ASTS["agentStats()<br/>usage.db"]
     ACT["readActivity()<br/>activity.jsonl"]
-    DOC["runDoctor()"]
     PROF["storedProfile() / writePluginSettings()<br/>settings.json"]
   end
 
@@ -239,7 +238,7 @@ flowchart LR
   BUN -->|no| SRV
   BUNRUN --> SRV
   SRV --> TOOLS
-  TOOLS --> ASTS & ACT & DOC & PROF
+  TOOLS --> ASTS & ACT & PROF
   SRV -->|"answer"| CHAT
 ```
 
@@ -261,9 +260,9 @@ sequenceDiagram
 ```
 
 - **The client owns the lifecycle.** There is no daemon, port, or token: the client spawns `tersio mcp` when it needs it and the process exits on stdin close. A client that cannot spawn a process is not supported, deliberately.
-- **Reads reuse the dashboard's functions, not a copy.** `tersio_stats` calls `agentStats()`, `tersio_activity` calls `readActivity()`, and `tersio_doctor` runs `runDoctor()`. A dashboard figure and an MCP figure are the same figure by construction. Measured once on this machine: `/api/agent` and `tersio_stats` both answered 18,145 requests for 7d.
+- **Reads reuse the dashboard's functions, not a copy.** `tersio_stats` calls `agentStats()` and `tersio_activity` calls `readActivity()`. A dashboard figure and an MCP figure are the same figure by construction. Measured once on this machine: `/api/agent` and `tersio_stats` both answered 18,145 requests for 7d.
 - **Writes go through the same path as Settings.** `tersio_modes` writes `~/.tersio/settings.json` through `writePluginSettings`, so the change lands in the activity log and mirrors to Ponytail exactly like a dashboard save. It sets session-start defaults, not a running session, and not the MCP client's own behavior.
-- **stdout carries only the protocol.** The doctor report and the settings save line print to stdout, so both run behind a `captureLog` wrapper that turns their output into the tool's answer. Tool calls are serialized because that wrapper patches `console.log`.
+- **stdout carries only the protocol.** The settings save line prints to stdout, so it runs behind a `captureLog` wrapper that turns its output into the tool's answer. Tool calls are serialized because that wrapper patches `console.log`.
 - **Bun when present, node otherwise.** The installed CLI runs under node; the server probes `bun --version` and re-execs under bun when it answers, pumping stdin so exactly one process reads the client's pipe. `TERSIO_MCP_RUNTIME` marks the child so a failed hand-off cannot loop. The doctor row proves which runtime answered (`node v26.3.0` under bun, `v26.12.1` under node).
 - **Protocol surface, pinned by test.** `initialize` answers with the version the server speaks (`2025-06-18`), not an echo of the client's; unknown methods answer `-32601`, bad arguments `-32602`, and a notification draws no reply.
 

@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, run the health check, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
+ - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
 
 ### Fixed
  - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.

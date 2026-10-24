@@ -4,7 +4,6 @@ import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
 import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
 import { formatCurrency, readStoredCurrency } from './currency.ts';
-import { runDoctor } from './doctor.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
@@ -54,8 +53,8 @@ interface ModeWants {
 }
 
 /**
- * The only stdout a client ever sees is the protocol, so a tool that prints (doctor's report,
- * the settings save line) is captured and its text becomes the tool's answer.
+ * The only stdout a client ever sees is the protocol, so a tool that prints (the settings save
+ * line) is captured and its text becomes the tool's answer.
  */
 async function captureLog<T>(fn: () => Promise<T>): Promise<{ value: T; text: string }> {
   const lines: string[] = [];
@@ -94,11 +93,6 @@ function activityText(limit: number): string {
   return entries.map((e) => `${new Date(e.at).toISOString()} [${e.kind}] ${e.title}${e.detail ? ` — ${e.detail}` : ''}`).join('\n');
 }
 
-async function doctorText(): Promise<string> {
-  const { value, text } = await captureLog(() => runDoctor(false));
-  return `${text}\n${value.ok} ok, ${value.warn} warnings, ${value.missing} missing.`.trim();
-}
-
 async function modesText(want: ModeWants): Promise<string> {
   const stored = await storedProfile();
   // The preset lands first, so a single mode in the same call overrides just its piece of it.
@@ -134,11 +128,6 @@ const TOOLS = [
     },
   },
   {
-    name: 'tersio_doctor',
-    description: 'Health check of the Tersio installation: extensions, registrations, RTK, rules, CLI.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
     name: 'tersio_modes',
     description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack) overrides its piece of that preset.',
     inputSchema: {
@@ -166,14 +155,6 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
     const limit = args.limit === undefined ? 20 : Math.min(200, Math.max(1, Math.round(Number(args.limit))));
     if (!Number.isFinite(limit)) throw new RpcError(-32602, 'limit must be a number');
     return { content: [{ type: 'text', text: activityText(limit) }] };
-  }
-  if (name === 'tersio_doctor') {
-    try {
-      return { content: [{ type: 'text', text: await doctorText() }] };
-    } catch (e) {
-      // A doctor failure is a finding, not a protocol error; the client sees the tool failed.
-      return { content: [{ type: 'text', text: `Doctor run failed: ${(e as Error).message}` }], isError: true };
-    }
   }
   if (name === 'tersio_modes') {
     // One validated value per mode; the sets are the same ones the CLI flags and Settings dialog use.
@@ -216,7 +197,7 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'tersio', version: PACKAGE_VERSION },
-        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, installation health with tersio_doctor, and read or set session modes with tersio_modes.',
+        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, and read or set session modes with tersio_modes.',
       };
     } else if (method === 'ping') result = {};
     else if (method === 'tools/list') result = { tools: TOOLS };

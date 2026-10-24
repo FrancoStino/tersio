@@ -107,7 +107,7 @@ Add this entry under `mcpServers` in the client's MCP settings:
 
 That is the whole setup. No extra command, no port, no token, and no process to keep alive.
 
-Four tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_doctor` (the health report), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
+Three tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
 
 ## 🖥️ CLI
 
