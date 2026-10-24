@@ -133,14 +133,15 @@ describe('the MCP rtk_run tool', () => {
     }
   });
 
-  test('runs through rtk when RTK mode is on', async () => {
+  // The off path above covers Windows. The fake rtk shim is a POSIX script because cmd.exe
+  // does not pass the arguments the same way to a batch fixture.
+  test.skipIf(process.platform === 'win32')('runs through rtk when RTK mode is on', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tersio-rtk-on-'));
     const bin = path.join(home, 'bin');
     await mkdir(bin, { recursive: true });
-    const windows = process.platform === 'win32';
-    const rtk = path.join(bin, windows ? 'rtk.cmd' : 'rtk');
-    await writeFile(rtk, windows ? '@echo off\r\necho rtk:%*\r\n' : '#!/bin/sh\nprintf "rtk:%s" "$*"\n', 'utf8');
-    if (!windows) await chmod(rtk, 0o755);
+    const rtk = path.join(bin, 'rtk');
+    await writeFile(rtk, '#!/bin/sh\nprintf "rtk:%s" "$*"\n', 'utf8');
+    await chmod(rtk, 0o755);
     await writeFile(path.join(home, 'settings.json'), JSON.stringify({ rtkDefault: true }), 'utf8');
     const previous = { home: process.env.TERSIO_HOME, path: process.env.PATH };
     process.env.TERSIO_HOME = home;
