@@ -13,7 +13,8 @@ import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import {
-  CODEX_PLUGIN_ID, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalMarketplaceFile, codexPersonalPluginId,
+  CODEX_PLUGIN_ID, CODEX_PROMPT_MODES, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalMarketplaceFile,
+  codexPersonalPluginId, codexPromptFile,
   codexPluginDir, codexPluginIdForDir, removeCodexPersonalMarketplace,
 } from '../extensions/shared/codex-plugin.ts';
 
@@ -268,6 +269,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     console.log(`  ${dir} (personal plugin)`);
     console.log(`  the tersio entry in ${personalMarketplaceFile}`);
     console.log(`  ${codexLegacyPluginDir()} (unregistered legacy plugin)`);
+    console.log(`  ${CODEX_PROMPT_MODES.length} Tersio slash commands in ${path.dirname(codexPromptFile('combo'))}`);
     console.log(`  ${tersioSettingsFile()} (session defaults)`);
     if (!confirmed && !(await confirmDestructive('Remove Tersio from Codex?'))) { closeRL(); return false; }
     if (shouldDryRun) {
@@ -281,6 +283,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     }
     await removeUninstallTarget(dir, shouldDryRun);
     await removeUninstallTarget(codexLegacyPluginDir(), shouldDryRun);
+    for (const mode of CODEX_PROMPT_MODES) await removeUninstallTarget(codexPromptFile(mode), shouldDryRun, false);
     if (!shouldDryRun) {
       const marketplace = await readTextIfExists(personalMarketplaceFile);
       if (marketplace !== null) {

@@ -89,6 +89,40 @@ test("readPluginSettings picks up values from ~/.tersio/settings.json", () => {
   });
 });
 
+test("a Codex install writes the slash commands, the approval policy, and uninstall removes both", () => {
+  withHome((home) => {
+    const codexDir = path.join(home, ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(path.join(codexDir, "config.toml"), 'model = "gpt-6-luna"\n', "utf8");
+    const env = { ...cliEnv(home), TERSIO_CODEX_SKIP_REGISTER: "1", TERSIO_CODEX_FALLBACK: "1" };
+    const install = spawnSync(process.execPath, [installer, "install", "--host", "codex", "--yes"], {
+      cwd: root, encoding: "utf8", timeout: 60000, env,
+    });
+    expect(install.status, install.stderr).toBe(0);
+
+    const prompts = readdirSync(path.join(codexDir, "prompts")).filter((name) => name.endsWith(".md")).sort();
+    expect(prompts).toEqual([
+      "tersio-caveman.md", "tersio-combo.md", "tersio-ponytail.md",
+      "tersio-pstack.md", "tersio-rtk.md", "tersio-status.md",
+    ]);
+    const caveman = readFileSync(path.join(codexDir, "prompts", "tersio-caveman.md"), "utf8");
+    expect(caveman).toContain("modes caveman ultra");
+    // A bundled install runs its own launcher, so `tersio` need not be on PATH.
+    expect(caveman).toContain(path.join(home, ".tersio", "codex-plugin", "tersio"));
+    const config = readFileSync(path.join(codexDir, "config.toml"), "utf8");
+    expect(config).toContain('model = "gpt-6-luna"');
+    expect(config).toContain('default_tools_approval_mode = "approve"');
+
+    const remove = spawnSync(process.execPath, [installer, "uninstall", "--host", "codex", "--yes"], {
+      cwd: root, encoding: "utf8", timeout: 60000, env,
+    });
+    expect(remove.status, remove.stderr).toBe(0);
+    expect(readdirSync(path.join(codexDir, "prompts"))).toEqual([]);
+    // The user's own lines survive a removal; only the Tersio policy goes with the settings file.
+    expect(readFileSync(path.join(codexDir, "config.toml"), "utf8")).toContain('model = "gpt-6-luna"');
+  });
+});
+
 test("readPluginSettings ignores invalid values and other plugins", () => {
   withHome((home) => {
     writeLock(home, {

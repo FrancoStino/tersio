@@ -37,8 +37,10 @@ import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.
 import type { HostEntry, HostId } from './hosts.ts';
 import {
   CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_NAME, CODEX_MARKETPLACE_SOURCE, CODEX_MARKETPLACE_SPARSE, CODEX_PLUGIN_ID, CODEX_PLUGIN_NAME,
+  CODEX_PROMPT_MODES,
   CODEX_RUNTIME_PACKAGES,
-  addCodexPersonalMarketplace, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalPluginId,
+  addCodexMcpPolicy, addCodexPersonalMarketplace, codexConfigFile, codexInstalledPlugin, codexLegacyPluginDir,
+  codexPersonalPluginId, codexPromptFile, codexPromptText,
   codexPluginDir, codexPluginFiles, codexPluginIdForDir, codexPluginState, codexRegisteredPluginState,
   codexPersonalMarketplaceFile,
 } from '../extensions/shared/codex-plugin.ts';
@@ -371,6 +373,37 @@ async function stepRtkCodex(binDir: string, options: InstallOptions): Promise<vo
   if (!options.quiet) console.log('  RTK — download binary for the Codex hook');
   await stepRtk(binDir, options, 'opencode');
   if (!options.quiet) console.log('  RTK rewrite runs inside the Tersio Codex plugin — no rtk init needed');
+}
+
+/**
+ * Codex shows custom prompts as slash commands, so each mode gets one. The files live under
+ * `~/.codex/prompts/` because a plugin cannot carry them; a reinstall rewrites only ours.
+ */
+async function stepCodexPrompts(options: InstallOptions): Promise<void> {
+  if (!options.quiet) console.log('  Codex — write the Tersio slash commands');
+  // The bundled plugin carries its own CLI, so a machine without `tersio` on PATH still runs the command.
+  const bundled = codexInstalledPlugin()?.layout === 'bundled';
+  const cli = bundled ? `"${process.execPath}" "${path.join(codexPluginDir(), 'tersio')}"` : 'tersio';
+  for (const mode of CODEX_PROMPT_MODES) {
+    await writeIfChanged(codexPromptFile(mode), codexPromptText(mode, cli), options);
+  }
+}
+
+/**
+ * Codex asks before an MCP tool call. Without this policy, a slash command fails in a session
+ * that cannot prompt for approval, because the mode tool writes settings.
+ */
+async function stepCodexMcpPolicy(options: InstallOptions): Promise<void> {
+  const installed = codexInstalledPlugin();
+  const pluginId = installed === null
+    ? codexPersonalPluginId(await readTextIfExists(codexPersonalMarketplaceFile()))
+    : codexPluginIdForDir(installed.dir);
+  if (pluginId === null) return;
+  const file = codexConfigFile();
+  const next = addCodexMcpPolicy(await readTextIfExists(file), pluginId);
+  if (await writeIfChanged(file, next, { ...options, backup: true }) && !options.quiet) {
+    console.log('  Codex — pre-approve the Tersio mode tool');
+  }
 }
 
 // First entry is required; the rest are optional companions.
@@ -1070,6 +1103,8 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
 
   if (targetHost === 'codex') {
     await capture('codex plugin', () => stepCodex(installOptions));
+    await capture('codex prompts', () => stepCodexPrompts(installOptions));
+    await capture('codex mcp policy', () => stepCodexMcpPolicy(installOptions));
     await capture('rtk', () => stepRtkCodex(BUN_BIN_DIR, installOptions));
     await capture('settings', () => writePluginSettings(profile, installOptions));
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);

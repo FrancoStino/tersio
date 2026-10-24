@@ -6,9 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, addCodexPersonalMarketplace, codexInstalledPlugin,
+  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_PLUGIN_FILES, CODEX_PROMPT_MODES, addCodexMcpPolicy,
+  addCodexPersonalMarketplace, codexInstalledPlugin,
   codexMarketplacePluginFiles, codexModeContext, codexPersonalPluginId, codexPluginFiles, codexPluginInstalled,
-  codexPluginState, removeCodexPersonalMarketplace,
+  codexPluginState, codexPromptFile, codexPromptText, removeCodexPersonalMarketplace,
 } from "../../extensions/shared/codex-plugin.ts";
 import { cliEnv } from "../helpers/env.ts";
 
@@ -116,6 +117,61 @@ test("the personal marketplace keeps unrelated plugins and removes only Tersio",
 test("an empty personal marketplace uses its own name", () => {
   const added = JSON.parse(addCodexPersonalMarketplace(null)) as { name?: string };
   expect(added.name).toBe("tersio-personal");
+});
+
+test("every mode has a Codex slash command that runs the CLI", () => {
+  expect(CODEX_PROMPT_MODES).toEqual(["combo", "caveman", "rtk", "ponytail", "pstack", "status"]);
+  for (const mode of CODEX_PROMPT_MODES) {
+    const text = codexPromptText(mode, "tersio");
+    // Front matter names the command in the menu, and the body is one runnable line.
+    expect(text.startsWith("---\ndescription: ")).toBe(true);
+    expect(text).toContain("---\n\n");
+    if (mode === "status") {
+      expect(text).toContain("tersio_stats");
+      continue;
+    }
+    expect(text).toContain(`tersio modes ${mode} off`);
+    expect(text).toContain("argument-hint:");
+  }
+  // The bundled layout points at the plugin's own CLI, so a machine without `tersio` on PATH still runs it.
+  expect(codexPromptText("rtk", '"/usr/bin/node" "/plugin/tersio"')).toContain('"/plugin/tersio" modes rtk on');
+});
+
+test("the mode command reads and writes the same defaults the MCP tool does", async () => {
+  await withHome(async (home) => {
+    const { runModes } = await import("../../cli/mcp.ts");
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => { logs.push(line); });
+    try {
+      await runModes(["caveman", "ultra"]);
+      await runModes(["rtk", "on"]);
+      await runModes(["pstack", "on"]);
+      await runModes([]);
+    } finally {
+      spy.mockRestore();
+    }
+    const settings = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(settings.cavemanDefault).toBe("ultra");
+    expect(settings.rtkDefault).toBe(true);
+    expect(settings.pstackDefault).toBe("on");
+    expect(logs.at(-1)).toContain("caveman=ultra");
+    await expect(runModes(["caveman", "huge"])).rejects.toThrow("invalid caveman level");
+    await expect(runModes(["nope", "on"])).rejects.toThrow("unknown mode");
+  });
+});
+
+test("the MCP policy pre-approves only the Tersio server and keeps every other line", () => {
+  const existing = 'model = "gpt-6-luna"\n\n[projects."/x"]\ntrust_level = "trusted"\n';
+  const added = addCodexMcpPolicy(existing, "tersio@tersio-personal");
+  expect(added).toContain('model = "gpt-6-luna"');
+  expect(added).toContain('[projects."/x"]\ntrust_level = "trusted"');
+  expect(added).toContain('[plugins."tersio@tersio-personal".mcp_servers.tersio]\ndefault_tools_approval_mode = "approve"');
+  // A rerun replaces the value instead of adding a second table or a duplicate key.
+  expect(addCodexMcpPolicy(added, "tersio@tersio-personal")).toBe(added);
+  expect(added.match(/default_tools_approval_mode/g)).toHaveLength(1);
+  expect(addCodexMcpPolicy(null, "tersio@tersio")).toBe(
+    '[plugins."tersio@tersio".mcp_servers.tersio]\ndefault_tools_approval_mode = "approve"\n',
+  );
 });
 
 test("Codex mode context follows the stored defaults and leaves off modes out", async () => {
