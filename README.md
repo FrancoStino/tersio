@@ -145,7 +145,7 @@ It is display-only — it never enters the model context, so it costs the sessio
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
 | `/tersio dashboard` | Open the Dashboard. |
 
-In Codex the slash commands do not exist. The Tersio plugin ships the modes as skills instead: call `$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, or `$tersio-pstack` in the prompt, or pick them in `/skills`. The `tersio_modes` MCP tool switches a mode from a plain sentence.
+In Codex, `tersio install --host codex` writes the same modes as custom prompts: `/prompts:tersio-combo`, `/prompts:tersio-caveman`, `/prompts:tersio-rtk`, `/prompts:tersio-ponytail`, `/prompts:tersio-pstack`, and `/prompts:tersio-status`. Pass the level after the command, for example `/prompts:tersio-caveman ultra`. The plugin also ships the modes as skills, so `$tersio-combo` and `/skills` work, and the `tersio_modes` MCP tool switches a mode from a plain sentence.
 | `/tersio help` | This table |
 
 ## 🗂️ Files and backups

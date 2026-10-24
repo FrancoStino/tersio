@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+- **Codex slash commands.** `tersio install --host codex` now writes `/prompts:tersio-combo`, `/prompts:tersio-caveman`, `/prompts:tersio-rtk`, `/prompts:tersio-ponytail`, `/prompts:tersio-pstack`, and `/prompts:tersio-status` to `~/.codex/prompts/`. Each one sets its mode from the level you type after it. The installer also adds a plugin-scoped MCP approval policy, so `tersio_modes` works in a session that cannot prompt for approval. A new `tersio modes <mode> <level>` command reads or writes the same defaults.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
  - **Codex is a fourth host.** `tersio install --host codex` adds the Tersio repo marketplace and installs `tersio@tersio`. If that source is unavailable, it writes a self-contained plugin at `~/.tersio/codex-plugin/` and registers it through `~/.agents/plugins/marketplace.json`. The plugin has a status skill, the Tersio MCP server, and one `UserPromptSubmit` hook that keeps the stored modes active.
  - Codex joins install, update, doctor, and uninstall. `tersio update --host codex` follows the installed layout, `tersio doctor --fix codex` repairs or enables the plugin, and the dashboard counts Codex sessions and labels them as Codex.
@@ -11,6 +12,7 @@
  - The repository marketplace is at `.agents/plugins/marketplace.json`. The shipped plugin is at `plugins/tersio/`.
 
 ### Fixed
+- A Codex mode switch no longer fails with "MCP tool call requires approval" when approvals are off. The slash commands run the CLI, and the installer pre-approves only Tersio's own MCP server.
 - A Codex row reads its model's own author. `codex/openai/zcode/glm-5.3-flash` shows "Z.ai - GLM-5.3-Flash" with the Z.ai mark; it used to borrow OpenAI's name and mark from the host prefix.
 - The dashboard draws Codex's own mark in its provider tiles and on the Upstream page. The tile showed a "C" monogram, which read as a different product from the Codex logo on Quick start.
  - A plugin hook block appears once per Codex turn. One `UserPromptSubmit` hook owns the mode context, so startup and resume do not add a second block.

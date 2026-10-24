@@ -94,7 +94,20 @@ codex plugin add tersio@tersio
 
 If that source is unavailable, the installer writes `~/.tersio/codex-plugin/` and adds it to `~/.agents/plugins/marketplace.json`. This local plugin carries its own runtime.
 
-The plugin carries six skills (`$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, `$tersio-pstack`, and the status skill) and two hooks. The `UserPromptSubmit` hook adds the current mode block before each prompt. The `PreToolUse` hook rewrites eligible shell calls through `rtk` when the RTK default is on; it reads `~/.tersio/settings.json`, so the same defaults work in every host. Codex has no plugin slash commands: invoke a skill with `$skill-name` or pick it in `/skills`.
+The plugin carries six skills (`$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, `$tersio-pstack`, and the status skill) and two hooks. The `UserPromptSubmit` hook adds the current mode block before each prompt. The `PreToolUse` hook rewrites eligible shell calls through `rtk` when the RTK default is on; it reads `~/.tersio/settings.json`, so the same defaults work in every host.
+
+The installer also writes six slash commands to `~/.codex/prompts/`:
+
+```text
+/prompts:tersio-combo balanced
+/prompts:tersio-caveman ultra
+/prompts:tersio-rtk on
+/prompts:tersio-ponytail full
+/prompts:tersio-pstack on
+/prompts:tersio-status
+```
+
+Codex reads that folder at session start, so restart Codex after an install. Each command runs `tersio modes`, which writes the same settings file the MCP tool writes and needs no tool approval. The installer adds `[plugins."tersio@…".mcp_servers.tersio] default_tools_approval_mode = "approve"` to `~/.codex/config.toml`, so the `tersio_modes` tool also works in a session that cannot prompt. A skill is still available with `$skill-name` or `/skills`.
 
 `tersio update --host codex` keeps the layout already on disk. A bundled install stays bundled. A marketplace install refreshes its marketplace, then runs `codex plugin add` again.
 
