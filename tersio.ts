@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
 import { runInstall } from './cli/install.ts';
 import { runDoctor } from './cli/doctor.ts';
-import { preferBun, runMcpServer } from './cli/mcp.ts';
+import { preferBun, runMcpServer, runModes } from './cli/mcp.ts';
 import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
 import { runUpstream } from './cli/upstream.ts';
@@ -23,6 +23,7 @@ Commands:
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
   mcp           Start the Tersio MCP server on stdio, for any MCP client
+  modes         Read or set a session mode (modes caveman full, modes combo lite)
   uninstall    Remove the managed extensions
   version      Print the package version
   help         Show this help
@@ -79,6 +80,12 @@ async function main(): Promise<void> {
     // Bun runs the server when it is on PATH; the client spawned node, so the hand-off happens here.
     await preferBun();
     await runMcpServer();
+    closeRL();
+    return;
+  }
+
+  if (commandArg === 'modes') {
+    await runModes(args.slice(args.indexOf('modes') + 1).filter((arg) => !arg.startsWith('--')));
     closeRL();
     return;
   }

@@ -44,7 +44,7 @@ interface ModesToolArgs {
 }
 
 /** One validated value per mode a call may set; null means the call left that mode alone. */
-interface ModeWants {
+export interface ModeWants {
   combo: string | null;
   caveman: string | null;
   rtk: 'on' | 'off' | null;
@@ -93,7 +93,7 @@ function activityText(limit: number): string {
   return entries.map((e) => `${new Date(e.at).toISOString()} [${e.kind}] ${e.title}${e.detail ? ` — ${e.detail}` : ''}`).join('\n');
 }
 
-async function modesText(want: ModeWants): Promise<string> {
+export async function modesText(want: ModeWants): Promise<string> {
   const stored = await storedProfile();
   // The preset lands first, so a single mode in the same call overrides just its piece of it.
   let next = want.combo !== null ? applyComboPreset(stored, want.combo) : stored;
@@ -107,6 +107,31 @@ async function modesText(want: ModeWants): Promise<string> {
   }
   const { text } = await captureLog(() => writePluginSettings(next, { quiet: true }));
   return [text, `Session defaults saved: ${formatProfile(next)}`].filter(Boolean).join('\n');
+}
+
+/** `tersio modes <mode> <level>`: the CLI path a Codex slash command can run without an approval. */
+export async function runModes(argv: string[]): Promise<void> {
+  const [mode, rawLevel] = argv;
+  if (mode === undefined) {
+    console.log(await modesText({ combo: null, caveman: null, rtk: null, ponytail: null, pstack: null }));
+    return;
+  }
+  const sets: Record<string, Set<string>> = {
+    combo: COMBO_DEFAULTS, caveman: CAVEMAN_DEFAULTS, rtk: RTK_DEFAULTS, ponytail: PONYTAIL_DEFAULTS, pstack: PSTACK_DEFAULTS,
+  };
+  const valid = sets[mode];
+  if (valid === undefined) throw new Error(`unknown mode: ${mode}. Valid: ${Object.keys(sets).join(', ')}`);
+  if (rawLevel === undefined) throw new Error(`${mode} needs a level: ${[...valid].join(', ')}`);
+  const level = rawLevel.trim().toLowerCase();
+  if (!valid.has(level)) throw new Error(`invalid ${mode} level: ${rawLevel}. Valid: ${[...valid].join(', ')}`);
+  const one = (value: string): 'on' | 'off' => (value === 'on' ? 'on' : 'off');
+  console.log(await modesText({
+    combo: mode === 'combo' ? level : null,
+    caveman: mode === 'caveman' ? level : null,
+    rtk: mode === 'rtk' ? one(level) : null,
+    ponytail: mode === 'ponytail' ? level : null,
+    pstack: mode === 'pstack' ? one(level) : null,
+  }));
 }
 
 /** JSON Schema per tool, the shape every MCP client knows how to render. */

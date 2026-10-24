@@ -78,7 +78,7 @@ function flagValue(name: string): string | undefined {
 
 const COMMANDS: Record<string, true> = {
   install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true,
-  mcp: true, 'codex-hook': true, version: true, help: true,
+  mcp: true, modes: true, 'codex-hook': true, version: true, help: true,
 };
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([

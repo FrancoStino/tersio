@@ -145,6 +145,65 @@ const SKILL_TEXTS: Readonly<Record<(typeof CODEX_PLUGIN_SKILL_FILES)[number], st
   ),
 };
 
+/** The slash commands Tersio writes: each mode, plus a read-only status command. */
+export const CODEX_PROMPT_MODES = ['combo', 'caveman', 'rtk', 'ponytail', 'pstack', 'status'] as const;
+export type CodexPromptMode = (typeof CODEX_PROMPT_MODES)[number];
+
+/**
+ * Codex reads custom prompts from `~/.codex/prompts/*.md` and shows each one as `/prompts:<file>`.
+ * A plugin cannot carry them, so the installer writes these files and uninstall removes them.
+ */
+export function codexPromptsDir(): string {
+  return path.join(homeDir(), '.codex', 'prompts');
+}
+
+export function codexPromptFile(mode: CodexPromptMode): string {
+  return path.join(codexPromptsDir(), `tersio-${mode}.md`);
+}
+
+const PROMPT_LEVELS: Readonly<Record<Exclude<CodexPromptMode, 'status'>, readonly string[]>> = {
+  combo: ['off', 'lite', 'balanced', 'max'],
+  caveman: ['off', 'lite', 'full', 'ultra', 'megacave-lite', 'megacave-full', 'megacave-ultra'],
+  rtk: ['on', 'off'],
+  ponytail: ['off', 'lite', 'full', 'ultra'],
+  pstack: ['on', 'off'],
+};
+
+/**
+ * A custom prompt body. `$1` is the level the user typed after the command, so
+ * `/prompts:tersio-caveman full` reads as a mode change without a second question.
+ */
+export function codexPromptText(mode: CodexPromptMode, cli = 'tersio'): string {
+  if (mode === 'status') {
+    return [
+      '---',
+      'description: Show the current Tersio modes and local agent usage',
+      '---',
+      '',
+      'Show the Tersio state for this machine.',
+      '',
+      'Read the current mode defaults from `~/.tersio/settings.json`.',
+      'Call the `tersio_stats` MCP tool for usage totals, and state the range and the source of each figure.',
+      '',
+    ].join('\n');
+  }
+  const levels = PROMPT_LEVELS[mode];
+  const asked = `$1`;
+  const body = [
+    `Set the Tersio ${mode} mode. The user's argument is \`${asked}\`, and it is one of ${levels.join(', ')}.`,
+    `If \`${asked}\` is empty, ask for one of those levels and stop.`,
+    '',
+    // Each level is written out, so the model never has to expand `$1` itself.
+    'Use the shell tool for this. Run the one command that matches the argument, then report its output verbatim:',
+    '',
+    ...levels.map((level) => `- \`${level}\`: \`${cli} modes ${mode} ${level}\``),
+    '',
+    mode === 'combo' ? 'pstack is separate: a Combo preset never changes it.' : '',
+    'These are Codex session defaults. Say that the change applies to new Codex sessions; do not name another host.',
+  ].filter((line) => line !== '').join('\n');
+  return `---\ndescription: Set the Tersio ${mode} mode (${levels.join(', ')})\nargument-hint: <${levels.join('|')}>\n---\n\n${body}\n`;
+}
+
 /**
  * The plugin files. A bundled plugin runs its own CLI with the absolute Node path that installed it.
  * A marketplace plugin uses the Tersio CLI on PATH, because its source carries no build output.
@@ -499,6 +558,36 @@ export function codexPluginEnabled(pluginId = CODEX_PLUGIN_ID): boolean {
   }
   const escaped = pluginId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`\\[plugins\\."${escaped}"\\]\\s*\\n(?:[^\\n]*\\n)*?enabled\\s*=\\s*true`, 'm').test(text);
+}
+
+/** The file Codex reads for plugin enablement and plugin-scoped MCP policy. */
+export function codexConfigFile(): string {
+  return path.join(homeDir(), '.codex', 'config.toml');
+}
+
+const TERTSIO_MCP_POLICY = 'default_tools_approval_mode = "approve"';
+
+/**
+ * Codex asks before an MCP tool call, so a session with approvals off cannot set a mode. A plugin
+ * may declare its own server policy, so Tersio marks its server as pre-approved. Every other
+ * section stays byte for byte, and an existing Tersio table is rewritten in place.
+ */
+export function addCodexMcpPolicy(existing: string | null, pluginId: string): string {
+  const header = `[plugins."${pluginId}".mcp_servers.${CODEX_PLUGIN_NAME}]`;
+  const lines = (existing ?? '').split('\n');
+  const start = lines.findIndex((line) => line.trim() === header);
+  if (start !== -1) {
+    let end = lines.findIndex((line, i) => i > start && /^\s*\[/.test(line));
+    if (end === -1) end = lines.length;
+    const body = lines.slice(start + 1, end);
+    const kept = body.filter((line) => !/^\s*default_tools_approval_mode\s*=/.test(line));
+    while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+    const tail = lines.slice(end);
+    const next = [...lines.slice(0, start), header, ...kept, TERTSIO_MCP_POLICY, ...(tail.length > 0 ? ['', ...tail] : [])];
+    return `${next.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+  }
+  const base = (existing ?? '').trimEnd();
+  return `${base}${base ? '\n\n' : ''}${header}\n${TERTSIO_MCP_POLICY}\n`;
 }
 
 /** The first complete install, and its manifest version when the manifest is readable. */
