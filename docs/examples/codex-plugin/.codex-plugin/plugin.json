@@ -1,0 +1,11 @@
+{
+  "name": "tersio",
+  "version": "0.1.0",
+  "description": "Tersio modes and session usage for Codex.",
+  "author": {
+    "name": "KurutoDenzeru"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "tersio codex-hook session-start",
+            "statusMessage": "Loading Tersio modes"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "tersio codex-hook user-prompt-submit",
+            "statusMessage": "Refreshing Tersio modes"
+          }
+        ]
+      }
+    ]
+  }
+}
