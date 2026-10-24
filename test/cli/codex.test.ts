@@ -263,6 +263,51 @@ test("Codex token rows become codex host rows with model and cache usage", async
   expect(Object.keys(accum.byModel)).toEqual(["codex/openai/gpt-6-luna"]);
 });
 
+test("Codex transcripts gain tool calls, shell facts, and turn timing", async () => {
+  const { newSessionAccum, processSessionText } = await import("../../extensions/shared/usage-ledger.ts");
+  const accum = newSessionAccum();
+  const state = { codexProvider: null as string | null, codexModel: null as string | null };
+  const turn = "turn-1";
+  const rows = [
+    { timestamp: "2026-10-24T01:00:00.000Z", type: "session_meta", payload: { model_provider: "openai" } },
+    { timestamp: "2026-10-24T01:00:01.000Z", type: "turn_context", payload: { model: "gpt-6-luna", turn_id: turn } },
+    {
+      timestamp: "2026-10-24T01:00:02.000Z",
+      type: "response_item",
+      payload: { type: "custom_tool_call", call_id: "call_1", name: "exec", input: "printf hello" },
+    },
+    {
+      timestamp: "2026-10-24T01:00:03.000Z",
+      type: "event_msg",
+      payload: { type: "item_completed", turn_id: turn, item: { type: "CommandExecution", command: ["/bin/zsh", "-lc", "printf hello"], exit_code: 0, duration_secs: 0.1 } },
+    },
+    {
+      timestamp: "2026-10-24T01:00:04.000Z",
+      type: "response_item",
+      payload: { type: "custom_tool_call_output", call_id: "call_1", output: [{ type: "input_text", text: "hello" }] },
+    },
+    {
+      timestamp: "2026-10-24T01:00:05.000Z",
+      type: "event_msg",
+      payload: { type: "token_count", info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, cache_write_input_tokens: 5 } } },
+    },
+    {
+      timestamp: "2026-10-24T01:00:06.000Z",
+      type: "event_msg",
+      payload: { type: "task_complete", turn_id: turn, duration_ms: 5470, time_to_first_token_ms: 3846 },
+    },
+  ];
+  processSessionText(accum, state, rows.map((row) => JSON.stringify(row)).join("\n"), "codex");
+  expect(accum.messages).toBe(1);
+  const recent = accum.recent[0];
+  expect(recent.d).toBe(5470);
+  expect(recent.tf).toBe(3846);
+  // The shell fact names the script's lead binary; the tool call reads as the exec surface.
+  expect(accum.toolFacts.map((f) => f.n)).toEqual(["bash:printf", "bash"]);
+  expect(accum.toolFacts[0]).toMatchObject({ a: "printf hello".length, e: 0 });
+  expect(accum.toolFacts[1]).toMatchObject({ a: "printf hello".length, r: "hello".length, e: 0 });
+});
+
 test("the repository marketplace package matches the generated plugin contract", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const marketplace = JSON.parse(readFileSync(path.join(root, ".agents", "plugins", "marketplace.json"), "utf8")) as {
