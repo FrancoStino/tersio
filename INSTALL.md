@@ -94,7 +94,7 @@ codex plugin add tersio@tersio
 
 If that source is unavailable, the installer writes `~/.tersio/codex-plugin/` and adds it to `~/.agents/plugins/marketplace.json`. This local plugin carries its own runtime.
 
-The plugin has one `UserPromptSubmit` hook. It adds the current mode block before each prompt. It reads `~/.tersio/settings.json`, so the same defaults work in every host.
+The plugin carries six skills (`$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, `$tersio-pstack`, and the status skill) and two hooks. The `UserPromptSubmit` hook adds the current mode block before each prompt. The `PreToolUse` hook rewrites eligible shell calls through `rtk` when the RTK default is on; it reads `~/.tersio/settings.json`, so the same defaults work in every host. Codex has no plugin slash commands: invoke a skill with `$skill-name` or pick it in `/skills`.
 
 `tersio update --host codex` keeps the layout already on disk. A bundled install stays bundled. A marketplace install refreshes its marketplace, then runs `codex plugin add` again.
 

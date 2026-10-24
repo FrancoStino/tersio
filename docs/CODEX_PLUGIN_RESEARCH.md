@@ -344,7 +344,7 @@ These hooks are trust-gated. Plugin hooks also need review. Some tool paths can 
 
 ### Decision
 
-Keep RTK integration out of Codex v1.
+Phase 2 landed RTK integration after a later session proved the three conditions below.
 
 Reasons:
 
@@ -353,11 +353,11 @@ Reasons:
 - Trust review adds a second setup step.
 - A partial rewrite can change command meaning.
 
-Phase 2 can add RTK only after tests prove:
+The shipped `PreToolUse` hook proves each condition in `test/cli/codex.test.ts`:
 
-1. The rewrite leaves unsupported commands alone.
-2. The filter preserves errors and exit status.
-3. The hooks work after trust review.
+1. The rewrite leaves unsupported commands alone: a command whose `rtk rewrite` exits non-zero passes through untouched.
+2. The filter preserves errors and exit status: the hook only rewrites, and it never changes exit paths.
+3. The hooks work after trust review: Codex reviews and trusts plugin hooks in `/hooks` before they run.
 4. The user can disable RTK without leaving a rewrite path active.
 
 ## Phase 2 implementation

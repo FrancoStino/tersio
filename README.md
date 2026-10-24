@@ -144,6 +144,8 @@ It is display-only — it never enters the model context, so it costs the sessio
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
 | `/tersio dashboard` | Open the Dashboard. |
+
+In Codex the slash commands do not exist. The Tersio plugin ships the modes as skills instead: call `$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, or `$tersio-pstack` in the prompt, or pick them in `/skills`. The `tersio_modes` MCP tool switches a mode from a plain sentence.
 | `/tersio help` | This table |
 
 ## 🗂️ Files and backups
