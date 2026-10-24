@@ -12,6 +12,7 @@ flowchart TB
     UP["cli/upstream.ts<br/>scorecard vs pinned upstreams"]
     UPDT["cli/dashboard-update.ts<br/>update view, apply, cadence"]
     SRV["cli/dashboard.ts<br/>127.0.0.1, or --export one file"]
+    MCP["cli/mcp.ts<br/>stdio MCP server, three tools"]
   end
   subgraph APP["dashboard/app (Vite + React)"]
     UI["hash routes, one page per view"]
@@ -30,6 +31,7 @@ flowchart TB
     LED["usage-ledger.ts · usage-store.ts<br/>omp · pi · opencode mirror"]
   end
 
+  MCP -->|reads| ASTS
   INST -->|writes| MODES
   INST -->|ships| SRV
   SRV -->|serves| UI
@@ -206,6 +208,63 @@ flowchart LR
 - **The notice is one toast per concern**, keyed by id: a poll that finds the same release 60 times replaces the same toast instead of stacking 60.
 - **Skip is per release, snooze is per window.** Skipping retires the version named and nothing later; a snooze hides the notice for six hours and lapses on its own.
 - **Nothing installs without a click.** The cadence only asks the sources; the apply path is the notice's `Update now` or the pane's `Update to X`.
+
+## The MCP server
+
+`tersio mcp` serves the Model Context Protocol over stdio, so any MCP-capable client can read Tersio's data and set its modes without a per-host integration. It is a reader on top of the same store the dashboard reads; it records nothing.
+
+```mermaid
+flowchart LR
+  subgraph CLIENT["any MCP client"]
+    CHAT["a chat or agent session"]
+  end
+  subgraph ENTRY["the entry the user pastes"]
+    CFG["mcpServers.tersio<br/>command: tersio · args: mcp"]
+  end
+  subgraph PROC["tersio mcp (one process per client)"]
+    BUN{"bun on PATH?"}
+    SRV["cli/mcp.ts<br/>JSON-RPC over stdio"]
+    TOOLS["three tools"]
+  end
+  subgraph DATA["what the tools read"]
+    ASTS["agentStats()<br/>usage.db"]
+    ACT["readActivity()<br/>activity.jsonl"]
+    PROF["storedProfile() / writePluginSettings()<br/>settings.json"]
+  end
+
+  CHAT -->|"spawns on demand"| CFG --> PROC
+  PROC --> BUN
+  BUN -->|yes| BUNRUN["re-exec under bun<br/>stdin pumped through"]
+  BUN -->|no| SRV
+  BUNRUN --> SRV
+  SRV --> TOOLS
+  TOOLS --> ASTS & ACT & PROF
+  SRV -->|"answer"| CHAT
+```
+
+One tool call, end to end:
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant A as Agent in the client
+  participant S as tersio mcp
+  participant D as Tersio's store
+  U->>A: "what did this week cost?"
+  A->>A: picks tersio_stats
+  A->>S: tools/call {name: tersio_stats, range: 7d}
+  S->>D: agentStats("7d")
+  D-->>S: totals, top models, providers
+  S-->>A: text answer
+  A-->>U: "17,668 requests, ₱2,016 this week"
+```
+
+- **The client owns the lifecycle.** There is no daemon, port, or token: the client spawns `tersio mcp` when it needs it and the process exits on stdin close. A client that cannot spawn a process is not supported, deliberately.
+- **Reads reuse the dashboard's functions, not a copy.** `tersio_stats` calls `agentStats()` and `tersio_activity` calls `readActivity()`. A dashboard figure and an MCP figure are the same figure by construction. Measured once on this machine: `/api/agent` and `tersio_stats` both answered 18,145 requests for 7d.
+- **Writes go through the same path as Settings.** `tersio_modes` writes `~/.tersio/settings.json` through `writePluginSettings`, so the change lands in the activity log and mirrors to Ponytail exactly like a dashboard save. It sets session-start defaults, not a running session, and not the MCP client's own behavior.
+- **stdout carries only the protocol.** The settings save line prints to stdout, so it runs behind a `captureLog` wrapper that turns its output into the tool's answer. Tool calls are serialized because that wrapper patches `console.log`.
+- **Bun when present, node otherwise.** The installed CLI runs under node; the server probes `bun --version` and re-execs under bun when it answers, pumping stdin so exactly one process reads the client's pipe. `TERSIO_MCP_RUNTIME` marks the child so a failed hand-off cannot loop. The doctor row proves which runtime answered (`node v26.3.0` under bun, `v26.12.1` under node).
+- **Protocol surface, pinned by test.** `initialize` answers with the version the server speaks (`2025-06-18`), not an echo of the client's; unknown methods answer `-32601`, bad arguments `-32602`, and a notification draws no reply.
 
 ## Key invariants
 

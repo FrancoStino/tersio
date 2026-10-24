@@ -27,7 +27,7 @@ vi.mock("../../extensions/shared/utils.ts", async (importOriginal) => {
 const updaterPath = path.join(root, "extensions", "updater", "index.ts");
 const updaterUrl = new URL("file:///" + updaterPath.replace(/\\/g, "/"));
 
-const { parseChecksum, default: updaterExtension } = await import(updaterUrl.href);
+const { parseChecksum, runAddonUpdate } = await import(updaterUrl.href);
 
 const HOME = os.homedir();
 const PLUGINS_DIR = path.join(HOME, ".omp", "plugins");
@@ -111,40 +111,24 @@ const deadRegistry = { TERSIO_UPDATE_URL: "http://127.0.0.1:1/latest" };
 /** A release feed that cannot answer, so the registry alone decides the version. */
 const deadReleases = { TERSIO_RELEASES_URL: "http://127.0.0.1:1/releases/latest" };
 
-test("/ai-addons update ponytail reports the bundled copy without touching npm", async () => {
+test("a ponytail update reports the bundled copy without touching npm", async () => {
   const execCalls: { cmd: string; args: string[]; opts: { cwd: string } }[] = [];
   const execMock: ExecMock = async (cmd, args, opts) => {
     execCalls.push({ cmd, args, opts });
     return { stdout: "updated", stderr: "", code: 0 };
   };
 
-  const fakePi = createFakePi(execMock);
   const fakeCtx = createFakeCtx();
+  await runAddonUpdate({ exec: execMock }, fakeCtx, "ponytail");
 
-  updaterExtension(fakePi);
-  const handler = fakePi.getHandler();
-  if (!handler) throw new Error("ai-addons command handler not registered via registerCommand");
-
-  const result = await handler("update ponytail", fakeCtx);
-
-  // A resolved value is a prompt on some hosts, so it must stay undefined.
-  expect(result).toBeUndefined();
   expect(execCalls.length, "bundled ponytail must not shell out to npm").toBe(0);
   const shown = fakeCtx.shown.join("\n");
   expect(shown).toMatch(/up to date|cannot fetch npm metadata/i);
   expect(shown).not.toMatch(/Ponytail update failed: tar could not/);
 });
-test("/ai-addons update ponytail without host exec still avoids npm", async () => {
-  const fakePi = createFakePi(async () => ({ stdout: "", stderr: "", code: 0 }));
-  delete (fakePi as Partial<FakePi>).exec;
+test("a ponytail update without host exec still avoids npm", async () => {
   const fakeCtx = createFakeCtx();
-
-  updaterExtension(fakePi);
-  const handler = fakePi.getHandler();
-  if (!handler) throw new Error("ai-addons command handler not registered via registerCommand");
-
-  const result = await handler("update ponytail", fakeCtx);
-  expect(result).toBeUndefined();
+  await runAddonUpdate({}, fakeCtx, "ponytail");
   expect(fakeCtx.shown.join("\n")).toMatch(/up to date|cannot fetch npm metadata/i);
 });
 

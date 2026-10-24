@@ -1,4 +1,4 @@
-// /ai-addons manual updater. Node built-ins only. RTK ships unsigned SHA256 checksums, so checksum-only it is.
+// The in-session add-on updater behind /tersio update. Node built-ins only. RTK ships unsigned SHA256 checksums, so checksum-only it is.
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { setExtensionLabel } from '../shared/host.ts';
 import { patchState } from '../shared/state.ts';
 import {
   CAVEMAN_BODY_PATHS,
@@ -68,6 +67,20 @@ function ponytailLocal(): string | null {
   return fsSync.existsSync(pkg) ? pkg : null;
 }
 
+// A missing file is "not installed"; an unreadable one is a reportable fault.
+function parsePackageVersion(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    return (JSON.parse(raw) as { version?: string }).version ?? null;
+  } catch {
+    throw new Error('ponytail package.json is not readable JSON');
+  }
+}
+
+function shortHash(text: string): string {
+  return sha256Hex(text).slice(0, 16);
+}
+
 interface AddonUpdaterCtx {
   cwd?: string;
   ui?: {
@@ -93,90 +106,6 @@ function report(ctx: AddonUpdaterCtx | undefined, msg: string, level: NotifyLeve
   return msg;
 }
 
-interface AddonStatus {
-  text: string;
-  level: NotifyLevel;
-}
-
-function shortHash(text: string): string {
-  return sha256Hex(text).slice(0, 16);
-}
-
-function checkFailed(name: string, e: unknown): AddonStatus {
-  return { text: `${name} check failed: ${(e as Error).message}`, level: 'warning' };
-}
-
-function runCheck(name: string, probe: () => Promise<string>): Promise<AddonStatus> {
-  return probe().then((text) => ({ text, level: 'info' as const }), (e) => checkFailed(name, e));
-}
-
-// A missing file is "not installed"; an unreadable one is a reportable fault.
-function parsePackageVersion(raw: string | null): string | null {
-  if (!raw) return null;
-  try {
-    return (JSON.parse(raw) as { version?: string }).version ?? null;
-  } catch {
-    throw new Error('ponytail package.json is not readable JSON');
-  }
-}
-
-function checkPonytail(): Promise<AddonStatus> {
-  return runCheck('Ponytail', async () => {
-    const remoteJson = await fetchJson<{ version?: string }>(PONYTAIL_REMOTE);
-    const localRaw = await readTextIfExists(ponytailLocal() ?? '');
-    const localVer = parsePackageVersion(localRaw);
-    const remoteVer = remoteJson.version;
-    const status = !localVer ? 'not installed'
-      : localVer === remoteVer ? 'up to date'
-        : 'update available';
-    return `Ponytail ${status}: local=${localVer || '—'} latest=${remoteVer}`;
-  });
-}
-
-async function fetchRelease(): Promise<RtkRelease> {
-  return fetchJson<RtkRelease>(RTK_RELEASE_API);
-}
-
-function checkRtk(): Promise<AddonStatus> {
-  return runCheck('RTK', async () => {
-    const release = await fetchRelease();
-    const latestTag = release.tag_name || null;
-    let localVer: string | null = null;
-    try {
-      if (!RTK_BINARY) throw new Error('rtk not found in PATH');
-      const out = execFileSync(RTK_BINARY, ['--version'], { encoding: 'utf8', windowsHide: true, shell: false, timeout: 10000 }) || '';
-      if (out) localVer = out.trim().split(/\r?\n/)[0];
-    } catch { localVer = null; }
-    const status = localVer === null ? 'not installed'
-      : normalizeRtkVersion(localVer) === normalizeRtkVersion(latestTag ?? undefined) ? 'up to date'
-        : 'update available';
-    return `RTK ${status}: local=${localVer || '—'} latest=${latestTag || '—'}`;
-  });
-}
-
-function checkCaveman(): Promise<AddonStatus> {
-  return runCheck('Caveman', async () => {
-    const parts: string[] = [(await readTextIfExists(CAVEMAN_LOCAL)) ? 'rule.md ok' : 'rule.md missing'];
-    const tag = await cavemanRelease();
-    for (const { file, body, adapt } of CAVEMAN_TRACKED) {
-      const name = path.basename(file);
-      try {
-        const [remoteText, localText] = await Promise.all([tag ? httpsGet(cavemanBodyUrl(tag, body)) : Promise.resolve(''), readTextIfExists(file)]);
-        // Compare the text a refresh would write, so the adapted line never reads as drift.
-        const nextHash = shortHash(adapt ? adapt(remoteText) : remoteText);
-        parts.push(!localText ? `${name} missing` : shortHash(localText) === nextHash ? `${name} up to date` : `${name} update available`);
-      } catch {
-        parts.push(`${name} check skipped`);
-      }
-    }
-    return `Caveman ${parts.join(', ')}${tag ? ` (release ${tag})` : ''}`;
-  });
-}
-
-export async function checkAddonsSummary(ctx: AddonUpdaterCtx): Promise<string> {
-  return checkAddons(ctx);
-}
-
 export async function runAddonUpdate(pi: { exec?: AddonUpdaterPi['exec'] }, ctx: AddonUpdaterCtx, target: string, dryRun = false): Promise<string> {
   const results: string[] = [];
   const updaters: Record<string, () => Promise<string>> = {
@@ -199,16 +128,6 @@ export async function runAddonUpdate(pi: { exec?: AddonUpdaterPi['exec'] }, ctx:
   // The per-file report names the release a body came from, so it reaches the user and not only the caller.
   if (out.trim()) notify(ctx, out, 'info');
   return out;
-}
-
-async function checkAddons(ctx: AddonUpdaterCtx): Promise<string> {
-  const [ponytail, rtk, caveman] = await Promise.all([checkPonytail(), checkRtk(), checkCaveman()]);
-  const lines: string[] = [];
-  for (const status of [ponytail, rtk, caveman]) {
-    lines.push(status.text);
-    notify(ctx, status.text, status.level);
-  }
-  return lines.join('\n');
 }
 
 async function updatePonytail(pi: AddonUpdaterPi, ctx: AddonUpdaterCtx, dryRun = false): Promise<string> {
@@ -266,6 +185,10 @@ async function updatePonytail(pi: AddonUpdaterPi, ctx: AddonUpdaterCtx, dryRun =
   } finally {
     fs.rm(tmp, { recursive: true, force: true }).catch(() => { });
   }
+}
+
+async function fetchRelease(): Promise<RtkRelease> {
+  return fetchJson<RtkRelease>(RTK_RELEASE_API);
 }
 
 async function updateRtk(ctx: AddonUpdaterCtx, dryRun = false): Promise<string> {
@@ -427,33 +350,6 @@ async function updateCaveman(ctx: AddonUpdaterCtx, dryRun = false): Promise<stri
   const summary = results.join('\n');
   notify(ctx, `Caveman update finished. ${RELOAD_MSG}`, 'info');
   return summary;
-}
-
-export default function aiAddonsUpdaterExtension(pi: AddonUpdaterPi): void {
-  setExtensionLabel(pi, 'AI add-ons updater');
-
-  pi.registerCommand?.('ai-addons', {
-    description: 'Check or update AI add-ons (ponytail/rtk/caveman/all). Usage: /ai-addons <check|status|update ponytail|rtk|caveman|all> [--dry-run]',
-    handler: async (args, ctx) => {
-      const arg = String(args || '').trim().toLowerCase();
-      const parts = arg.split(/\s+/).filter(Boolean);
-      const dryRun = parts.includes('--dry-run') || parts.includes('dry-run');
-      const cleanParts = parts.filter((p) => p !== '--dry-run' && p !== 'dry-run');
-      const sub = cleanParts[0];
-
-      if (sub === 'check' || sub === 'status') {
-        await checkAddons(ctx);
-        notify(ctx, 'ai-addons check complete.', 'info');
-        return;
-      }
-      if (sub === 'update' && cleanParts[1]) {
-        await runAddonUpdate(pi, ctx, cleanParts.slice(1).join(' '), dryRun);
-        return;
-      }
-      report(ctx, 'Usage: /ai-addons <check|status|update ponytail|rtk|caveman|all> [--dry-run]', 'warning');
-      return;
-    },
-  });
 }
 
 export { parseChecksum };

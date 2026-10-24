@@ -1,5 +1,8 @@
 ## Unreleased
 
+### Added
+ - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
+
 ### Fixed
  - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.
  - The update check no longer reports the bundled Ponytail as missing. It looked for the separate package an older install carried, so every update claimed to reinstall it and listed it as a change even when nothing changed.
@@ -9,6 +12,10 @@
 ### Added
  - A **Logs** page in the dashboard's Developer group. It records what Tersio changes on this machine, newest first: mode and preset switches, installs, updates, and removals with their exit state, every file the installer rewrites, and doctor checks and repairs. The CLI and the dashboard write the same `~/.tersio/activity.jsonl`, so a terminal install shows up there too; the file keeps the last 4000 entries and the page rereads it while open.
 - A **Quick start** page in the dashboard, first in the rail. It draws the pipeline as one canvas: the three agents loading the same extensions, the four prompt blocks in injection order, then one output node for the whole turn. Each agent node opens its own menu with Update, Install, and Uninstall, and a dashed slot under the agents offers only the agents this machine is missing; an uninstalled agent leaves the canvas, and the slot goes when there is nothing left to add. The Combo preset sits centred against the agent column. The canvas scales to the card width and picks one of three layouts (wide, tablet, phone), so the diagram is drawn at every size instead of being replaced by a list. It reads this machine's settings and installed hosts, so a mode that is off or an agent that is not installed draws dimmed, and an active connector carries a travelling dash. Clicking a node opens a menu beside it with its role and the command that changes it, a mode switches to any of its levels from that menu, and the canvas pans and zooms. It reads no usage store, so it paints before any snapshot arrives and costs no query.
+
+### Removed
+ - Three slash commands nobody used: `/ai-addons`, `/tersio usage`, and `/tersio check`. `/tersio update` still refreshes the add-ons, the dashboard still shows the ledger, and `tersio doctor` still runs the health check. The updater keeps its code behind `/tersio update`; only the duplicate command entries are gone.
+ - The MCP server's HTTP transport and its config writer. The server speaks stdio only now: a client starts `tersio mcp` itself, so there is no port to open, no token to copy, and no config for Tersio to write.
 
 ### Changed
  - The dashboard now remembers the accent color and the rail width you pick. Both survive a restart and a different browser, because Tersio stores them with your other settings instead of leaving them in the browser.
