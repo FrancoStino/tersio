@@ -288,6 +288,39 @@ const STEPS = [
     body: "This dashboard reads the one store every host feeds. Doctor checks the install, and upstream compares the ported bodies to their pins.",
     command: "tersio doctor",
   },
+  {
+    title: "Codex: trust the hooks",
+    body: "Codex does not run an untrusted hook. Open /hooks in Codex, review the two Tersio entries, and trust them, or the mode block and the RTK rewrite stay off.",
+    command: "codex → /hooks → trust Tersio",
+  },
+] as const;
+
+/** Each host's own install path, so the guide never sends a Codex user to the extension tree. */
+const INSTALL_METHODS = [
+  {
+    host: "omp",
+    label: "Oh My Pi",
+    commands: ["omp plugin install @krtclcdy/tersio"],
+    note: "Loads the shared extension tree from the plugin package.",
+  },
+  {
+    host: "pi",
+    label: "pi",
+    commands: ["pi install npm:@krtclcdy/tersio"],
+    note: "Auto-discovers the same tree from its extensions directory.",
+  },
+  {
+    host: "opencode",
+    label: "OpenCode",
+    commands: ["opencode plugin add @krtclcdy/tersio"],
+    note: "Registers the tree in opencode.json.",
+  },
+  {
+    host: "codex",
+    label: "Codex",
+    commands: ["codex plugin marketplace add KurutoDenzeru/tersio", "codex plugin add tersio@tersio"],
+    note: "Then trust the Tersio entries in /hooks. tersio install --host codex runs both steps and falls back to a local plugin.",
+  },
 ] as const;
 
 interface HostState {
@@ -1041,7 +1074,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
         )}
       </Card>
 
-      <Card title="Start here" icon="list-ordered" description="Four steps from a fresh machine to a session that reports itself.">
+      <Card title="Start here" icon="list-ordered" description="Five steps from a fresh machine to a session that reports itself.">
         <ol className="m-0 grid list-none gap-2 p-0 md:grid-cols-2">
           {STEPS.map((step, i) => (
             <li key={step.title} className="grid gap-1 rounded-xl border border-line px-3 py-2.5">
@@ -1058,6 +1091,29 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
             </li>
           ))}
         </ol>
+      </Card>
+
+      <Card
+        title="Install into an agent"
+        icon="download"
+        description="Each host's own command. Use the Tersio command or the native one, never both for the same host."
+      >
+        <div className="grid gap-2 md:grid-cols-2">
+          {INSTALL_METHODS.map((method) => (
+            <div key={method.host} className="grid gap-1 rounded-xl border border-line px-3 py-2.5">
+              <span className="flex items-center gap-2">
+                <AgentLogo host={method.host} className="size-4 shrink-0" />
+                <span className="text-[13px] font-semibold">{method.label}</span>
+              </span>
+              {method.commands.map((command) => (
+                <code key={command} className="mono block truncate rounded bg-track/40 px-2 py-1 text-[10px] text-ink">
+                  {command}
+                </code>
+              ))}
+              <span className="text-[11px] leading-relaxed text-dim">{method.note}</span>
+            </div>
+          ))}
+        </div>
       </Card>
     </Page>
   );
