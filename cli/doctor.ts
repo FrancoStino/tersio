@@ -310,7 +310,9 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   section('Usage & records');
   console.log(`  Usage DB (tersio-owned · local hosted): ${usageDbPath()}`);
   const pricesAge = pricesMtime ? `(pulled ${relTime(Date.now() - pricesMtime.mtimeMs)} · ${absDate(pricesMtime.mtimeMs)})` : '';
-  check('Prices feed', pricesMtime !== null, pricesAge || pricesCachePath());
+  // A missing cache is not a fault: the fallback price table prices every row, and the next update pulls the feed.
+  if (pricesMtime !== null) check('Prices feed', true, pricesAge);
+  else warnLine('Prices feed', `no cached feed — the fallback table prices rows until the next update pulls ${pricesCachePath()}`);
   // Pages read omp's own index, which advances only while an omp process owns it, so a stall reads as empty.
   const indexLag = statsIndexLag();
   if (indexLag) warnLine('omp stats index', indexLag);
@@ -373,9 +375,9 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   }
   const rtkAge = rtkMtime ? `(updated ${relTime(Date.now() - rtkMtime.mtimeMs)} · ${absDate(rtkMtime.mtimeMs)})` : '';
   check('RTK binary', rtkBin !== null, rtkBinText === null ? 'not found in PATH' : [rtkVersion, rtkAge].filter(Boolean).join(' '));
-  // rtk_run needs a host exec API, which doctor cannot assume.
+  // rtk_run needs a host exec API; Codex hosts call rtk from bash through the hook instead.
   if (rtkBin === null) unused('RTK exec', '· install Tersio to place rtk in ~/.bun/bin');
-  else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode'))) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
+  else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode')) && !hosts.some((host) => host.installed && host.id === 'codex')) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
   if (ompChecks) check('Ponytail', ponytailPkgText !== null, [PONYTAIL_VERSION, ponytailAge].filter(Boolean).join(' '));

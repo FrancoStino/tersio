@@ -22,7 +22,7 @@ import {
 import type { RtkRelease } from '../extensions/shared/utils.ts';
 import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
-import { CODEX_MARKETPLACE_NAME, CODEX_PLUGIN_ID, codexInstalledPlugin, codexPluginIdForDir } from '../extensions/shared/codex-plugin.ts';
+import { CODEX_MARKETPLACE_NAME, CODEX_PLUGIN_ID, codexInstalledPlugin, codexPluginDir, codexPluginIdForDir } from '../extensions/shared/codex-plugin.ts';
 
 const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
 /** How long one source gets before the check gives up on it. */
@@ -183,14 +183,18 @@ async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePla
   const ponytailPkg = path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'ponytail', 'package.json');
   // rule.md ships with the release; only the tracked bodies can go stale.
   const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
+  // A Codex-only install carries the same bodies under the Codex plugin tree.
+  const codexTree = (rel: string) => path.join(codexPluginDir(), rel);
   const controller = new AbortController();
   const [rtkLocal, rtkRelease, ruleLocal, ruleRemote, ponytailLocalText] = await Promise.all([
     settle(rtkBin ? execP(rtkBin, ['--version'], { timeout: 5000 }).then((r) => normalizeRtkVersion(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
     settle(httpsGet(RTK_RELEASE_API, { signal: controller.signal }).then((text) => normalizeRtkVersion((JSON.parse(text) as RtkRelease).tag_name) || null), 1500),
     Promise.all([readTextIfExists(tersioRule('rule-ultra.md')), readTextIfExists(tersioRule('rule-megacave.md'))])
-      .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null)),
+      .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null))
+      .then(async (hashes) => hashes ?? Promise.all([readTextIfExists(codexTree('extensions/caveman/rule-ultra.md')), readTextIfExists(codexTree('extensions/caveman/rule-megacave.md'))])
+        .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null))),
     settle(cavemanRemoteRule(controller.signal), 1500),
-    readTextIfExists(ponytailPkg),
+    readTextIfExists(ponytailPkg).then(async (text) => text ?? readTextIfExists(codexTree('extensions/ponytail/package.json'))),
   ]);
   controller.abort();
   return {
