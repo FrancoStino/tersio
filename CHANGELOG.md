@@ -6,9 +6,13 @@
  - Codex joins install, update, doctor, and uninstall. `tersio update --host codex` follows the installed layout, `tersio doctor --fix codex` repairs or enables the plugin, and the dashboard counts Codex sessions and labels them as Codex.
  - **Codex mode skills.** The Codex plugin now ships `$tersio-combo`, `$tersio-caveman`, `$tersio-rtk`, `$tersio-ponytail`, and `$tersio-pstack` beside the status skill, so every mode reads from Codex even though Codex has no plugin slash commands.
  - **Codex RTK hook.** A `PreToolUse` hook rewrites eligible shell calls through `rtk` before they run. It skips calls that already carry the `rtk` prefix, honours `RTK_DISABLED`, and only rewrites commands whose exit stays inside rtk's allow rules, so an uncovered command passes through untouched.
+- **Codex on the Upstream page.** The Agents table now has a Codex row. It compares the installed plugin's bodies with this build's file set, so a missing skill or a stale rule shows beside the other agents instead of leaving Codex out of the scorecard.
+- **Install methods on Quick start.** A new card names each agent's own install command, including Codex's `codex plugin marketplace add` and `codex plugin add`, and the `/hooks` trust step.
  - The repository marketplace is at `.agents/plugins/marketplace.json`. The shipped plugin is at `plugins/tersio/`.
 
 ### Fixed
+- A Codex row reads its model's own author. `codex/openai/zcode/glm-5.3-flash` shows "Z.ai - GLM-5.3-Flash" with the Z.ai mark; it used to borrow OpenAI's name and mark from the host prefix.
+- The dashboard draws Codex's own mark in its provider tiles and on the Upstream page. The tile showed a "C" monogram, which read as a different product from the Codex logo on Quick start.
  - A plugin hook block appears once per Codex turn. One `UserPromptSubmit` hook owns the mode context, so startup and resume do not add a second block.
  - The dashboard now fills Codex rows with tool calls, elapsed time, and first-token latency. It read the Codex transcript's token rows only, so tool pages showed no calls and request rows read `d: null`.
  - The update check probes the Codex plugin tree when no OMP package exists, so a Codex-only install no longer reports "Caveman rule: unknown" or "Ponytail: missing → bundled reinstall".
