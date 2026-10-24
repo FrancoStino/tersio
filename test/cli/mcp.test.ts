@@ -137,16 +137,17 @@ describe('the MCP rtk_run tool', () => {
     const home = await mkdtemp(path.join(tmpdir(), 'tersio-rtk-on-'));
     const bin = path.join(home, 'bin');
     await mkdir(bin, { recursive: true });
-    const rtk = path.join(bin, 'rtk');
-    await writeFile(rtk, '#!/bin/sh\nprintf "rtk:%s" "$*"\n', 'utf8');
-    await chmod(rtk, 0o755);
+    const windows = process.platform === 'win32';
+    const rtk = path.join(bin, windows ? 'rtk.cmd' : 'rtk');
+    await writeFile(rtk, windows ? '@echo off\r\necho rtk:%*\r\n' : '#!/bin/sh\nprintf "rtk:%s" "$*"\n', 'utf8');
+    if (!windows) await chmod(rtk, 0o755);
     await writeFile(path.join(home, 'settings.json'), JSON.stringify({ rtkDefault: true }), 'utf8');
     const previous = { home: process.env.TERSIO_HOME, path: process.env.PATH };
     process.env.TERSIO_HOME = home;
     process.env.PATH = `${bin}${path.delimiter}${previous.path ?? ''}`;
     try {
       const result = await run(['git', 'status']);
-      expect(result.text).toBe('rtk:git status');
+      expect(result.text.trim()).toBe('rtk:git status');
       expect(result.isError).toBe(false);
     } finally {
       if (previous.home === undefined) delete process.env.TERSIO_HOME;

@@ -122,7 +122,7 @@ test("an empty personal marketplace uses its own name", () => {
 test("every mode has a Codex slash command that runs the CLI", () => {
   // Codex names the command after the file, so these read as /combo, /caveman, /rtk, and so on.
   expect(CODEX_PROMPTS).toEqual(["combo", "caveman", "rtk", "ponytail", "pstack", "tersio"]);
-  expect(CODEX_PROMPTS.map((name) => codexPromptFile(name).split("/").pop())).toEqual([
+  expect(CODEX_PROMPTS.map((name) => path.basename(codexPromptFile(name)))).toEqual([
     "combo.md", "caveman.md", "rtk.md", "ponytail.md", "pstack.md", "tersio.md",
   ]);
   for (const mode of CODEX_PROMPTS) {
