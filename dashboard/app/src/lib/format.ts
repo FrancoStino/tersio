@@ -275,6 +275,9 @@ export function hostOfSession(sessionFile: string): { label: string; host: "omp"
   if (/[/\\]\.(?:omp|agent)[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "OMP", host: "omp" };
   if (/[/\\]\.pi[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "Pi", host: "pi" };
   if (/(?:config|local[/\\]share)[/\\]opencode[/\\]agent[/\\]sessions[/\\]/.test(file)) return { label: "OpenCode", host: "opencode" };
+  // A captured session names its host in the key itself: gateway://pi/<session>.
+  const captured = /^gateway:\/\/(pi|opencode)\//.exec(file);
+  if (captured) return captured[1] === "pi" ? { label: "Pi", host: "pi" } : { label: "OpenCode", host: "opencode" };
   return { label: "OMP", host: "unknown" };
 }
 

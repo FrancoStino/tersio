@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+ - A **`tersio gateway`** command. It serves a loopback proxy in front of one pi or OpenCode provider, so those sessions reach the dashboard with what the host's own files leave out: first-token latency, duration, per-turn status and tools, the gateway that served the turn, and, with `--record on`, the conversation text itself. Wiring rewrites the provider's base URL and stashes the original for `unwire`; every request is forwarded untouched, and a session the gateway captured replaces its native rows instead of adding to them.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
 
 ### Fixed
