@@ -118,10 +118,33 @@ Three tools become available: `tersio_stats` (requests, errors, tokens, cache ra
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
 | `tersio mcp` | Start the Tersio MCP server on stdio (see [MCP](#-mcp)) |
+| `tersio gateway` | Serve a local capture gateway for one pi or OpenCode provider, so its sessions reach the dashboard in full (`wire`, `unwire`, `status`, `--record on\|off`, `--port <n>`; see [Gateway](#-gateway)) |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
 Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the dashboard's own default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
+
+## 🔗 Gateway
+
+Tersio reads each host's own session files. Those files do not all record the same things: omp writes duration and first-token latency, pi writes neither, and OpenCode keeps no per-session JSONL at all, so its traces stay empty. `tersio gateway` closes that gap by sitting in front of one provider's base URL and recording what the reply itself carried.
+
+```bash
+tersio gateway wire --host pi --provider magpie      # or: --host opencode --provider zen
+tersio gateway                                        # serve on 127.0.0.1:3428
+```
+
+Every request through the wired provider is forwarded untouched to its original URL, and Tersio records the reply's tokens, cache reads and writes, first-token latency, duration, status, tools, and provider into the same `usage.db` the dashboard reads. The session id comes from the header the host already sends (`x-opencode-session`, pi's session affinity header) or the request's `prompt_cache_key`, so one session stays one session. A provider that is itself a gateway keeps working, because the gateway only forwards.
+
+`tersio gateway --record on` also keeps each turn's text, request and reply, for 7 days or 256 MiB, whichever comes first, under `~/.tersio/gateway/`. Those turns are what the trace view and the request drawer read for a gateway session. Recording is off by default, and with it off a gateway session shows its usage only.
+
+A session the gateway captured wins over the host's own file, so a wired provider never counts twice. Unwire restores the exact base URL the host had:
+
+```bash
+tersio gateway status
+tersio gateway unwire --host pi
+```
+
+`tersio gateway --port <n>` moves the port; re-run `wire` afterward so the host follows. `tersio doctor` reports a provider left on a stale port. The design follows magpie's local gateway: one loopback proxy, the agent's own headers for identity, and recording that loses to native files.
 
 ## ⌨️ Commands reference
 
@@ -156,6 +179,8 @@ Shared, and identical for every host:
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
 | Session state | `~/.tersio/state.json` — reset watermark, update check and cadence, rtk heads, and the doctor report |
 | Upstream scorecard | `~/.tersio/upstream/` — `scorecard.json`, `scorecard.md`, and the cached trees |
+| Gateway config | `~/.tersio/gateway.json` — port, recording switch, and one entry per wired provider holding its original base URL |
+| Gateway turns | `~/.tersio/gateway/` — `sessions.jsonl` plus one file per day of recorded turns, kept 7 days or 256 MiB; written only while recording is on |
 | `usage.db` host scope | `~/.tersio/usage.db` mirrors every agent Tersio reads: omp and pi transcripts, the OpenCode JSON tree, and the OpenCode v2 sqlite rows. Each row records its host and its agent kind, so a report splits by agent and by main agent or subagent. |
 | Model prices | `~/.tersio/prices.json` caches LiteLLM's feed; `~/.tersio/prices.local.json` is yours, keyed by model id or a `*` gateway prefix, and it wins over the feed. A model the list does not know reads as an estimate, and the Models page counts those requests as unpriced. |
 | Price sources | The host's own reported cost first, then `prices.local.json`, then the LiteLLM cache, then a default table the report labels a guess. A recorded zero is a real zero. A model counts as host-priced only when every message carried a cost. |
