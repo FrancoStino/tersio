@@ -1117,10 +1117,12 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
           ))}
         </div>
         <p className="m-0 mt-3 text-[11px] leading-relaxed text-dim">
-          The five Ponytail workflows are skills, not slash commands: <span className="mono">ponytail-audit</span>,{" "}
-          <span className="mono">ponytail-debt</span>, <span className="mono">ponytail-gain</span>,{" "}
-          <span className="mono">ponytail-help</span>, and <span className="mono">ponytail-review</span>. Invoke one with{" "}
-          <span className="mono">$&lt;skill-name&gt;</span>.
+          The five Ponytail workflows live in Ponytail&apos;s own Codex plugin, not in Tersio&apos;s:{" "}
+          <span className="mono">ponytail-audit</span>, <span className="mono">ponytail-debt</span>,{" "}
+          <span className="mono">ponytail-gain</span>, <span className="mono">ponytail-help</span>, and{" "}
+          <span className="mono">ponytail-review</span>. Add it with{" "}
+          <span className="mono">codex plugin marketplace add DietrichGebert/ponytail</span> and{" "}
+          <span className="mono">codex plugin add ponytail@ponytail</span>.
         </p>
       </Card>
 

@@ -67,6 +67,15 @@ Or let each host install the package itself:
 omp plugin install @krtclcdy/tersio
 pi install npm:@krtclcdy/tersio
 opencode plugin add @krtclcdy/tersio
+codex plugin marketplace add KurutoDenzeru/tersio
+codex plugin add tersio@tersio
+```
+
+For the Ponytail workflow skills in Codex, add Ponytail's own plugin the same way:
+
+```bash
+codex plugin marketplace add DietrichGebert/ponytail
+codex plugin add ponytail@ponytail
 ```
 
 Pick one install method per host, not both. Using both registers every command twice.
@@ -147,7 +156,7 @@ It is display-only — it never enters the model context, so it costs the sessio
 | `/tersio dashboard` | Open the Dashboard. |
 | `/tersio help` | This table |
 
-In Codex, `tersio install --host codex` writes the same six commands: `/combo`, `/caveman`, `/rtk`, `/ponytail`, `/pstack`, and `/tersio`. Pass the level after the command, for example `/caveman ultra`; `/combo help` prints the preset table. The plugin also ships the modes as skills, so `$tersio-combo` and `/skills` work, and the `tersio_modes` MCP tool switches a mode from a plain sentence. The five Ponytail workflows (`ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, and `ponytail-review`) ship as skills too. Codex calls `rtk_run` for an explicit condensed shell command. `rtk init -g --codex` is not required: the plugin hook replaces it and respects `/rtk off`. Restart Codex after install, then trust both Tersio entries in `/hooks`.
+In Codex, `tersio install --host codex` writes the same six commands: `/combo`, `/caveman`, `/rtk`, `/ponytail`, `/pstack`, and `/tersio`. Pass the level after the command, for example `/caveman ultra`; `/combo help` prints the preset table. The `tersio_modes` MCP tool switches a mode from a plain sentence. The five Ponytail workflows (`ponytail-audit`, `ponytail-debt`, `ponytail-gain`, `ponytail-help`, and `ponytail-review`) come from Ponytail's own Codex plugin (see the install block above). Codex calls `rtk_run` for an explicit condensed shell command. `rtk init -g --codex` is not required: the plugin hook replaces it and respects `/rtk off`. Restart Codex after install, then trust both Tersio entries in `/hooks`.
 
 ## 🗂️ Files and backups
 
