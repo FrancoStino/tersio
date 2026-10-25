@@ -70,9 +70,10 @@ function applyStopPhrase(prompt: unknown): void {
   let stored: Record<string, unknown> = {};
   mkdirSync(path.dirname(file), { recursive: true });
   try { stored = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>; } catch { /* no file yet */ }
-  // `normal mode` clears both; a single stop clears only its own mode.
+  // `normal mode` clears every style mode; a single stop clears only its own.
   if (text !== 'stop ponytail') stored.cavemanDefault = 'off';
   if (text !== 'stop caveman') stored.ponytailDefault = 'off';
+  if (text === 'normal mode') stored.pstackDefault = 'off';
   writeFileSync(file, `${JSON.stringify({ ...stored }, null, 2)}\n`, 'utf8');
 }
 

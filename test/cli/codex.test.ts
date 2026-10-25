@@ -46,10 +46,9 @@ async function homeModules(): Promise<{
 
 test("the Codex plugin carries a tested hook manifest and a bundled launcher", () => {
   const files = codexPluginFiles();
-  const manifest = JSON.parse(files[".codex-plugin/plugin.json"]) as { hooks?: string; mcpServers?: string; skills?: string };
+  const manifest = JSON.parse(files[".codex-plugin/plugin.json"]) as { hooks?: string; mcpServers?: string };
   expect(manifest.hooks).toBe("./hooks/hooks.json");
   expect(manifest.mcpServers).toBe("./.mcp.json");
-  expect(manifest.skills).toBe("./skills/");
   const hooks = JSON.parse(files["hooks/hooks.json"]) as { hooks?: Record<string, unknown> };
   // One prompt hook owns the mode block; one PreToolUse hook owns the rtk rewrite.
   expect(Object.keys(hooks.hooks ?? {})).toEqual(["UserPromptSubmit", "PreToolUse"]);
@@ -116,7 +115,9 @@ test("the personal marketplace keeps unrelated plugins and removes only Tersio",
 
 test("an empty personal marketplace uses its own name", () => {
   const added = JSON.parse(addCodexPersonalMarketplace(null)) as { name?: string };
-  expect(added.name).toBe("tersio-personal");
+  expect(added.name).toBe("tersio");
+  // The pre-rename default migrates on the next install.
+  expect(JSON.parse(addCodexPersonalMarketplace(JSON.stringify({ name: "tersio-personal", plugins: [] }))).name).toBe("tersio");
 });
 
 test("every mode has a Codex slash command that runs the CLI", () => {
@@ -159,18 +160,6 @@ test("the Codex commands keep the README aliases and the update and upstream tar
   expect(tersio).toContain("Add `--dry-run` for a preview");
   expect(tersio).toContain("tersio upstream");
   expect(tersio).toContain("upstream [--offline]");
-});
-
-test("the plugin carries every vendored Ponytail workflow", () => {
-  const names = ["ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"];
-  const files = codexPluginFiles();
-  for (const name of names) {
-    const file = `skills/${name}/SKILL.md`;
-    expect(files[file]).toContain(`name: ${name}`);
-    expect(files[file]).toContain("ponytail");
-    expect(existsSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../..", "plugins", "tersio", file))).toBe(true);
-  }
-  expect(Object.keys(files)).toEqual(expect.arrayContaining(names.map((name) => `skills/${name}/SKILL.md`)));
 });
 
 test("the mode command reads and writes the same defaults the MCP tool does", async () => {
@@ -311,8 +300,8 @@ test("the Codex prompt hook clears a mode on its stop phrase", () => {
     const stored = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>;
     expect(stored.cavemanDefault).toBe("off");
     expect(stored.ponytailDefault).toBe("off");
-    // A stop phrase owns only the modes it names.
-    expect(stored.pstackDefault).toBe("on");
+    // `normal mode` clears every style mode, matching omp; rtk waits for its own toggle.
+    expect(stored.pstackDefault).toBe("off");
     expect(stored.rtkDefault).toBe(true);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -344,12 +333,6 @@ test("Codex detection reads the marketplace cache version", async () => {
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, text, "utf8");
     }
-    for (const file of CODEX_BUNDLED_PLUGIN_FILES) {
-      const target = path.join(dir, ...file.split("/"));
-      if (existsSync(target)) continue;
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, "fixture", "utf8");
-    }
     const manifestPath = path.join(dir, ".codex-plugin", "plugin.json");
     writeFileSync(manifestPath, JSON.stringify({ name: "tersio", version: "9.8.7" }), "utf8");
     expect(codexInstalledPlugin()).toEqual({ dir, version: "9.8.7", layout: "marketplace" });
@@ -380,7 +363,9 @@ test("a marketplace cache is complete with its five manifest files", async () =>
 test("the local fallback marketplace ID follows an existing marketplace name", () => {
   const existing = JSON.stringify({ name: "my-market", plugins: [] });
   expect(codexPersonalPluginId(existing)).toBe("tersio@my-market");
-  expect(codexPersonalPluginId(null)).toBe("tersio@tersio-personal");
+  expect(codexPersonalPluginId(null)).toBe("tersio@tersio");
+  // The pre-rename default reads as the new name.
+  expect(codexPersonalPluginId(JSON.stringify({ name: "tersio-personal", plugins: [] }))).toBe("tersio@tersio");
 });
 
 test("Codex token rows become codex host rows with model and cache usage", async () => {
@@ -482,7 +467,8 @@ test("the repository marketplace package matches the generated plugin contract",
   expect(manifest.version).toBe(generated.version);
   expect(manifest.hooks).toBe("./hooks/hooks.json");
   expect(manifest).toEqual(generated);
-  expect(existsSync(path.join(root, "plugins", "tersio", "skills", "status", "SKILL.md"))).toBe(true);
+  // The icon is binary, so the generated text contract cannot carry it; pin the file instead.
+  expect(existsSync(path.join(root, "plugins", "tersio", "assets", "icon.png"))).toBe(true);
   const packageJson = JSON.parse(readFileSync(path.join(root, "plugins", "tersio", "package.json"), "utf8")) as {
     name?: string;
     version?: string;

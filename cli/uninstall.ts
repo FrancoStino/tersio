@@ -13,7 +13,7 @@ import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import {
-  CODEX_LEGACY_PROMPTS, CODEX_PLUGIN_ID, CODEX_PROMPTS, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalMarketplaceFile,
+  CODEX_LEGACY_PROMPTS, CODEX_PERSONAL_MARKETPLACE_LEGACY, CODEX_PLUGIN_ID, CODEX_PLUGIN_NAME, CODEX_PROMPTS, codexInstalledPlugin, codexLegacyPluginDir, codexPersonalMarketplaceFile,
   codexConfigFile, codexPersonalPluginId, codexPromptFile,
   codexPluginDir, codexPluginIdForDir, removeCodexMcpPolicy, removeCodexPersonalMarketplace,
 } from '../extensions/shared/codex-plugin.ts';
@@ -263,6 +263,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
       installedId,
       CODEX_PLUGIN_ID,
       codexPersonalPluginId(personalMarketplace),
+      `${CODEX_PLUGIN_NAME}@${CODEX_PERSONAL_MARKETPLACE_LEGACY}`,
     ].filter((id): id is string => id !== null))];
     console.log('Will remove:');
     for (const id of ids) console.log(`  ${id} (installed plugin and cache)`);

@@ -36,13 +36,13 @@ import type { Profile } from './profile.ts';
 import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 import {
-  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_NAME, CODEX_MARKETPLACE_SOURCE, CODEX_MARKETPLACE_SPARSE, CODEX_PLUGIN_ID, CODEX_PLUGIN_NAME,
+  CODEX_BUNDLED_PLUGIN_FILES, CODEX_MARKETPLACE_NAME, CODEX_MARKETPLACE_SOURCE, CODEX_MARKETPLACE_SPARSE, CODEX_PERSONAL_MARKETPLACE_LEGACY, CODEX_PLUGIN_ID, CODEX_PLUGIN_NAME,
   CODEX_LEGACY_PROMPTS, CODEX_PROMPTS,
   CODEX_RUNTIME_PACKAGES,
   addCodexMcpPolicy, addCodexPersonalMarketplace, codexConfigFile, codexInstalledPlugin, codexLegacyPluginDir,
   codexPersonalPluginId, codexPromptFile, codexPromptText, codexStandaloneRtkHook,
   codexPluginDir, codexPluginFiles, codexPluginIdForDir, codexPluginState, codexRegisteredPluginState,
-  codexPersonalMarketplaceFile,
+  codexPersonalMarketplaceFile, removeCodexMcpPolicy,
 } from '../extensions/shared/codex-plugin.ts';
 
 async function stepPonytail(pluginsDir: string, options: InstallOptions): Promise<void> {
@@ -662,6 +662,9 @@ async function stepCodexBundled(options: InstallOptions): Promise<void> {
     });
   }
   await fs.cp(path.join(root, 'extensions'), path.join(stage, 'extensions'), { recursive: true });
+  // The plugin icon: one source in the repo, so the marketplace tree and the bundled copy never drift.
+  const assets = path.join(root, 'plugins', 'tersio', 'assets');
+  if (existsSync(assets)) await fs.cp(assets, path.join(stage, 'assets'), { recursive: true });
   const dashboard = path.join(root, 'dashboard', 'dist');
   if (existsSync(dashboard)) {
     await fs.cp(dashboard, path.join(stage, 'dashboard', 'dist'), { recursive: true });
@@ -671,11 +674,24 @@ async function stepCodexBundled(options: InstallOptions): Promise<void> {
   await fs.rename(stage, dir);
 
   const marketplaceFile = codexPersonalMarketplaceFile();
-  const marketplace = addCodexPersonalMarketplace(await readTextIfExists(marketplaceFile));
+  const existingMarketplace = await readTextIfExists(marketplaceFile);
+  const marketplace = addCodexPersonalMarketplace(existingMarketplace);
   await writeIfChanged(marketplaceFile, marketplace, options);
   if (!options.dryRun && process.env.TERSIO_CODEX_SKIP_REGISTER !== '1') {
     const currentId = codexPersonalPluginId(marketplace);
     await addCodexPlugin(currentId);
+    // The rename left a registration under the old marketplace name; drop it so Codex keeps one Tersio.
+    const configFile = codexConfigFile();
+    const configText = await readTextIfExists(configFile);
+    const legacyId = `${CODEX_PLUGIN_NAME}@${CODEX_PERSONAL_MARKETPLACE_LEGACY}`;
+    if (configText !== null && configText.includes(legacyId)) {
+      await execP('codex', ['plugin', 'remove', legacyId, '--json'], { timeout: 60000 })
+        .then((result) => debug(result.stdout.trim()))
+        .catch((e) => debug(`legacy Codex registration cleanup skipped: ${shortError(e)}`));
+      // The approval policy under the old id is Tersio's own write, so it goes too.
+      const cleaned = removeCodexMcpPolicy(await readTextIfExists(configFile), legacyId);
+      if (cleaned !== null && cleaned !== configText) await fs.writeFile(configFile, cleaned, 'utf8');
+    }
   }
   // A failed older fallback left an unregistered plugin directory. Remove it only after registration succeeds.
   if (!options.dryRun && process.env.TERSIO_CODEX_SKIP_REGISTER !== '1') {

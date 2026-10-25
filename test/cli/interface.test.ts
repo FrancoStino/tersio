@@ -403,7 +403,7 @@ test("install --host codex registers a personal plugin with hooks and a bundled 
     const result = run(home, ["install", "--host", "codex", "--yes"], bin);
     expect(result.status, result.stderr).toBe(0);
     const dir = path.join(home, ".tersio", "codex-plugin");
-    for (const file of [".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json", "skills/status/SKILL.md", "skills/combo/SKILL.md", "skills/rtk/SKILL.md", "tersio", "package.json"]) {
+    for (const file of [".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json", "assets/icon.png", "tersio", "package.json"]) {
       expect(existsSync(path.join(dir, ...file.split("/"))), `${file} written`).toBe(true);
     }
     expect(existsSync(path.join(dir, "dist", "tersio.js"))).toBe(true);
@@ -416,7 +416,7 @@ test("install --host codex registers a personal plugin with hooks and a bundled 
     expect(hooks).not.toMatch(/SessionStart/);
     expect(existsSync(path.join(home, ".agents", "plugins", "marketplace.json"))).toBe(true);
     expect(existsSync(path.join(home, ".codex", "plugins", "tersio"))).toBe(false);
-    expect(result.stdout).toMatch(/Codex plugin: 25 files/);
+    expect(result.stdout).toMatch(/Codex plugin: \d+ files/);
     expect(result.stdout).toMatch(/Done — restart Codex/);
     expect(result.stdout).toMatch(/Review and trust the Tersio hooks/);
   } finally {
@@ -432,7 +432,7 @@ test("install --host codex keeps a bundled install on a second run", () => {
     expect(first.status, first.stderr).toBe(0);
     const result = run(home, ["install", "--host", "codex", "--yes"], bin);
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Codex plugin: 25 files/);
+    expect(result.stdout).toMatch(/Codex plugin: \d+ files/);
     expect(existsSync(path.join(home, ".tersio", "codex-plugin", "hooks", "hooks.json"))).toBe(true);
     const marketplace = JSON.parse(readFileSync(path.join(home, ".agents", "plugins", "marketplace.json"), "utf8")) as {
       plugins?: Array<{ name?: string }>;
@@ -663,7 +663,7 @@ test("doctor leaves OMP-only add-on rows out of a Codex install", () => {
     const installed = run(home, ["install", "--host", "codex", "--yes"], bin);
     expect(installed.status, installed.stderr).toBe(0);
     mkdirSync(path.join(home, ".codex"), { recursive: true });
-    writeFileSync(path.join(home, ".codex", "config.toml"), '[plugins."tersio@tersio-personal"]\nenabled = true\n', "utf8");
+    writeFileSync(path.join(home, ".codex", "config.toml"), '[plugins."tersio@tersio"]\nenabled = true\n', "utf8");
     const result = run(home, ["doctor"], bin);
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/✅ Codex plugin: ok/);

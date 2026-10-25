@@ -301,6 +301,10 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       check('Codex mode approval', pluginId !== null && codexMcpPolicyInstalled(pluginId), pluginId !== null && codexMcpPolicyInstalled(pluginId)
         ? 'tersio MCP server pre-approved'
         : 'not set — run: tersio install --host codex');
+      // A marketplace plugin has no bundled runtime: its hooks and MCP server exec the CLI on PATH.
+      if (state.layout === 'marketplace' && resolveHostBinary('tersio') === null) {
+        warnLine('Tersio CLI', 'not on PATH, so the Codex hooks and MCP server cannot run — run: npm install -g @krtclcdy/tersio, or tersio install --host codex for the bundled plugin');
+      }
       if (codexStandaloneRtkHook()) {
         warnLine('Codex RTK hook', 'rtk init also runs a global hook, so /rtk off cannot stop it — run: rtk init -g --codex --uninstall');
       }

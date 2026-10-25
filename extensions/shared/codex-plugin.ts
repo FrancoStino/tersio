@@ -1,6 +1,6 @@
 // The Codex plugin tree and the mode context its hooks add to every turn.
 import { createRequire } from 'node:module';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCavemanDefault, readComboDefault, readPluginSettings, readPonytailDefault, readPstackDefault } from './plugin-settings.ts';
@@ -8,11 +8,12 @@ import { COMBO_LEVELS, normalizeMode } from './session-state.ts';
 import { findPackageRoot, homeDir } from './utils.ts';
 import type { ComboState } from './types.ts';
 
+/** The marketplace name a plugin install from this checkout registers under. */
 export const CODEX_MARKETPLACE_NAME = 'tersio';
-export const CODEX_PERSONAL_MARKETPLACE_NAME = 'tersio-personal';
+/** The marketplace name installs before the rename used; kept so their cache dirs and ids stay visible. */
+export const CODEX_PERSONAL_MARKETPLACE_LEGACY = 'tersio-personal';
 export const CODEX_PLUGIN_NAME = 'tersio';
 export const CODEX_PLUGIN_ID = `${CODEX_PLUGIN_NAME}@${CODEX_MARKETPLACE_NAME}`;
-export const CODEX_PERSONAL_PLUGIN_ID = `${CODEX_PLUGIN_NAME}@${CODEX_PERSONAL_MARKETPLACE_NAME}`;
 export const CODEX_MARKETPLACE_SOURCE = 'KurutoDenzeru/tersio';
 export const CODEX_MARKETPLACE_SPARSE = ['.agents/plugins', `plugins/${CODEX_PLUGIN_NAME}`] as const;
 /** Codex discovers this marketplace without a registration command. */
@@ -22,37 +23,34 @@ export function codexPersonalMarketplaceFile(): string {
 export function codexPersonalPluginDir(): string {
   return path.join(homeDir(), '.tersio', 'codex-plugin');
 }
-/** The vendored Ponytail skills, copied as published; each one is a review or reference workflow. */
-export const PONYTAIL_SKILL_NAMES = [
-  'ponytail-audit',
-  'ponytail-debt',
-  'ponytail-gain',
-  'ponytail-help',
-  'ponytail-review',
-] as const;
+const ROOT = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
+const EXTENSIONS = path.join(ROOT, 'extensions');
+const PONYTAIL = path.join(EXTENSIONS, 'ponytail');
 
-/** Skill folders the plugin ships; each SKILL.md drives one Tersio mode through the MCP tool. */
-export const CODEX_PLUGIN_SKILL_FILES = [
-  'skills/status/SKILL.md',
-  'skills/combo/SKILL.md',
-  'skills/caveman/SKILL.md',
-  'skills/rtk/SKILL.md',
-  'skills/ponytail/SKILL.md',
-  'skills/pstack/SKILL.md',
-] as const;
-/** The vendored Ponytail workflows, shipped as published skills beside the mode skills. */
-export const PONYTAIL_SKILL_FILES = PONYTAIL_SKILL_NAMES.map((name) => `skills/${name}/SKILL.md`);
+/** The pstack leaves the bundled plugin carries beside its rule: the shipped tree is the same set. */
+const PSTACK_LEAF_FILES: readonly string[] = ((): readonly string[] => {
+  const base = path.join(EXTENSIONS, 'pstack');
+  const walk = (dir: string): string[] => {
+    let entries: Dirent[] = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    return entries.flatMap((entry) => {
+      const rel = `extensions/pstack/${path.relative(base, path.join(dir, entry.name)).split(path.sep).join('/')}`;
+      if (entry.isDirectory()) return walk(path.join(dir, entry.name));
+      return entry.name.endsWith('.md') && entry.name !== 'rule.md' ? [rel] : [];
+    });
+  };
+  return walk(base).toSorted();
+})();
+
 /** The files a marketplace plugin carries. Its commands use the Tersio CLI on PATH. */
-export const CODEX_MARKETPLACE_PLUGIN_FILES = [
+export const CODEX_MARKETPLACE_PLUGIN_FILES: readonly string[] = [
   '.codex-plugin/plugin.json',
   '.mcp.json',
   'hooks/hooks.json',
-  ...CODEX_PLUGIN_SKILL_FILES,
-  ...PONYTAIL_SKILL_FILES,
   'package.json',
-] as const;
+];
 /** The complete local fallback: the marketplace files plus a self-contained CLI runtime. */
-export const CODEX_BUNDLED_PLUGIN_FILES = [
+export const CODEX_BUNDLED_PLUGIN_FILES: readonly string[] = [
   ...CODEX_MARKETPLACE_PLUGIN_FILES,
   'tersio',
   'dist/tersio.js',
@@ -64,7 +62,8 @@ export const CODEX_BUNDLED_PLUGIN_FILES = [
   'extensions/caveman/rule-megacave-ultra.md',
   'extensions/ponytail/hooks/ponytail-instructions.js',
   'extensions/pstack/rule.md',
-] as const;
+  ...PSTACK_LEAF_FILES,
+];
 export type CodexPluginLayout = 'marketplace' | 'bundled';
 /** The full runtime closure: copying only @clack leaves its hoisted dependencies behind. */
 export const CODEX_RUNTIME_PACKAGES = [
@@ -76,10 +75,6 @@ export const CODEX_RUNTIME_PACKAGES = [
   'sisteransi',
 ] as const;
 
-const ROOT = findPackageRoot(path.dirname(fileURLToPath(import.meta.url)));
-const EXTENSIONS = path.join(ROOT, 'extensions');
-const PONYTAIL = path.join(EXTENSIONS, 'ponytail');
-
 function read(root: string, file: string): string {
   return readFileSync(path.join(root, ...file.split('/')), 'utf8');
 }
@@ -90,18 +85,17 @@ export function codexPluginManifest(): string {
   return `${JSON.stringify({
     name: CODEX_PLUGIN_NAME,
     version,
-    description: 'Tersio modes and session usage for Codex.',
+    description: '✂️ Token saver and usage tracker for coding agents.',
     author: { name: 'KurutoDenzeru' },
     homepage: 'https://github.com/KurutoDenzeru/tersio',
     repository: 'https://github.com/KurutoDenzeru/tersio',
     license: 'MIT',
-    skills: './skills/',
     mcpServers: './.mcp.json',
     hooks: './hooks/hooks.json',
     interface: {
       displayName: 'Tersio',
-      shortDescription: 'Terse agent modes and usage',
-      longDescription: 'Keep Tersio modes active in Codex, and read local agent usage through the Tersio MCP server.',
+      shortDescription: '✂️ Token saver and usage tracker for coding agents',
+      longDescription: 'Terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one command at a time.',
       developerName: 'KurutoDenzeru',
       category: 'Developer Tools',
       capabilities: ['Read', 'Write', 'Lifecycle hooks'],
@@ -110,52 +104,13 @@ export function codexPluginManifest(): string {
         'Show my Tersio mode status',
         'Show my local agent usage',
         'Set combo lite',
-        'Enable RTK',
-        'Set ponytail full',
-        'Enable pstack',
       ],
+      composerIcon: './assets/icon.png',
+      logo: './assets/icon.png',
       brandColor: '#D97706',
     },
   }, null, 2)}\n`;
 }
-
-/** Skill bodies, inlined so a published CLI can generate the plugin without the repo tree. */
-function skill(name: string, description: string, body: string): string {
-  return `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
-}
-
-const SKILL_TEXTS: Readonly<Record<(typeof CODEX_PLUGIN_SKILL_FILES)[number], string>> = {
-  'skills/status/SKILL.md': skill(
-    'status',
-    'Use when the user asks for Tersio mode status or local agent usage.',
-    '# Tersio status\n\nRead the current mode defaults from `~/.tersio/settings.json`.\n\nCall the `tersio_stats` MCP tool for usage totals.\nState the range and the source of each figure.',
-  ),
-  'skills/combo/SKILL.md': skill(
-    'tersio-combo',
-    'Use when the user asks to set a Tersio Combo preset: off, lite, balanced, or max. The preset sets caveman, rtk, and ponytail together.',
-    '# Tersio Combo\n\nCall the `tersio_modes` MCP tool with the requested `combo` value: off, lite, balanced, or max.\nState the new level and the modes it set. pstack is separate; a preset never changes it.',
-  ),
-  'skills/caveman/SKILL.md': skill(
-    'tersio-caveman',
-    'Use when the user asks to set the Caveman reply level: off, lite, full, ultra, megacave-lite, megacave-full, or megacave-ultra.',
-    '# Tersio Caveman\n\nCall the `tersio_modes` MCP tool with the requested `caveman` value.\nState the new level. Lower levels keep more explanation; megacave levels are the tersest.',
-  ),
-  'skills/rtk/SKILL.md': skill(
-    'tersio-rtk',
-    'Use when the user asks to turn RTK condensed shell output on or off.',
-    '# Tersio RTK\n\nCall the `tersio_modes` MCP tool with `rtk` set to on or off.\nState the new state. On means shell commands run condensed with every signal kept.',
-  ),
-  'skills/ponytail/SKILL.md': skill(
-    'tersio-ponytail',
-    'Use when the user asks to set the Ponytail lean-code level: off, lite, full, or ultra.',
-    '# Tersio Ponytail\n\nCall the `tersio_modes` MCP tool with the requested `ponytail` value.\nState the new level. Higher levels delete or reuse before adding.',
-  ),
-  'skills/pstack/SKILL.md': skill(
-    'tersio-pstack',
-    'Use when the user asks to turn the pstack rigor mode on or off.',
-    '# Tersio pstack\n\nCall the `tersio_modes` MCP tool with `pstack` set to on or off.\nState the new state. pstack applies a design principle when the moment fits.',
-  ),
-};
 
 /** The slash commands Tersio writes. Codex names each command after its file: `rtk.md` is `/rtk`. */
 export const CODEX_PROMPT_MODES = ['combo', 'caveman', 'rtk', 'ponytail', 'pstack'] as const;
@@ -263,15 +218,6 @@ export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
   return `---\ndescription: Set the Tersio ${mode} mode (${levels.join(', ')})\nargument-hint: <${levels.join('|')}>\n---\n\n${body}\n`;
 }
 
-/** The vendored Ponytail workflows, read from the tree so the published body is the one that ships. */
-function ponytailSkillTexts(): Record<string, string> {
-  const files: Record<string, string> = {};
-  for (const name of PONYTAIL_SKILL_NAMES) {
-    files[`skills/${name}/SKILL.md`] = read(PONYTAIL, `skills/${name}/SKILL.md`);
-  }
-  return files;
-}
-
 /**
  * The plugin files. A bundled plugin runs its own CLI with the absolute Node path that installed it.
  * A marketplace plugin uses the Tersio CLI on PATH, because its source carries no build output.
@@ -318,14 +264,11 @@ export function codexPluginFiles(
         }],
       },
     }, null, 2)}\n`,
-    ...SKILL_TEXTS,
-    ...ponytailSkillTexts(),
     'package.json': read(ROOT, 'package.json'),
   };
   if (bundled) files.tersio = `#!/usr/bin/env node\nimport ${JSON.stringify('./dist/tersio.js')};\n`;
   return files;
 }
-
 /** Add the Tersio entry to the personal marketplace, and keep every other entry. */
 export function addCodexPersonalMarketplace(existing: string | null): string {
   let parsed: Record<string, unknown> = {};
@@ -355,9 +298,11 @@ export function addCodexPersonalMarketplace(existing: string | null): string {
   ));
   if (index === -1) plugins.push(entry);
   else plugins[index] = entry;
+  // A marketplace that still carries the pre-rename default reads as that name; migrate it.
+  const existingName = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : null;
   return `${JSON.stringify({
     ...parsed,
-    name: typeof parsed.name === 'string' && parsed.name ? parsed.name : CODEX_PERSONAL_MARKETPLACE_NAME,
+    name: existingName === CODEX_PERSONAL_MARKETPLACE_LEGACY ? CODEX_MARKETPLACE_NAME : existingName ?? CODEX_MARKETPLACE_NAME,
     interface: parsed.interface ?? { displayName: 'Tersio' },
     plugins,
   }, null, 2)}\n`;
@@ -365,15 +310,16 @@ export function addCodexPersonalMarketplace(existing: string | null): string {
 
 /** The name Codex will use for the personal marketplace, including a user's existing name. */
 export function codexPersonalMarketplaceName(existing: string | null): string {
-  if (existing === null) return CODEX_PERSONAL_MARKETPLACE_NAME;
+  if (existing === null) return CODEX_MARKETPLACE_NAME;
   try {
     const value: unknown = JSON.parse(existing);
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
-      const name = (value as { name?: unknown }).name;
-      if (typeof name === 'string' && name.trim()) return name;
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'name' in value) {
+      const name: unknown = value.name;
+      // The pre-rename default migrates; a name the user chose stays.
+      if (typeof name === 'string' && name.trim() && name !== CODEX_PERSONAL_MARKETPLACE_LEGACY) return name;
     }
   } catch { /* an unreadable file is replaced by the install */ }
-  return CODEX_PERSONAL_MARKETPLACE_NAME;
+  return CODEX_MARKETPLACE_NAME;
 }
 
 /** The plugin ID for the personal marketplace that is on disk. */
@@ -488,21 +434,20 @@ export function codexPluginDir(): string {
 }
 
 function personalMarketplaceNames(): string[] {
-  let name = CODEX_PERSONAL_MARKETPLACE_NAME;
+  let name = CODEX_PERSONAL_MARKETPLACE_LEGACY;
   try {
     name = codexPersonalMarketplaceName(readFileSync(codexPersonalMarketplaceFile(), 'utf8'));
   } catch { /* no personal marketplace */ }
-  return [...new Set([CODEX_PERSONAL_MARKETPLACE_NAME, name])];
+  return [...new Set([CODEX_MARKETPLACE_NAME, CODEX_PERSONAL_MARKETPLACE_LEGACY, name])];
 }
 
 /** The expected file set for a path. The local fallback is bundled; a marketplace cache is not. */
 export function codexPluginLayoutForDir(dir: string): CodexPluginLayout {
   const normalized = path.resolve(dir);
   if (normalized === path.resolve(codexPersonalPluginDir())) return 'bundled';
-  const cacheRoot = path.join(homeDir(), '.codex', 'plugins', 'cache');
-  if (personalMarketplaceNames().some((name) => (
-    normalized.startsWith(path.join(path.resolve(cacheRoot), name, CODEX_PLUGIN_NAME))
-  ))) return 'bundled';
+  // The bundled copy carries the extension tree and the marketplace package does not, so the
+  // content decides: after the rename, both marketplaces can own a cache path named `tersio`.
+  if (existsSync(path.join(normalized, 'extensions', 'caveman', 'rule.md'))) return 'bundled';
   return 'marketplace';
 }
 

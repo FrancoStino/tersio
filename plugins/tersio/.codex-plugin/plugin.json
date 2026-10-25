@@ -1,20 +1,19 @@
 {
   "name": "tersio",
   "version": "2.25.14",
-  "description": "Tersio modes and session usage for Codex.",
+  "description": "✂️ Token saver and usage tracker for coding agents.",
   "author": {
     "name": "KurutoDenzeru"
   },
   "homepage": "https://github.com/KurutoDenzeru/tersio",
   "repository": "https://github.com/KurutoDenzeru/tersio",
   "license": "MIT",
-  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Tersio",
-    "shortDescription": "Terse agent modes and usage",
-    "longDescription": "Keep Tersio modes active in Codex, and read local agent usage through the Tersio MCP server.",
+    "shortDescription": "✂️ Token saver and usage tracker for coding agents",
+    "longDescription": "Terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one command at a time.",
     "developerName": "KurutoDenzeru",
     "category": "Developer Tools",
     "capabilities": [
@@ -26,11 +25,10 @@
     "defaultPrompt": [
       "Show my Tersio mode status",
       "Show my local agent usage",
-      "Set combo lite",
-      "Enable RTK",
-      "Set ponytail full",
-      "Enable pstack"
+      "Set combo lite"
     ],
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
     "brandColor": "#D97706"
   }
 }

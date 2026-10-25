@@ -52,11 +52,11 @@ test("the Codex host reads the plugin's own bodies against this build", async ()
     expect(installed?.stale).toBe(0);
     expect(installed?.matched).toBe(installed?.files);
 
-    writeFileSync(path.join(dir, "skills", "combo", "SKILL.md"), "edited", "utf8");
-    rmSync(path.join(dir, "skills", "rtk", "SKILL.md"));
+    writeFileSync(path.join(dir, "package.json"), "edited", "utf8");
+    rmSync(path.join(dir, ".mcp.json"));
     const drifted = (await checkHosts()).find((row) => row.host === "codex");
-    expect(drifted?.staleFiles).toEqual(["skills/combo/SKILL.md"]);
-    expect(drifted?.missingFiles).toEqual(["skills/rtk/SKILL.md"]);
+    expect(drifted?.staleFiles).toEqual(["package.json"]);
+    expect(drifted?.missingFiles).toEqual([".mcp.json"]);
   } finally {
     process.env.HOME = previous;
     rmSync(home, { recursive: true, force: true });
