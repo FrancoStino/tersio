@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+
 import { homeDir, isPiProcess, piAgentDir, resolveRtkBinary, rtkDirs, shimCommand, tersioDataPath } from './utils.ts';
 import { tersioStateFile } from './state.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
@@ -236,6 +237,8 @@ export function opencodeDbPath(): string {
 
 export interface OpencodeDbRow {
   id: string;
+  /** Session id, from `session_message.session_id` or the legacy blob's `$.sessionID`; '' when absent. */
+  sessionId: string;
   created: number;
   row: OpencodeMessage;
   /** Tool names this message called, comma-joined. Empty when it called none. */
@@ -252,10 +255,10 @@ const OC_DB_TOOLS =
   '(SELECT group_concat(json_extract(j.value,\'$.name\')) FROM json_each(data,\'$.content\') j' +
   ' WHERE json_extract(j.value,\'$.type\')=\'tool\')';
 const ocDbLegacy = (since: number): string =>
-  `SELECT id, time_created, json_extract(data,'$.role'), json_extract(data,'$.providerID'), json_extract(data,'$.modelID'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
+  `SELECT id, json_extract(data,'$.sessionID'), time_created, json_extract(data,'$.role'), json_extract(data,'$.providerID'), json_extract(data,'$.modelID'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
   ` FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created > ${since}${OC_DB_ORDER}`;
 const ocDbCurrent = (since: number): string =>
-  `SELECT id, time_created, 'assistant', json_extract(data,'$.model.providerID'), json_extract(data,'$.model.id'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
+  `SELECT id, session_id, time_created, 'assistant', json_extract(data,'$.model.providerID'), json_extract(data,'$.model.id'), ${OC_DB_COLUMNS}, ${OC_DB_TOOLS}` +
   ` FROM session_message WHERE type='assistant' AND time_created > ${since}${OC_DB_ORDER}`;
 
 // A re-scan window covers tokens that land after the row was created, so a late fill is not lost.
@@ -275,10 +278,11 @@ try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or u
     const rows: OpencodeDbRow[] = [];
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
-      const [id, created, role, providerID, modelID, tCreated, tStreamed, tCompleted, input, output, cacheRead, cacheWrite, cost, tools] = line.split('\t');
+      const [id, sessionId, created, role, providerID, modelID, tCreated, tStreamed, tCompleted, input, output, cacheRead, cacheWrite, cost, tools] = line.split('\t');
       const n = (v: string | undefined): unknown => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
       rows.push({
         id,
+        sessionId: sessionId ?? '',
         created: Number(created),
         tools: tools ?? '',
         row: {
@@ -579,6 +583,8 @@ export function hasPositiveUsage(usage: Record<string, unknown>): boolean {
 
 export interface OpencodeMessage {
   role?: unknown;
+  /** The session this message belongs to; v2 keeps it in its own column instead. */
+  sessionID?: unknown;
   tokens?: { input?: unknown; output?: unknown; reasoning?: unknown; cache?: { read?: unknown; write?: unknown } } | null;
   modelID?: unknown;
   providerID?: unknown;
@@ -810,6 +816,15 @@ export function agentOfSessionText(text: string): string {
     } catch { /* skip a corrupt line */ }
   }
   return 'main';
+}
+
+/** Session id of a pi transcript filename: the segment between the last `_` and `.jsonl`; '' when the shape differs. */
+export function sessionIdOfSessionFile(file: string): string {
+  const base = path.basename(file);
+  if (!base.endsWith('.jsonl')) return '';
+  const at = base.lastIndexOf('_');
+  if (at < 0) return '';
+  return base.slice(at + 1, -'.jsonl'.length);
 }
 
 const adoptionFileCache = new Map<string, { size: number; mtimeMs: number; heads: string; counts: BashCounts }>();

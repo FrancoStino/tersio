@@ -9,6 +9,7 @@ import { readRtkGainByVerb, rtkGainFailure } from './rtk-gain.ts';
 import type { RtkCommandRow } from './rtk-gain.ts';
 import { readRtkAdoption } from './usage-ledger.ts';
 import type { RtkAdoption } from './usage-ledger.ts';
+import { firstUserTextOf, readGatewaySessionIndex, readGatewayTurns } from './gateway.ts';
 
 export type RangeKey = '1h' | '24h' | '7d' | '30d' | '90d' | 'all';
 
@@ -1062,7 +1063,15 @@ function readTraceModels(db: string): Map<string, string[]> {
 
 /** A session's title and cwd: the `session` line carries the directory and the `title` line sits above it. */
 function applySessionMetadata(traces: AgentTraceRow[]): void {
+  // A gateway session has no host file; its title is the opening prompt recorded with the first turn.
+  const gateway = traces.some((trace) => gatewaySessionOf(trace.sessionFile)) ? readGatewaySessionIndex() : [];
   for (const trace of traces) {
+    const captured = gatewaySessionOf(trace.sessionFile);
+    if (captured) {
+      const entry = gateway.find((e) => e.host === captured.host && e.session === captured.session);
+      if (entry?.title) trace.title = entry.title;
+      continue;
+    }
     if (!trace.sessionFile.endsWith('.jsonl')) continue;
     let fd: number | null = null;
     try {
@@ -1400,8 +1409,79 @@ function stopState(stopReason: string): AgentTraceSpan['stopped'] {
 /** Tool names that hand the work to another agent, for the Agents figure. */
 const AGENT_TOOLS = new Set(['task', 'subagent']);
 
+/** A gateway file key: `gateway://<host>/<session>`, the synthetic path the capture server writes. */
+const GATEWAY_SESSION = /^gateway:\/\/([^/]+)\/(.+)$/;
+
+function gatewaySessionOf(sessionFile: string): { host: string; session: string } | null {
+  const match = GATEWAY_SESSION.exec(sessionFile);
+  return match ? { host: match[1], session: match[2] } : null;
+}
+
+interface GatewayUsage { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; provider: string }
+
+/** Per-turn usage keyed by the turn stamp the gateway stored as the row id. */
+function gatewayUsageByTurn(sessionFile: string): Map<string, GatewayUsage> {
+  const rows = new Map<string, GatewayUsage>();
+  const key = sessionFile.replace(/'/g, "''");
+  try {
+    const out = sqliteScript(usageDbPath(),
+      `SELECT m.id, m.i, m.o, m.cr, m.cw, COALESCE(m.usd, 0), COALESCE(m.p, '') FROM messages m ` +
+      `JOIN files f ON f.id = m.file_id WHERE f.path = '${key}';`);
+    for (const line of out.split('\n')) {
+      if (!line.trim()) continue;
+      const [id, i, o, cr, cw, usd, provider] = line.split('\t');
+      rows.set(id ?? '', {
+        input: num(i ?? '0'), output: num(o ?? '0'), cacheRead: num(cr ?? '0'),
+        cacheWrite: num(cw ?? '0'), costUsd: num(usd ?? '0'), provider: provider ?? '',
+      });
+    }
+  } catch { /* a store without rows draws the turns without usage */ }
+  return rows;
+}
+
+/** A gateway session's spans come from its recorded turns; recording off leaves an empty track. */
+function readGatewayTrace(sessionFile: string, where: { host: string; session: string }, limit: number): AgentSessionTrace {
+  const entry = readGatewaySessionIndex().find((e) => e.host === where.host && e.session === where.session);
+  const usage = gatewayUsageByTurn(sessionFile);
+  const turns = readGatewayTurns(where.host, where.session);
+  const spans: AgentTraceSpan[] = [];
+  for (const turn of turns) {
+    const used = usage.get(String(turn.t));
+    const start = turn.durMs !== undefined && turn.durMs > 0 ? Math.max(0, turn.t - turn.durMs) : turn.t;
+    const prompt = firstUserTextOf(turn.in).replace(/\s+/g, ' ').trim().slice(0, 120);
+    const failed = turn.status === 'error';
+    spans.push({
+      id: String(turn.t), kind: 'model', label: turn.model || 'assistant', detail: prompt,
+      start, end: turn.t, tool: '', stopped: failed ? 'failed' : 'completed',
+      model: turn.model, provider: used?.provider ?? '', tokens: (used?.input ?? 0) + (used?.output ?? 0),
+      costUsd: used?.costUsd ?? 0, isError: failed, entryId: String(turn.t),
+    });
+    // Tool names arrive without timing, so each call rides the turn's end as a point.
+    turn.tools.forEach((tool, index) => {
+      spans.push({
+        id: `${turn.t}#${index}`, kind: 'tool', label: tool, detail: '', start: turn.t, end: turn.t, tool,
+        stopped: 'completed', model: turn.model, provider: used?.provider ?? '', tokens: 0, costUsd: 0,
+        isError: false, entryId: String(turn.t),
+      });
+    });
+  }
+  const kept = spans.length > limit ? spans.slice(-limit) : spans;
+  const startedAt = kept.length ? Math.min(...kept.map((span) => span.start)) : 0;
+  const endedAt = kept.length ? Math.max(...kept.map((span) => span.end)) : 0;
+  return {
+    sessionFile, project: '', title: entry?.title ?? '', cwd: '', startedAt, endedAt,
+    tracks: [{ id: 'main', label: 'Main', parentId: null, spans: kept }],
+    markers: [],
+    summary: summarizeTrace(kept, startedAt, endedAt),
+    toolStats: buildToolStats(kept),
+    truncated: spans.length > limit,
+  };
+}
+
 /** One transcript as spans, tracks and markers: a model span runs `ts - duration` to `ts`. */
 export function readSessionTrace(sessionFile: string, limit = TRACE_SPAN_LIMIT): AgentSessionTrace {
+  const captured = gatewaySessionOf(sessionFile);
+  if (captured) return readGatewayTrace(sessionFile, captured, limit);
   // Either separator: a Windows host writes `<drive>\...\.omp\agent\sessions\<project>\<file>`.
   const project = sessionFile.split(/[/\\]sessions[/\\]/)[1]?.split(/[/\\]/)[0] ?? '';
   const empty: AgentSessionTrace = {
@@ -1640,6 +1720,36 @@ export function readAgentRequestEntry(
   entryId: string,
 ): { entry: unknown; output: unknown; messageRole: string; agent: JournalAgent } {
   const empty = emptyRequestEntry();
+  const captured = gatewaySessionOf(sessionFile);
+  if (captured) {
+    const turn = readGatewayTurns(captured.host, captured.session, 10_000).find((t) => String(t.t) === entryId);
+    if (!turn) return empty;
+    const used = gatewayUsageByTurn(sessionFile).get(entryId);
+    // The drawer reads a journal message, so a turn is shaped like one.
+    const output = {
+      role: 'assistant',
+      model: turn.model,
+      provider: used?.provider ?? '',
+      content: [{ type: 'text', text: turn.out }],
+      usage: {
+        input: used?.input ?? 0,
+        output: used?.output ?? 0,
+        cacheRead: used?.cacheRead ?? 0,
+        cacheWrite: used?.cacheWrite ?? 0,
+        totalTokens: (used?.input ?? 0) + (used?.output ?? 0) + (used?.cacheRead ?? 0) + (used?.cacheWrite ?? 0),
+        cost: { total: used?.costUsd ?? 0 },
+      },
+      ttft: turn.ttftMs ?? 0,
+      duration: turn.durMs ?? 0,
+      stopReason: turn.status === 'error' ? 'error' : 'stop',
+    };
+    return {
+      entry: { id: entryId, type: 'message', timestamp: new Date(turn.t).toISOString(), message: output },
+      output,
+      messageRole: 'assistant',
+      agent: { model: turn.model, thinkingLevel: null, mode: null, fallback: null },
+    };
+  }
   if (!entryId || !sessionFile.endsWith('.jsonl') || !fs.existsSync(sessionFile)) return empty;
   let text: string;
   try {

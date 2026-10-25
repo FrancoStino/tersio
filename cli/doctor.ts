@@ -20,6 +20,8 @@ import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
 import { serviceRunning, serviceState } from './doctor-fix.ts';
 import { readState } from '../extensions/shared/state.ts';
+import { readGatewayConfig } from '../extensions/shared/gateway.ts';
+import { gatewayProviderUrl } from './gateway-wire.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
 import { newerThan } from './update.ts';
 
@@ -291,6 +293,23 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // Pages read omp's own index, which advances only while an omp process owns it, so a stall reads as empty.
   const indexLag = statsIndexLag();
   if (indexLag) warnLine('omp stats index', indexLag);
+
+  section('Gateway');
+  const gatewayCfg = readGatewayConfig();
+  const wiredKeys = Object.keys(gatewayCfg.providers);
+  if (wiredKeys.length === 0) {
+    unused('Gateway', '— wire one with: tersio gateway wire --host <pi|opencode> --provider <name>');
+  } else {
+    // A provider left on an old port would send every turn to a socket nothing listens on.
+    const stale = wiredKeys.filter((key) => {
+      const entry = gatewayCfg.providers[key];
+      return gatewayProviderUrl(entry.host, entry.provider) !== `http://127.0.0.1:${gatewayCfg.port}/gw/${key}`;
+    });
+    check('Gateway wiring', stale.length === 0,
+      stale.length
+        ? `stale: ${stale.join(', ')} — re-run: tersio gateway wire --host <host> --provider <name>`
+        : `${wiredKeys.length} provider${wiredKeys.length === 1 ? '' : 's'} · recording ${gatewayCfg.record ? 'on' : 'off'}`);
+  }
 
   section('Add-ons');
   const ruleAge = ruleMtime ? `(updated ${relTime(Date.now() - ruleMtime.mtimeMs)} · ${absDate(ruleMtime.mtimeMs)})` : '';
