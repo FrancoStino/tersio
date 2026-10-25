@@ -21,12 +21,10 @@ import {
   newSessionAccum,
   opencodeToolNames,
   readOpencodeDbRows,
-  sessionIdOfSessionFile,
   sessionsDirs,
   walkJsonl,
 } from './usage-ledger.ts';
-import { readGatewaySessionIndex } from './gateway.ts';
-import { piAgentDir, tersioDataPath } from './utils.ts';
+import { tersioDataPath } from './utils.ts';
 import { createDataBackup, newestDataBackup, readSnapshotMember, restoreSnapshotMember } from './snapshots.ts';
 import { MODEL_ALIASES } from './pricing.ts';
 import { tersioSettingsFile } from './plugin-settings.ts';
@@ -317,9 +315,7 @@ function ttftBackfilled(db: string): boolean {
 /** Clears ledger mtimes so every transcript re-reads; synthetic `db#row-id` OpenCode keys stay untouched. */
 function markTranscriptsDirty(db: string): void {
   try {
-    // Synthetic rows are not transcripts: a `gateway://` path has no file behind it, so re-reading it
-    // would fail the sync. The `#` rows are OpenCode's, re-read from sqlite on their own watermark.
-    run(db, `UPDATE files SET mtime = 0 WHERE path NOT LIKE '%#%' AND path NOT LIKE 'gateway://%';`);
+    run(db, `UPDATE files SET mtime = 0 WHERE path NOT LIKE '%#%';`);
   } catch { /* a store with no files table yet, or a read-only file: nothing to backfill */ }
 }
 
@@ -487,7 +483,7 @@ function opencodeStoredRow(
   };
 }
 
-function parseFile(text: string, host?: string, file?: string, agent?: string, skipSessions?: ReadonlySet<string>): StoredRow[] {
+function parseFile(text: string, host?: string, file?: string, agent?: string): StoredRow[] {
   const rows: StoredRow[] = [];
   // Guarded: a JSONL transcript must fall through, not abort the sync.
   let oc: OpencodeClassification | null = null;
@@ -495,8 +491,6 @@ function parseFile(text: string, host?: string, file?: string, agent?: string, s
     const message = JSON.parse(text) as OpencodeMessage;
     oc = classifyOpencodeMessage(message);
     if (oc) {
-      // A session the gateway already recorded keeps its rows; parsing the message again would double it.
-      if (skipSessions && typeof message.sessionID === 'string' && skipSessions.has(message.sessionID)) return rows;
       rows.push(opencodeStoredRow(oc, host, file ? path.basename(file).replace(/\.[^.]+$/, '') : undefined, opencodeToolNames(message)));
       return rows;
     }
@@ -583,66 +577,6 @@ function insertSql(file: string, r: StoredRow): string {
     `${r.toolFacts && r.toolFacts.length > 0 ? esc(JSON.stringify(r.toolFacts)) : 'NULL'},${nullStr(r.gateway)});`;
 }
 
-/** One gateway turn for the store; mtime/size describe the synthetic `gateway://` file row. */
-export interface GatewayStoreRow {
-  t: number;
-  model: string;
-  i: number;
-  o: number;
-  d: number | undefined;
-  tf: number | undefined;
-  cr: number;
-  cw: number;
-  usd: number | undefined;
-  st: RunStatus;
-  code: number | undefined;
-  tools: string[];
-  host: string;
-  agent: string;
-  id: string;
-  gateway: string;
-  mtime: number;
-  size: number;
-}
-
-// The store path whose schema the gateway has prepared, so a later turn skips the setup.
-let gatewaySchemaDb = '';
-
-/** Upserts the synthetic file row, then inserts the message row the same way the sync does. */
-export function insertGatewayRow(db: string, fileKey: string, row: GatewayStoreRow): void {
-  // Schema setup is a sqlite round trip; the gateway writes per turn, so it happens once per store.
-  // Going through ensureSchema stamps the parser version: a store without one reads as a foreign
-  // build and the next sync would rebuild its tables, dropping every gateway row.
-  if (gatewaySchemaDb !== db) {
-    ensureSchema(db, false);
-    gatewaySchemaDb = db;
-  }
-  run(db,
-    `BEGIN;` +
-    `INSERT INTO files (path, mtime, size) VALUES (${esc(fileKey)},${row.mtime},${row.size}) ` +
-    `ON CONFLICT(path) DO UPDATE SET mtime=${row.mtime}, size=${row.size};` +
-    insertSql(fileKey, {
-      t: row.t,
-      model: row.model,
-      i: row.i,
-      o: row.o,
-      d: row.d,
-      tf: row.tf,
-      cr: row.cr,
-      cw: row.cw,
-      usd: row.usd,
-      st: row.st,
-      code: row.code,
-      note: undefined,
-      tools: row.tools,
-      host: row.host,
-      agent: row.agent,
-      id: row.id,
-      gateway: row.gateway,
-    }) +
-    `COMMIT;`);
-}
-
 // Unchanged transcripts are skipped via mtime+size; rows for deleted ones are kept so rotation never erases history.
 export function syncUsageDb(): boolean {
   let db: string;
@@ -668,11 +602,6 @@ export function syncUsageDb(): boolean {
   }
   const files: string[] = [];
   const ocFiles: string[] = [];
-  // A session the gateway captured already has its rows; its host files would count the same turns twice.
-  const captured = readGatewaySessionIndex();
-  const piCaptured = new Set(captured.filter((e) => e.host === 'pi').map((e) => e.session));
-  const opencodeCaptured = new Set(captured.filter((e) => e.host === 'opencode').map((e) => e.session));
-  const piSessions = path.join(piAgentDir(), 'sessions');
   try {
     for (const dir of sessionsDirs()) walkJsonl(dir, files, 2000);
     // OpenCode stores one JSON document per message, not JSONL.
@@ -681,10 +610,6 @@ export function syncUsageDb(): boolean {
     }
   } catch {
     return false;
-  }
-  // omp has no gateway wiring, so only a pi transcript is gated by its session id.
-  for (let i = files.length - 1; i >= 0; i -= 1) {
-    if (files[i].startsWith(piSessions) && piCaptured.has(sessionIdOfSessionFile(files[i]))) files.splice(i, 1);
   }
   files.push(...ocFiles);
   // v2 hosts keep messages in sqlite; rows past the watermark are new. Overlap re-reads the tail idempotently.
@@ -696,12 +621,6 @@ export function syncUsageDb(): boolean {
     const since = newest === null || !opencodeToolsBackfilled(db) ? 0 : newest - OPENCODE_DB_OVERLAP_MS;
     if (newest !== null || fs.existsSync(ocDbPath)) {
       ocDbRows.push(...readOpencodeDbRows(ocDbPath, since));
-    }
-  }
-  // Same rule as the pi transcripts: a captured session keeps the gateway's rows, not a second copy.
-  if (opencodeCaptured.size > 0) {
-    for (let i = ocDbRows.length - 1; i >= 0; i -= 1) {
-      if (opencodeCaptured.has(ocDbRows[i].sessionId)) ocDbRows.splice(i, 1);
     }
   }
   const known = readFiles(db);
@@ -752,7 +671,7 @@ export function syncUsageDb(): boolean {
   try {
     for (const file of changed) {
       const text = fs.readFileSync(file, 'utf8');
-      for (const r of parseFile(text, hostOfSessionFile(file), file, agentOfSessionText(text), opencodeCaptured)) {
+      for (const r of parseFile(text, hostOfSessionFile(file), file, agentOfSessionText(text))) {
         if (!push(insertSql(file, r))) return false;
       }
     }

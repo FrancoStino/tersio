@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, gateway, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
@@ -12,7 +12,6 @@ import { runLatestUpdate } from './cli/update.ts';
 import { runUninstall } from './cli/uninstall.ts';
 import { runUpstream } from './cli/upstream.ts';
 import { runDashboard } from './cli/dashboard.ts';
-import { runGatewayCommand } from './cli/gateway.ts';
 
 function printHelp(): void {
   console.log(`Usage: ${PACKAGE_BIN} [command] [options]
@@ -23,7 +22,6 @@ Commands:
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
   mcp           Start the Tersio MCP server on stdio, for any MCP client
-  gateway       Capture pi and opencode model traffic (wire|unwire|status, --record on|off, --port <n>)
   uninstall    Remove the managed extensions
   version      Print the package version
   help         Show this help
@@ -80,12 +78,6 @@ async function main(): Promise<void> {
     // Bun runs the server when it is on PATH; the client spawned node, so the hand-off happens here.
     await preferBun();
     await runMcpServer();
-    closeRL();
-    return;
-  }
-
-  if (gateway) {
-    await runGatewayCommand(args);
     closeRL();
     return;
   }

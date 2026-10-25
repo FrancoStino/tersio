@@ -13,8 +13,6 @@ import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { fileURLToPath } from 'node:url';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { readGatewayConfig } from '../extensions/shared/gateway.ts';
-import { unwireGatewayHost } from './gateway-wire.ts';
 
 interface UninstallOptions {
   yes?: boolean;
@@ -177,16 +175,6 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   // Ponytail ships with Tersio, so a full uninstall removes it.
   const shouldRemovePonytail = options.removePonytail ?? (removePonytail || !keepPonytail);
   const shouldRemoveRtk = options.removeRtk ?? removeRtk;
-
-  // A provider still pointing at a stopped gateway breaks the host, so the wiring goes back first.
-  if (!shouldDryRun) {
-    try {
-      if (Object.keys(readGatewayConfig().providers).length > 0) {
-        await unwireGatewayHost('pi');
-        await unwireGatewayHost('opencode');
-      }
-    } catch { /* a broken gateway.json must not block the uninstall */ }
-  }
 
   console.log('\n=== Tersio Uninstall ===\n');
 
