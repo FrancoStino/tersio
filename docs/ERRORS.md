@@ -427,3 +427,8 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** Regenerating `plugins/tersio/` from the bundled generator replaced the richer mode skills and its hand-written `package.json` with minimal generated copies.
 **Root cause:** The generator owns the bundled contract, but the marketplace tree is hand-maintained and carries more text.
 **Prevention rule:** Generate into a temporary directory for comparison. Copy only the files that a change adds, and never write the marketplace tree in place with the bundled generator.
+
+## 2026-10-25 — The updater module lost its factory while the manifest kept the entry
+**What happened:** Every OMP session warned `Extension does not export a valid factory function` for `extensions/updater/index.ts`, and a fresh `omp plugin install` failed its factory validation.
+**Root cause:** Removing the dead `/ai-addons` command deleted the updater's `export default` factory, but `pi.extensions` and `omp.features.updater.extensions` still declared the file as an extension entry.
+**Prevention rule:** When a module stops being an extension, update every manifest that names it, or give it a factory. Test the manifest entries through the loader contract, not only for file existence.
