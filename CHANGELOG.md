@@ -15,7 +15,9 @@
  - The repository marketplace is at `.agents/plugins/marketplace.json`. The shipped plugin is at `plugins/tersio/`.
 
 ### Fixed
+- Invoking a Codex slash command no longer pastes a wall of text. Each prompt body is now one command line plus a short read of `status` and `help`; the CLI owns the alias mapping, so the body passes `$1` through unchanged.
 - The Codex plugin ships one icon and no skills. The picker shows only the six slash prompts, so the skill rows that duplicated them are gone; the manifest points `composerIcon` and `logo` at the single scissors `assets/icon.png`. The plugin presents the GitHub project description and three starter prompts.
+- The README and the dashboard Quick start offer each host's own install method for Codex: `codex plugin marketplace add KurutoDenzeru/tersio` then `codex plugin add tersio@tersio`, with Ponytail's plugin named for the workflow skills.
 - The Codex personal marketplace registers as `tersio` instead of `tersio-personal`. An existing registration under the old name migrates on the next install or update, which removes the stale `tersio@tersio-personal` plugin entry.
 - `normal mode` now turns pstack off in Codex, matching the pstack rule text and the omp host. Only caveman and ponytail reacted before.
 - `tersio doctor` warns when a marketplace-layout Codex plugin has no `tersio` CLI on PATH. That layout's hooks and MCP server exec the CLI, so a missing binary silently disabled both.

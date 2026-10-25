@@ -168,16 +168,11 @@ const PROMPT_LEVELS: Readonly<Record<CodexPromptMode, readonly string[]>> = {
   pstack: ['on', 'off', 'status'],
 };
 
-/** Every spelling that means the same level; the first name is the one the CLI writes. */
-const LEVEL_ALIASES: Readonly<Record<string, string>> = {
-  enable: 'on', enabled: 'on', true: 'on',
-  disable: 'off', disabled: 'off', false: 'off',
-  wenyan: 'megacave-full', 'wenyan-lite': 'megacave-lite', 'wenyan-full': 'megacave-full', 'wenyan-ultra': 'megacave-ultra',
-};
-
 /**
  * A custom prompt body. `$1` is the level the user typed after the command, so
- * `/caveman full` reads as a mode change without a second question.
+ * `/caveman full` reads as a mode change without a second question. The body stays
+ * short because Codex pastes it into the composer as the message: one command line,
+ * and the CLI owns the alias mapping.
  */
 export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
   if (name === 'tersio') {
@@ -187,34 +182,22 @@ export function codexPromptText(name: CodexPromptName, cli = 'tersio'): string {
       'argument-hint: <status|help|update <ponytail|rtk|caveman|all> [--dry-run]|upstream [--offline]|dashboard>',
       '---',
       '',
-      'Run the Tersio command named by `$1`.',
-      '',
-      '- `status`: read `~/.tersio/settings.json` for the mode defaults, then call the `tersio_stats` MCP tool for usage. State the range and the source of each figure.',
-      `- \`update ponytail\`, \`update rtk\`, \`update caveman\`, or \`update all\`: run \`${cli} update --host codex\`. Add \`--dry-run\` for a preview. Codex refreshes these add-ons together.`,
-      `- \`upstream\`: run \`${cli} upstream\`. With \`--offline\`, add that flag.`,
-      `- \`dashboard\`: run \`${cli} dashboard\`.`,
-      '- `help` or empty: list the Tersio commands and their values.',
+      'Run the Tersio command named by `$1` with the shell tool, and report its output verbatim.',
+      `The command is \`${cli} $1\`; \`update\` and \`upstream\` append \`--host codex\` plus their own flags.`,
+      "For `status`, also call the `tersio_stats` MCP tool for usage and state each figure's range.",
+      `Empty \`$1\` runs \`${cli} help\`.`,
       '',
     ].join('\n');
   }
   const mode = name;
   const levels = PROMPT_LEVELS[mode];
-  const asked = '$1';
+  const comboHelp = mode === 'combo' ? '`help` prints the preset table and changes nothing.\n' : '';
   const body = [
-    `Set the Tersio ${mode} mode. The user's argument is \`${asked}\`, and it is one of ${levels.join(', ')}.`,
-    `If \`${asked}\` is empty or \`status\`, run \`${cli} modes ${mode}\` and report the current value.`,
-    mode === 'combo' ? 'If `$1` is `help`, print the preset table and change nothing.' : '',
-    '',
-    // Each level is written out, so the model never has to expand `$1` itself.
-    'Use the shell tool. Run the one command that matches the argument, then report its output verbatim:',
-    '',
-    ...levels.filter((level) => level !== 'help').map((level) => (level === 'status'
-      ? `- \`status\`: \`${cli} modes ${mode}\``
-      : `- \`${level}\`: \`${cli} modes ${mode} ${LEVEL_ALIASES[level] ?? level}\``)),
-    '',
-    mode === 'combo' ? 'pstack is separate: a Combo preset never changes it.' : '',
-    'These are Codex session defaults. Say that the change applies to new Codex sessions; do not name another host.',
-  ].filter((line) => line !== '').join('\n');
+    `Run \`${cli} modes ${mode} $1\` with the shell tool and report its output verbatim.`,
+    `Empty \`$1\` or \`status\` runs \`${cli} modes ${mode}\` and changes nothing.`,
+    comboHelp +
+    'The CLI accepts every alias, so pass `$1` through unchanged. This writes the session-start defaults, so the next prompt picks it up.',
+  ].join('\n');
   return `---\ndescription: Set the Tersio ${mode} mode (${levels.join(', ')})\nargument-hint: <${levels.join('|')}>\n---\n\n${body}\n`;
 }
 

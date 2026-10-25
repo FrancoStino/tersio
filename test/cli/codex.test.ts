@@ -133,32 +133,28 @@ test("every mode has a Codex slash command that runs the CLI", () => {
     expect(text).toContain("---\n\n");
     if (mode === "tersio") {
       expect(text).toContain("tersio_stats");
-      expect(text).toContain("tersio dashboard");
+      expect(text).toContain("--host codex");
       continue;
     }
-    expect(text).toContain(`tersio modes ${mode} off`);
+    expect(text).toContain(`tersio modes ${mode} $1`);
     expect(text).toContain("argument-hint:");
   }
   // A mode command reports its own value for `status`.
   expect(codexPromptText("caveman", "tersio")).toContain("`tersio modes caveman`");
   // The bundled layout points at the plugin's own CLI, so a machine without `tersio` on PATH still runs it.
-  expect(codexPromptText("rtk", '"/usr/bin/node" "/plugin/tersio"')).toContain('"/plugin/tersio" modes rtk on');
+  expect(codexPromptText("rtk", '"/usr/bin/node" "/plugin/tersio"')).toContain('"/plugin/tersio" modes rtk $1');
 });
 
-test("the Codex commands keep the README aliases and the update and upstream targets", () => {
-  const combo = codexPromptText("combo", "tersio");
-  expect(combo).toContain("`$1` is `help`");
-  expect(combo).toContain("tersio modes combo balanced");
-  const rtk = codexPromptText("rtk", "tersio");
-  expect(rtk).toContain("`enable`: `tersio modes rtk on`");
-  expect(rtk).toContain("`disable`: `tersio modes rtk off`");
-  const caveman = codexPromptText("caveman", "tersio");
-  expect(caveman).toContain("`wenyan`: `tersio modes caveman megacave-full`");
-  expect(caveman).toContain("`wenyan-ultra`: `tersio modes caveman megacave-ultra`");
+test("the Codex command bodies stay short and pass aliases to the CLI", () => {
+  for (const mode of ["combo", "caveman", "rtk", "ponytail", "pstack"] as const) {
+    // Codex pastes the body into the composer, so no body may enumerate its levels.
+    const body = codexPromptText(mode, "tersio").split("---\n\n")[1] ?? "";
+    expect(body.split("\n").filter(Boolean).length).toBeLessThanOrEqual(4);
+    expect(body).toContain("accepts every alias");
+  }
+  expect(codexPromptText("combo", "tersio")).toContain("`help` prints the preset table");
   const tersio = codexPromptText("tersio", "tersio");
-  expect(tersio).toContain("update --host codex");
-  expect(tersio).toContain("Add `--dry-run` for a preview");
-  expect(tersio).toContain("tersio upstream");
+  expect(tersio).toContain("update <ponytail|rtk|caveman|all> [--dry-run]");
   expect(tersio).toContain("upstream [--offline]");
 });
 
