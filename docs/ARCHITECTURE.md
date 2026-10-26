@@ -80,15 +80,16 @@ flowchart TB
   F --> R["reply<br/>caveman voice, ponytail-sized, pstack-verified"]
 ```
 
-The status line names the same four modes with the same glyphs. Its order is the display order, not the injection order:
+The status line names the same five modes with the same glyphs. Its order is the display order, not the injection order:
 
 ```
-🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON
+🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=ON
 ```
 
-- **The order is registration order, not priority.** `package.json` loads caveman, pstack, rtk, then combo, and combo injects the Ponytail block. A host that loads the same files in another order appends in that order, and no mode reads another's block.
+- **The order is registration order, not priority.** `package.json` loads caveman, pstack, headroom, rtk, then combo, and combo injects the Ponytail block. A host that loads the same files in another order appends in that order, and no mode reads another's block.
 - **caveman owns the voice.** It changes how a sentence reads, never what the work is.
 - **pstack owns the approach.** It picks the playbook and the verification, and it yields the voice to caveman and the change size to ponytail.
+- **headroom owns the transport.** It is opt-in like pstack, and it tracks the user's own [Headroom](https://github.com/headroomlabs-ai/headroom) install, which compresses tool outputs, file reads, and history through a local proxy. Its block only tells the model how to recover compressed detail, and it injects nothing when the binary is absent, because an undelivered promise would read as an active mode.
 - **rtk owns the tooling.** It rewrites a shell command and filters its output before the model sees it. It never edits a reply. On OpenCode the rewrite goes through `rtk hook opencode`, the same subcommand rtk's own OpenCode plugin calls, so a rewrite that would change what OpenCode's own permission rules decide is refused rather than applied.
 - **ponytail owns the size.** It caps the diff, and it never overrides pstack's verification. Last is not weakest: ponytail is the YAGNI gate, and it holds the final say on how much gets built.
 - **A conflict resolves inside the block text.** pstack's own precedence lines say so: the style mode wins on reply shape, and ponytail wins on how much changes.

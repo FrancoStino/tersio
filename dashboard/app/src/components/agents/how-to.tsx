@@ -12,7 +12,7 @@ import { useToast } from "../toaster";
 import { cn } from "cn";
 
 type Point = readonly [number, number];
-type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "rtk" | "ponytail";
+type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "headroom" | "rtk" | "ponytail";
 
 type HostAction = "install" | "uninstall" | "update";
 
@@ -42,6 +42,7 @@ type NodeId =
   | "combo"
   | "caveman"
   | "pstack"
+  | "headroom"
   | "rtk"
   | "ponytail"
   | "output"
@@ -68,56 +69,60 @@ interface Layout {
  */
 type LayoutKey = "wide" | "medium" | "narrow";
 
-/** The wide canvas scales from this width; its height is fixed at 400. */
+/** The wide canvas scales from this width; its height is fixed at 480. */
 const WIDE_W = 1040;
 
 const LAYOUTS: Record<Exclude<LayoutKey, "wide">, Layout> = {
   medium: {
     w: 780,
-    h: 360,
+    h: 440,
     nodes: [
       ["hosts", { x: 16, y: 16, w: 212, h: 72 }],
       ["combo", { x: 16, y: 104, w: 212, h: 56 }],
       ["add-host", { x: 16, y: 176, w: 212, h: 44 }],
       ["caveman", { x: 252, y: 16, w: 230, h: 64 }],
       ["pstack", { x: 252, y: 96, w: 230, h: 64 }],
-      ["rtk", { x: 252, y: 176, w: 230, h: 64 }],
-      ["ponytail", { x: 252, y: 256, w: 230, h: 64 }],
-      ["output", { x: 520, y: 136, w: 240, h: 64 }],
+      ["headroom", { x: 252, y: 176, w: 230, h: 64 }],
+      ["rtk", { x: 252, y: 256, w: 230, h: 64 }],
+      ["ponytail", { x: 252, y: 336, w: 230, h: 64 }],
+      ["output", { x: 520, y: 208, w: 240, h: 64 }],
     ],
     links: [
       { p: [[228, 52], [240, 52]], k: "hosts" },
       { p: [[228, 132], [240, 132], [240, 52]], k: "combo" },
       { p: [[240, 52], [252, 52]], k: "caveman", arrow: true },
       { p: [[367, 80], [367, 96]], k: "pstack", arrow: true },
-      { p: [[367, 160], [367, 176]], k: "rtk", arrow: true },
-      { p: [[367, 240], [367, 256]], k: "ponytail", arrow: true },
-      { p: [[482, 288], [500, 288], [500, 168], [520, 168]], k: "ponytail", arrow: true },
+      { p: [[367, 160], [367, 176]], k: "headroom", arrow: true },
+      { p: [[367, 240], [367, 256]], k: "rtk", arrow: true },
+      { p: [[367, 320], [367, 336]], k: "ponytail", arrow: true },
+      { p: [[482, 368], [500, 368], [500, 240], [520, 240]], k: "ponytail", arrow: true },
     ],
-    captions: [{ x: 252, y: 344, text: "appended in this order, one block each" }],
+    captions: [{ x: 252, y: 424, text: "appended in this order, one block each" }],
   },
   narrow: {
     w: 440,
-    h: 640,
+    h: 712,
     nodes: [
       ["hosts", { x: 20, y: 48, w: 190, h: 88 }],
       ["add-host", { x: 20, y: 144, w: 190, h: 44 }],
       ["combo", { x: 230, y: 64, w: 190, h: 56 }],
       ["caveman", { x: 20, y: 204, w: 400, h: 64 }],
       ["pstack", { x: 20, y: 276, w: 400, h: 64 }],
-      ["rtk", { x: 20, y: 348, w: 400, h: 64 }],
-      ["ponytail", { x: 20, y: 420, w: 400, h: 64 }],
-      ["output", { x: 20, y: 512, w: 400, h: 64 }],
+      ["headroom", { x: 20, y: 348, w: 400, h: 64 }],
+      ["rtk", { x: 20, y: 420, w: 400, h: 64 }],
+      ["ponytail", { x: 20, y: 492, w: 400, h: 64 }],
+      ["output", { x: 20, y: 584, w: 400, h: 64 }],
     ],
     links: [
       { p: [[210, 92], [220, 92], [220, 204]], k: "hosts", arrow: true },
       { p: [[325, 120], [325, 204]], k: "combo", arrow: true },
       { p: [[220, 268], [220, 276]], k: "pstack", arrow: true },
-      { p: [[220, 340], [220, 348]], k: "rtk", arrow: true },
-      { p: [[220, 412], [220, 420]], k: "ponytail", arrow: true },
-      { p: [[220, 484], [220, 512]], k: "ponytail", arrow: true },
+      { p: [[220, 340], [220, 348]], k: "headroom", arrow: true },
+      { p: [[220, 412], [220, 420]], k: "rtk", arrow: true },
+      { p: [[220, 484], [220, 492]], k: "ponytail", arrow: true },
+      { p: [[220, 556], [220, 584]], k: "ponytail", arrow: true },
     ],
-    captions: [{ x: 20, y: 620, text: "appended in this order, one block each" }],
+    captions: [{ x: 20, y: 692, text: "appended in this order, one block each" }],
   },
 };
 
@@ -140,9 +145,10 @@ function wideLayout(hosts: ReadonlyArray<{ id: string }>): Layout {
     ["combo", { x: 246, y: center - 29, w: 200, h: 58 }],
     ["caveman", { x: 486, y: 24, w: 230, h: 62 }],
     ["pstack", { x: 486, y: 102, w: 230, h: 62 }],
-    ["rtk", { x: 486, y: 180, w: 230, h: 62 }],
-    ["ponytail", { x: 486, y: 258, w: 230, h: 62 }],
-    ["output", { x: 752, y: 140, w: 240, h: 64 }],
+    ["headroom", { x: 486, y: 180, w: 230, h: 62 }],
+    ["rtk", { x: 486, y: 258, w: 230, h: 62 }],
+    ["ponytail", { x: 486, y: 336, w: 230, h: 62 }],
+    ["output", { x: 752, y: 211, w: 240, h: 64 }],
   );
   const links: Link[] = hosts.map((host, i) => ({
     p: [[210, top + i * step + 28], [230, top + i * step + 28]],
@@ -155,16 +161,17 @@ function wideLayout(hosts: ReadonlyArray<{ id: string }>): Layout {
     { p: [[346, center - 29], [346, center]], k: "combo" },
     { p: [[466, center], [466, 55], [486, 55]], k: "caveman", arrow: true },
     { p: [[601, 86], [601, 102]], k: "pstack", arrow: true },
-    { p: [[601, 164], [601, 180]], k: "rtk", arrow: true },
-    { p: [[601, 242], [601, 258]], k: "ponytail", arrow: true },
-    { p: [[716, 289], [734, 289], [734, 172], [752, 172]], k: "ponytail", arrow: true },
+    { p: [[601, 164], [601, 180]], k: "headroom", arrow: true },
+    { p: [[601, 242], [601, 258]], k: "rtk", arrow: true },
+    { p: [[601, 320], [601, 336]], k: "ponytail", arrow: true },
+    { p: [[716, 367], [734, 367], [734, 243], [752, 243]], k: "ponytail", arrow: true },
   );
   return {
     w: WIDE_W,
-    h: 400,
+    h: 480,
     nodes,
     links,
-    captions: [{ x: 486, y: 344, text: "appended in this order, one block each" }],
+    captions: [{ x: 486, y: 422, text: "appended in this order, one block each" }],
   };
 }
 
@@ -213,6 +220,7 @@ const HOSTS = [
 const MODES = [
   { key: "caveman", glyph: "🪨", name: "caveman", role: "voice", note: "terse replies, filler gone" },
   { key: "pstack", glyph: "🥔", name: "pstack", role: "approach", note: "playbook, checks, design" },
+  { key: "headroom", glyph: "🍃", name: "headroom", role: "compression", note: "compresses traffic below the shell" },
   { key: "rtk", glyph: "🗜️", name: "rtk", role: "tooling", note: "rewrites and condenses shell" },
   { key: "ponytail", glyph: "🧠", name: "ponytail", role: "size", note: "smallest complete change" },
 ] as const;
@@ -247,6 +255,7 @@ const PICKER: Partial<Record<NodeId, { field: string; options: ReadonlyArray<{ i
     ],
   },
   pstack: { field: "pstackDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
+  headroom: { field: "headroomDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
 };
 
 /** What the detail panel says about a node. */
@@ -255,9 +264,10 @@ const ABOUT: Record<NodeId, string> = {
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
   "host-opencode": "OpenCode loads the tree as one plugin, registered in opencode.json.",
-  combo: "One preset for caveman, RTK, and Ponytail. pstack keeps its own switch.",
+  combo: "One preset for caveman, RTK, and Ponytail. pstack and headroom keep their own switches.",
   caveman: "Voice. Terse replies; code, commands, paths, and errors stay exact.",
   pstack: "Approach. Picks the playbook, the checks, and the design.",
+  headroom: "Compression below the shell layer. Your own Headroom install compresses tool outputs and history; Tersio tracks it and reads its savings.",
   rtk: "Tooling. Rewrites a shell command and condenses its output before the model sees it.",
   ponytail: "Size. Caps the diff at the smallest complete change.",
   output: "One turn, start to finish: the prompt blocks go in, the model runs, and the reply comes back.",
@@ -434,6 +444,7 @@ function PipelineCanvas({
     if (key === "rtk") return modes.rtkDefault;
     if (key === "caveman") return modes.cavemanDefault !== "off";
     if (key === "ponytail") return modes.ponytailDefault !== "off";
+    if (key === "headroom") return modes.headroomDefault !== "off";
     return modes.pstackDefault !== "off";
   };
   // An unknown host stays on the canvas: an exported file reads no host list.
@@ -450,7 +461,7 @@ function PipelineCanvas({
   const isNodeOff = (id: NodeId): boolean => {
     if (id === "hosts") return hostState.installed && !Object.values(hostState.installed).some(Boolean);
     if (id.startsWith("host-")) return isOff(lit(id.slice(5) as EdgeKey));
-    if (id === "combo" || id === "caveman" || id === "pstack" || id === "rtk" || id === "ponytail") return isOff(lit(id));
+    if (id === "combo" || id === "caveman" || id === "pstack" || id === "headroom" || id === "rtk" || id === "ponytail") return isOff(lit(id));
     return false;
   };
 
@@ -587,6 +598,10 @@ function PipelineCanvas({
       const on = lit("pstack");
       return { label: isOff(on) ? "off" : "on", on };
     }
+    if (id === "headroom") {
+      const on = lit("headroom");
+      return { label: isOff(on) ? "off" : "on", on };
+    }
     if (id === "rtk") {
       const on = lit("rtk");
       return { label: isOff(on) ? "off" : "on", on };
@@ -619,6 +634,7 @@ function PipelineCanvas({
     if (id === "caveman") return modes.cavemanDefault;
     if (id === "ponytail") return modes.ponytailDefault;
     if (id === "pstack") return modes.pstackDefault;
+    if (id === "headroom") return modes.headroomDefault;
     if (id === "rtk") return modes.rtkDefault ? "on" : "off";
     return null;
   };
@@ -1020,7 +1036,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     <Page>
       <PageHeader
         title="Quick start"
-        description="One package, three agents, four modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
+        description="One package, three agents, five modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
       />
 
       <Card

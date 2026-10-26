@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -167,8 +167,27 @@ interface HostJob {
 /** The last command run per host, so the guide can stop waiting the moment it exits. */
 const hostJobs = new Map<string, HostJob>();
 
-/** The one Headroom install job, so the Tools page can poll /health until the binary appears. */
-const headroomJob: { startedAt: number; code: number | null } = { startedAt: 0, code: null };
+/** The one Headroom install job, so the Tools page can poll until the binary appears or the pip run fails. */
+const headroomJob: { startedAt: number; code: number | null; error: string | null } = { startedAt: 0, code: null, error: null };
+/** pip's stderr lands here, so a failed install names its own cause instead of polling forever. */
+function headroomInstallLog(): string {
+  return path.join(tersioHome(), 'headroom-install.log');
+}
+
+function tailOf(file: string, lines = 6): string | null {
+  try {
+    const parts = readFileSync(file, 'utf8').trim().split(/\r?\n/);
+    return parts.slice(-lines).join('\n') || null;
+  } catch { return null; }
+}
+
+/** The state the Tools page polls; `error` is the pip output tail once a run has failed. */
+function headroomInstallState(): { startedAt: number; code: number | null; error: string | null } {
+  if (headroomJob.code !== null && headroomJob.code !== 0 && !headroomJob.error) {
+    headroomJob.error = tailOf(headroomInstallLog()) ?? 'the pip run failed without output';
+  }
+  return { ...headroomJob };
+}
 
 /**
  * Install Headroom from the dashboard. Always user-initiated and never a tersio side effect: the
@@ -178,16 +197,24 @@ function spawnHeadroomInstall(): boolean {
   const win = process.platform === 'win32';
   const cmd = win ? 'pip' : 'python3';
   const args = win ? ['install', '--user', 'headroom-ai[all]'] : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  try { mkdirSync(tersioHome(), { recursive: true }); } catch { /* the log is best effort */ }
+  let stderrFd: number | undefined;
+  try { stderrFd = openSync(headroomInstallLog(), 'w'); } catch { stderrFd = undefined; }
+  const child = spawn(cmd, args, { detached: true, stdio: ['ignore', 'ignore', stderrFd ?? 'ignore'] });
   headroomJob.startedAt = Date.now();
   headroomJob.code = null;
+  headroomJob.error = null;
   recordActivity('agent', 'Headroom install started');
   child.on('exit', (code) => {
     headroomJob.code = code ?? 0;
-    recordActivity('agent', `Headroom install ${headroomJob.code === 0 ? 'finished' : 'failed'}`, undefined, headroomJob.code === 0);
+    if (stderrFd !== undefined) closeSync(stderrFd);
+    const ok = headroomJob.code === 0;
+    if (!ok) headroomJob.error = tailOf(headroomInstallLog()) ?? 'the pip run failed without output';
+    recordActivity('agent', `Headroom install ${ok ? 'finished' : 'failed'}`, ok ? undefined : headroomJob.error?.split('\n')[0], ok);
   });
   child.on('error', (error) => {
     headroomJob.code = -1;
+    headroomJob.error = error.message;
     recordActivity('agent', 'Headroom install failed', error.message, false);
   });
   child.unref();
@@ -833,6 +860,11 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       }
       res.writeHead(202, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, pending: true, host, action }));
+      return;
+    }
+    if (req.url === '/api/headroom/install' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() }));
       return;
     }
     if (req.url === '/api/headroom/install' && req.method === 'POST') {

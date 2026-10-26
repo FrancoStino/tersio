@@ -55,6 +55,9 @@ export function rtkDirs(): { data: string; config: string } {
 /** The RTK project, named once: the release feed and the release page both read it. */
 export const RTK_REPO = 'rtk-ai/rtk';
 export const RTK_RELEASE_API = `https://api.github.com/repos/${RTK_REPO}/releases/latest`;
+/** The Headroom project, read the same way: the binary's version against the latest release tag. */
+export const HEADROOM_REPO = 'headroomlabs-ai/headroom';
+export const HEADROOM_RELEASE_API = `https://api.github.com/repos/${HEADROOM_REPO}/releases/latest`;
 /** Caveman's bodies, as paths in the repository. A body is fetched at a release tag, never at the tip. */
 export const CAVEMAN_BODY_PATHS = {
   full: 'skills/caveman/SKILL.md',

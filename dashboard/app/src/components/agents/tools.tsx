@@ -416,31 +416,58 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
   const headroom = agent.headroom;
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
   useEffect(() => {
     fetchHealth().then(setHealth).catch(() => setHealth(null));
   }, []);
   const headroomPresent = health?.headroom?.present ?? false;
   function installHeadroom(): void {
     setInstalling(true);
+    setInstallError(null);
     void fetch("/api/headroom/install", { method: "POST" })
       .then((r) => r.json())
-      .then((d: { ok?: boolean; present?: boolean }) => {
-        if (d?.present) setHealth((h) => (h ? { ...h, headroom: { ...h.headroom, present: true } } : h));
-        // pip can take a minute; poll health until the binary lands, then let the stats memo expire.
+      .then((d: { ok?: boolean; present?: boolean; error?: string }) => {
+        if (d?.present) {
+          setHealth((h) => (h ? { ...h, headroom: { ...h.headroom, present: true } } : h));
+          setInstalling(false);
+          return;
+        }
+        if (d && d.ok === false) {
+          setInstalling(false);
+          setInstallError(d.error ?? "the install could not start");
+          return;
+        }
+        // pip can take a minute; poll the job until the binary lands or the run names its failure.
         const started = Date.now();
         const timer = window.setInterval(() => {
-          void fetchHealth()
-            .then((h) => {
-              if (h?.headroom?.present || Date.now() - started > 180_000) {
+          void fetch("/api/headroom/install")
+            .then((r) => r.json())
+            .then((j: { present?: boolean; code?: number | null; error?: string | null }) => {
+              if (j?.present) {
                 window.clearInterval(timer);
                 setInstalling(false);
-                if (h) setHealth(h);
-              } else if (h) setHealth(h);
+                void fetchHealth().then(setHealth).catch(() => {});
+                return;
+              }
+              if (j && j.code !== null && j.code !== undefined) {
+                window.clearInterval(timer);
+                setInstalling(false);
+                setInstallError(j.error || "the pip run failed");
+                return;
+              }
+              if (Date.now() - started > 180_000) {
+                window.clearInterval(timer);
+                setInstalling(false);
+                setInstallError("the install is still running — check ~/.tersio/headroom-install.log");
+              }
             })
             .catch(() => {});
         }, 3000);
       })
-      .catch(() => setInstalling(false));
+      .catch(() => {
+        setInstalling(false);
+        setInstallError("the dashboard server refused the install request");
+      });
   }
   const rtkRows = useMemo(() => {
     const rows = [...rtk.byVerb].toSorted((a, b) => b.saved - a.saved);
@@ -749,7 +776,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
           !headroomPresent && !headroom.measured ? (
             <Button size="sm" className="mono h-8 gap-1.5 rounded-xl" disabled={installing} onClick={installHeadroom}>
               <Icon name={installing ? "rotate-ccw" : "download"} className="size-3.5" />
-              <span>{installing ? "Installing Headroom" : "Install Headroom"}</span>
+              <span>{installing ? "Installing Headroom" : installError ? "Retry install" : "Install Headroom"}</span>
             </Button>
           ) : undefined
         }
@@ -769,9 +796,16 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
           </div>
         ) : (
           <p className="p-4 text-xs text-dim">
-            {headroomPresent
-              ? "No compression events yet, so nothing is measured."
-              : `Headroom savings are not measured. ${headroom.failure ? `(${headroom.failure}) ` : ""}Enable the mode with /headroom on, or set it as a session default in Settings.`}
+            {installError ? (
+              <>
+                Install failed: <span className="text-danger">{installError}</span> — run it yourself with{" "}
+                <span className="mono">pip install &quot;headroom-ai[all]&quot;</span>.
+              </>
+            ) : headroomPresent ? (
+              "No compression events yet, so nothing is measured."
+            ) : (
+              `Headroom savings are not measured. ${headroom.failure ? `(${headroom.failure}) ` : ""}Enable the mode with /headroom on, or set it as a session default in Settings.`
+            )}
           </p>
         )}
       </Card>
