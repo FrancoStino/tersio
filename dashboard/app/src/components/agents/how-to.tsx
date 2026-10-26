@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Card, Page, PageHeader } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePending } from "@/hooks/use-pending";
 import { fetchHealth } from "@/lib/data";
@@ -37,18 +38,14 @@ interface Link {
 }
 
 type NodeId =
-  | "hosts"
-  | "host-omp"
-  | "host-pi"
-  | "host-opencode"
-  | "combo"
+  | "output"
   | "caveman"
   | "pstack"
   | "headroom"
   | "rtk"
   | "ponytail"
-  | "output"
-  | "add-host";
+  | `host-${string}`
+  | `combo-${string}`;
 
 interface Caption {
   x: number;
@@ -66,113 +63,71 @@ interface Layout {
 }
 
 /**
- * Three design spaces, one per class of screen. Each is drawn at its own coordinates and then scaled to
- * the card width, so the diagram is the same diagram at every size and never clips a node.
+ * One design space, drawn per agent: each installed agent owns a column with its dedicated combo
+ * preset, the mode blocks stay one shared column in injection order, and the output closes the turn.
+ * Adding an agent widens the canvas, so the card pans and zooms instead of squeezing the nodes.
  */
-type LayoutKey = "wide" | "medium" | "narrow";
-
-/** The wide canvas scales from this width; its height is fixed at 480. */
-const WIDE_W = 1040;
-
-const LAYOUTS: Record<Exclude<LayoutKey, "wide">, Layout> = {
-  medium: {
-    w: 780,
-    h: 440,
-    nodes: [
-      ["hosts", { x: 16, y: 16, w: 212, h: 72 }],
-      ["combo", { x: 16, y: 104, w: 212, h: 56 }],
-      ["add-host", { x: 520, y: 16, w: 212, h: 44 }],
-      ["caveman", { x: 252, y: 16, w: 230, h: 64 }],
-      ["pstack", { x: 252, y: 96, w: 230, h: 64 }],
-      ["headroom", { x: 252, y: 176, w: 230, h: 64 }],
-      ["rtk", { x: 252, y: 256, w: 230, h: 64 }],
-      ["ponytail", { x: 252, y: 336, w: 230, h: 64 }],
-      ["output", { x: 520, y: 208, w: 240, h: 64 }],
-    ],
-    links: [
-      { p: [[228, 52], [240, 52]], k: "hosts" },
-      { p: [[228, 132], [240, 132], [240, 52]], k: "combo" },
-      { p: [[240, 52], [252, 52]], k: "caveman", arrow: true },
-      { p: [[367, 80], [367, 96]], k: "pstack", arrow: true },
-      { p: [[367, 160], [367, 176]], k: "headroom", arrow: true },
-      { p: [[367, 240], [367, 256]], k: "rtk", arrow: true },
-      { p: [[367, 320], [367, 336]], k: "ponytail", arrow: true },
-      { p: [[482, 368], [500, 368], [500, 240], [520, 240]], k: "ponytail", arrow: true },
-    ],
-    captions: [{ x: 252, y: 424, text: "appended in this order, one block each" }],
-  },
-  narrow: {
-    w: 440,
-    h: 712,
-    nodes: [
-      ["hosts", { x: 20, y: 48, w: 190, h: 88 }],
-      ["add-host", { x: 230, y: 8, w: 190, h: 44 }],
-      ["combo", { x: 230, y: 64, w: 190, h: 56 }],
-      ["caveman", { x: 20, y: 204, w: 400, h: 64 }],
-      ["pstack", { x: 20, y: 276, w: 400, h: 64 }],
-      ["headroom", { x: 20, y: 348, w: 400, h: 64 }],
-      ["rtk", { x: 20, y: 420, w: 400, h: 64 }],
-      ["ponytail", { x: 20, y: 492, w: 400, h: 64 }],
-      ["output", { x: 20, y: 584, w: 400, h: 64 }],
-    ],
-    links: [
-      { p: [[210, 92], [220, 92], [220, 204]], k: "hosts", arrow: true },
-      { p: [[325, 120], [325, 204]], k: "combo", arrow: true },
-      { p: [[220, 268], [220, 276]], k: "pstack", arrow: true },
-      { p: [[220, 340], [220, 348]], k: "headroom", arrow: true },
-      { p: [[220, 412], [220, 420]], k: "rtk", arrow: true },
-      { p: [[220, 484], [220, 492]], k: "ponytail", arrow: true },
-      { p: [[220, 556], [220, 584]], k: "ponytail", arrow: true },
-    ],
-    captions: [{ x: 20, y: 692, text: "appended in this order, one block each" }],
-  },
-};
-
-/**
- * The wide canvas, drawn around the agents this machine actually has. An agent that is not installed
- * leaves the column, and the preset and the bus re-centre on what remains.
- */
-function wideLayout(hosts: ReadonlyArray<{ id: string }>): Layout {
-  const top = 48;
-  const step = 68; // 56 tall, 12 apart
-  const bottom = hosts.length ? top + (hosts.length - 1) * step + 56 : 0;
-  const center = hosts.length ? (top + bottom) / 2 : top + 28;
-  const nodes: Array<readonly [NodeId, Box]> = hosts.map((host, i) => [
-    `host-${host.id}` as NodeId,
-    { x: 20, y: top + i * step, w: 190, h: 56 },
-  ]);
-  nodes.push(
-    ["add-host", { x: 752, y: 24, w: 240, h: 44 }],
-    ["combo", { x: 246, y: center - 29, w: 200, h: 58 }],
-    ["caveman", { x: 486, y: 24, w: 230, h: 62 }],
-    ["pstack", { x: 486, y: 102, w: 230, h: 62 }],
-    ["headroom", { x: 486, y: 180, w: 230, h: 62 }],
-    ["rtk", { x: 486, y: 258, w: 230, h: 62 }],
-    ["ponytail", { x: 486, y: 336, w: 230, h: 62 }],
-    ["output", { x: 752, y: 211, w: 240, h: 64 }],
-  );
-  const links: Link[] = hosts.map((host, i) => ({
-    p: [[210, top + i * step + 28], [230, top + i * step + 28]],
-    k: host.id as EdgeKey,
-  }));
-  if (hosts.length > 1) links.push({ p: [[230, top + 28], [230, bottom - 28]] });
-  links.push(
-    // One bus collects the agents and the preset, then enters the block column once.
-    { p: [[230, center], [466, center]] },
-    { p: [[346, center - 29], [346, center]], k: "combo" },
-    { p: [[466, center], [466, 55], [486, 55]], k: "caveman", arrow: true },
-    { p: [[601, 86], [601, 102]], k: "pstack", arrow: true },
-    { p: [[601, 164], [601, 180]], k: "headroom", arrow: true },
-    { p: [[601, 242], [601, 258]], k: "rtk", arrow: true },
-    { p: [[601, 320], [601, 336]], k: "ponytail", arrow: true },
-    { p: [[716, 367], [734, 367], [734, 243], [752, 243]], k: "ponytail", arrow: true },
-  );
+function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean): Layout {
+  const nodes: Array<readonly [NodeId, Box]> = [];
+  const links: Link[] = [];
+  const BLOCKS: ReadonlyArray<NodeId> = ["caveman", "pstack", "headroom", "rtk", "ponytail"];
+  if (compact) {
+    // Narrow card: agent and its preset stack as pairs on the left, blocks and output on the right.
+    hosts.forEach((host, i) => {
+      const top = 20 + i * 126;
+      nodes.push(
+        [`host-${host.id}` as NodeId, { x: 16, y: top, w: 190, h: 56 }],
+        [`combo-${host.id}` as NodeId, { x: 16, y: top + 62, w: 190, h: 56 }],
+      );
+      links.push({ p: [[111, top + 56], [111, top + 62]], k: host.id as EdgeKey, arrow: true });
+      links.push({ p: [[206, top + 90], [218, top + 90], [218, 51]] , k: host.id as EdgeKey });
+    });
+    BLOCKS.forEach((block, j) => {
+      nodes.push([block, { x: 230, y: 20 + j * 76, w: 210, h: 62 }]);
+      if (j > 0) links.push({ p: [[335, 20 + (j - 1) * 76 + 62], [335, 20 + j * 76]], k: block as EdgeKey, arrow: true });
+    });
+    links.push({ p: [[218, 51], [230, 51]], k: "caveman", arrow: true });
+    nodes.push(["output", { x: 230, y: 20 + BLOCKS.length * 76 + 8, w: 210, h: 56 }]);
+    const pairBottom = hosts.length ? 20 + hosts.length * 126 + 30 : 0;
+    const blocksBottom = 20 + BLOCKS.length * 76 + 64;
+    return {
+      w: 456,
+      h: Math.max(pairBottom, blocksBottom) + 34,
+      nodes,
+      links,
+      captions: [{ x: 230, y: Math.max(pairBottom, blocksBottom) + 20, text: "appended in this order, one block each" }],
+    };
+  }
+  // Wide card: one column per agent, then the shared block column, then the output.
+  hosts.forEach((host, i) => {
+    const colX = 20 + i * 244;
+    nodes.push(
+      [`host-${host.id}` as NodeId, { x: colX, y: 24, w: 200, h: 56 }],
+      [`combo-${host.id}` as NodeId, { x: colX, y: 96, w: 200, h: 58 }],
+    );
+    links.push({ p: [[colX + 100, 80], [colX + 100, 96]], k: host.id as EdgeKey, arrow: true });
+  });
+  const busY = 430;
+  const blockX = 20 + hosts.length * 244 + 40;
+  hosts.forEach((host, i) => {
+    const colX = 20 + i * 244;
+    // Every preset feeds one bus, and the bus enters the block column once.
+    links.push({ p: [[colX + 100, 154], [colX + 100, busY], [blockX - 20, busY]], k: host.id as EdgeKey });
+  });
+  if (hosts.length > 0) links.push({ p: [[blockX - 20, busY], [blockX - 20, 55], [blockX, 55]], k: "caveman", arrow: true });
+  BLOCKS.forEach((block, j) => {
+    nodes.push([block, { x: blockX, y: 24 + j * 78, w: 230, h: 62 }]);
+    if (j > 0) links.push({ p: [[blockX + 115, 24 + (j - 1) * 78 + 62], [blockX + 115, 24 + j * 78]], k: block as EdgeKey, arrow: true });
+  });
+  const outputX = blockX + 230 + 40;
+  nodes.push(["output", { x: outputX, y: 179, w: 240, h: 64 }]);
+  links.push({ p: [[blockX + 115, 398], [blockX + 115, 412], [outputX + 120, 412], [outputX + 120, 211], [outputX, 211]], k: "ponytail", arrow: true });
   return {
-    w: WIDE_W,
+    w: outputX + 240 + 20,
     h: 480,
     nodes,
     links,
-    captions: [{ x: 486, y: 422, text: "appended in this order, one block each" }],
+    captions: [{ x: blockX, y: 462, text: "appended in this order, one block each" }],
   };
 }
 
@@ -230,8 +185,8 @@ const TURN = [
   { id: "output", icon: "arrow-right", title: "Output", note: "the turn's result" },
 ] as const;
 
-/** The nodes a click can set, the field each writes, and the levels that field takes. */
-const PICKER: Partial<Record<NodeId, { field: string; options: ReadonlyArray<{ id: string; label: string }> }>> = {
+/** The nodes a click can set, the field each writes, and the levels that field takes. Every per-agent preset node shares the combo entry. */
+const PICKER: Record<"combo" | "caveman" | "rtk" | "ponytail" | "pstack" | "headroom", { field: string; options: ReadonlyArray<{ id: string; label: string }> }> = {
   combo: {
     field: "comboDefault",
     options: [
@@ -259,20 +214,18 @@ const PICKER: Partial<Record<NodeId, { field: string; options: ReadonlyArray<{ i
   headroom: { field: "headroomDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
 };
 
-/** What the detail panel says about a node. */
-const ABOUT: Record<NodeId, string> = {
-  hosts: "Every agent loads the same extension tree. Only the way each host loads it differs, so a mode behaves the same in all three.",
+/** What the folder says about a node. The per-agent preset nodes share the combo entry. */
+const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
   "host-opencode": "OpenCode loads the tree as one plugin, registered in opencode.json.",
-  combo: "One preset for caveman, RTK, and Ponytail. pstack and headroom keep their own switches.",
+  combo: "One preset per agent: scope it to all agents, or give one agent its own. A host's own section wins over the shared default.",
   caveman: "Voice. Terse replies; code, commands, paths, and errors stay exact.",
   pstack: "Approach. Picks the playbook, the checks, and the design.",
   headroom: "Compression below the shell layer. Your own Headroom install compresses tool outputs and history; Tersio tracks it and reads its savings.",
   rtk: "Tooling. Rewrites a shell command and condenses its output before the model sees it.",
   ponytail: "Size. Caps the diff at the smallest complete change.",
   output: "One turn, start to finish: the prompt blocks go in, the model runs, and the reply comes back.",
-  "add-host": "Tersio installs one extension tree per agent. Pick an agent to add it.",
 };
 
 const STEPS = [
@@ -538,34 +491,23 @@ function PipelineCanvas({
   busy: NodeId | null;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<{ key: LayoutKey; fit: number }>({ key: "wide", fit: 1 });
+  const [containerW, setContainerW] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selected, setSelected] = useState<NodeId | null>(null);
-  // The combo folder scopes its preset: the shared default, or one agent's own section.
+  // The combo folder scopes its preset: the shared default, or one agent's own section. Opening a
+  // per-agent preset node starts on that agent's scope.
   const [scope, setScope] = useState<"all" | "omp" | "pi" | "opencode">("all");
   const [confirming, setConfirming] = useState<NodeId | null>(null);
   const [panning, setPanning] = useState(false);
   const [hovered, setHovered] = useState<NodeId | null>(null);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-  const lastKey = useRef<LayoutKey>("wide");
 
-  // Pick the design space that suits the width, then stretch it to fill. A layout change is a new
-  // canvas, so the pan and zoom start over with it.
+  // The canvas draws at its own width and the card scales it; drag and the zoom controls reach the rest.
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    const measure = (): void => {
-      const width = el.clientWidth;
-      if (width <= 0) return;
-      const key: LayoutKey = width < 560 ? "narrow" : width < 900 ? "medium" : "wide";
-      if (key !== lastKey.current) {
-        lastKey.current = key;
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-      }
-      setView({ key, fit: width / (key === "wide" ? WIDE_W : LAYOUTS[key].w) });
-    };
+    const measure = (): void => setContainerW(el.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -591,19 +533,20 @@ function PipelineCanvas({
   };
   // An unknown host stays on the canvas: an exported file reads no host list.
   const shownHosts = HOSTS.filter((host) => hostState.installed[host.id] !== false);
-  const missingHosts = HOSTS.filter((host) => isOff(lit(host.id)));
-  const layoutKey = view.key;
-  const base = layoutKey === "wide" ? wideLayout(shownHosts) : LAYOUTS[layoutKey];
-  // Nothing left to install, so the dashed slot goes with it.
-  const layout: Layout = missingHosts.length === 0
-    ? { ...base, nodes: base.nodes.filter(([id]) => id !== "add-host") }
-    : base;
-  const scale = view.fit * zoom;
+  const compact = containerW > 0 && containerW < 620;
+  const layout = pipelineLayout(shownHosts, compact);
+  const fit = containerW > 0 ? containerW / layout.w : 1;
+  const scale = fit * zoom;
 
   const isNodeOff = (id: NodeId): boolean => {
-    if (id === "hosts") return hostState.installed && !Object.values(hostState.installed).some(Boolean);
     if (id.startsWith("host-")) return isOff(lit(id.slice(5) as EdgeKey));
-    if (id === "combo" || id === "caveman" || id === "pstack" || id === "headroom" || id === "rtk" || id === "ponytail") return isOff(lit(id));
+    if (id.startsWith("combo-")) {
+      const host = id.slice(6);
+      const own = modes?.hosts?.[host]?.comboDefault;
+      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
+      return level === "off";
+    }
+    if (id === "caveman" || id === "pstack" || id === "headroom" || id === "rtk" || id === "ponytail") return isOff(lit(id));
     return false;
   };
 
@@ -621,25 +564,6 @@ function PipelineCanvas({
   const zoomed = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
 
   const body = (id: NodeId): React.ReactNode => {
-    if (id === "hosts") {
-      return (
-        <>
-          {shownHosts.length === 0 ? <span className="mono text-[10px] text-dim">no agent yet</span> : null}
-          {shownHosts.map((host) => {
-            const off = isOff(lit(host.id));
-            return (
-              <span key={host.id} className={cn("flex min-w-0 items-center gap-1.5", off && "opacity-45")}>
-                <AgentLogo host={host.id} className="size-3 shrink-0" />
-                <span className="min-w-0 truncate text-[11px] font-semibold">{host.label}</span>
-                <span className="mono ml-auto shrink-0 text-[9px] text-dim">
-                  {off ? "not installed" : versionOf(hostState.versions[host.id]) ?? "installed"}
-                </span>
-              </span>
-            );
-          })}
-        </>
-      );
-    }
     if (id.startsWith("host-")) {
       const host = HOSTS.find((h) => `host-${h.id}` === id);
       if (!host) return null;
@@ -656,14 +580,19 @@ function PipelineCanvas({
         </>
       );
     }
-    if (id === "combo") {
-      const off = isOff(lit("combo"));
+    if (id.startsWith("combo-")) {
+      const host = id.slice(6);
+      const label = HOSTS.find((h) => h.id === host)?.label ?? host;
+      const own = modes?.hosts?.[host]?.comboDefault;
+      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
       return (
         <>
           <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-            <span aria-hidden="true">🧩</span> Combo preset
+            <span aria-hidden="true">🧩</span> Combo · {label}
           </span>
-          <span className="mono text-[10px] text-dim">{off ? "off" : "caveman · RTK · Ponytail"}</span>
+          <span className="mono text-[10px] text-dim">
+            {level === "off" ? "off" : typeof own === "string" ? `${level} — this agent` : `${level} — shared`}
+          </span>
         </>
       );
     }
@@ -690,13 +619,6 @@ function PipelineCanvas({
         </>
       );
     }
-    if (id === "add-host") {
-      return (
-        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-dim">
-          <Icon name="plus" className="size-3.5 shrink-0" /> Add agent
-        </span>
-      );
-    }
     return (
       <>
         <span className="flex items-center gap-1.5 text-[13px] font-semibold">
@@ -708,17 +630,18 @@ function PipelineCanvas({
   };
 
   const titleOf = (id: NodeId): string => {
-    if (id === "hosts") return "Agents";
     if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
-    if (id === "combo") return "Combo preset";
-    if (id === "add-host") return "Add agent";
+    if (id.startsWith("combo-")) {
+      const label = HOSTS.find((h) => `combo-${h.id}` === id)?.label ?? id.slice(6);
+      return `Combo · ${label}`;
+    }
     const mode = MODES.find((m) => m.key === id);
     if (mode) return mode.name;
     return TURN.find((t) => t.id === id)?.title ?? id;
   };
 
   const glyphOf = (id: NodeId): string | null => {
-    if (id === "combo") return "🧩";
+    if (id.startsWith("combo-")) return "🧩";
     return MODES.find((m) => m.key === id)?.glyph ?? null;
   };
 
@@ -728,13 +651,11 @@ function PipelineCanvas({
       const on = lit(key as EdgeKey);
       return { label: isOff(on) ? "not installed" : versionOf(hostState.versions[key]) ?? "installed", on };
     }
-    if (id === "hosts") {
-      const count = Object.values(hostState.installed).filter(Boolean).length;
-      return { label: `${count} of ${HOSTS.length} installed`, on: count > 0 };
-    }
-    if (id === "combo") {
-      const on = lit("combo");
-      return { label: isOff(on) ? "off" : modes?.comboLevel || modes?.comboDefault || "on", on };
+    if (id.startsWith("combo-")) {
+      const host = id.slice(6);
+      const own = modes?.hosts?.[host]?.comboDefault;
+      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
+      return { label: level, on: level !== "off" };
     }
     if (id === "caveman" || id === "ponytail") {
       const on = lit(id);
@@ -753,15 +674,14 @@ function PipelineCanvas({
       const on = lit("rtk");
       return { label: isOff(on) ? "off" : "on", on };
     }
-    if (id === "add-host") return { label: "", on: null };
     return { label: "on", on: true };
   };
 
   const selectedState = selected ? stateOf(selected) : null;
   const MENU_WIDTH = 292;
   const MENU_ESTIMATE = 240;
-  const viewportW = layout.w * view.fit;
-  const viewportH = layout.h * view.fit;
+  const viewportW = layout.w * fit;
+  const viewportH = layout.h * fit;
   const selectedBox = selected ? layout.nodes.find(([id]) => id === selected)?.[1] ?? null : null;
   const hostId = selected?.startsWith("host-") ? selected.slice("host-".length) : null;
   const hostInstalled = hostId !== null && !isOff(lit(hostId as EdgeKey));
@@ -774,10 +694,11 @@ function PipelineCanvas({
         : Math.max(8, selectedBox.y * scale + pan.y - MENU_ESTIMATE - 8),
     }
     : null;
-  const picker = selected ? PICKER[selected] : undefined;
+  const pickerKey = selected == null ? null : selected.startsWith("combo-") ? "combo" : selected;
+  const picker = pickerKey !== null && pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
   const currentValue = (id: NodeId): string | null => {
     if (!modes) return null;
-    if (id === "combo") {
+    if (id.startsWith("combo-")) {
       // A host scope shows its own preset when it has one, else the value it inherits.
       if (scope !== "all") {
         const own = modes.hosts?.[scope]?.comboDefault;
@@ -794,12 +715,13 @@ function PipelineCanvas({
   };
   const current = selected ? currentValue(selected) : null;
   // A host scope without its own section inherits the shared value, so the sheet says so.
-  const inherited = selected === "combo" && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
+  const inherited = selected?.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
   // `custom` is what the three modes say, so it matches no preset button and names no command.
   const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
 
   useEffect(() => {
-    setScope("all");
+    // Opening a per-agent preset node starts on that agent's scope; the shared node starts on all.
+    setScope(selected?.startsWith("combo-") ? (selected.slice(6) as "omp" | "pi" | "opencode") : "all");
   }, [selected]);
 
   useEffect(() => {
@@ -826,7 +748,7 @@ function PipelineCanvas({
           "relative touch-none overflow-hidden rounded-lg border border-line select-none",
           "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
         )}
-        style={{ height: layout.h * view.fit, cursor: panning ? "grabbing" : "grab" }}
+        style={{ height: layout.h * fit, cursor: panning ? "grabbing" : "grab" }}
         onPointerDown={(event) => {
           const target = event.target as HTMLElement;
           if (target.closest("button")) return;
@@ -938,7 +860,7 @@ function PipelineCanvas({
                 box={box}
                 off={isNodeOff(id)}
                 selected={selected === id}
-                dashed={id === "add-host"}
+                dashed={false}
                 label={`${titleOf(id)}, ${state.label}`.replace(/, $/, "")}
                 onSelect={() => { setSelected((open) => (open === id ? null : id)); setConfirming(null); }}
                 onHover={(on) => setHovered(on ? id : null)}
@@ -988,7 +910,7 @@ function PipelineCanvas({
           title={titleOf(selected)}
           glyph={glyphOf(selected)}
           stateLabel={selectedState.label}
-          about={ABOUT[selected]}
+          about={ABOUT[selected] ?? ""}
           busy={busy === selected}
           onClose={() => setSelected(null)}
           footer={
@@ -998,7 +920,7 @@ function PipelineCanvas({
                   <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
                 ) : null}
                 <span className="mono ml-auto text-[9px] text-dim">
-                  {selected === "combo" && scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
+                  {selected?.startsWith("combo-") && scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
                 </span>
               </div>
             ) : undefined
@@ -1020,20 +942,7 @@ function PipelineCanvas({
               ) : null}
             </div>
           ) : null}
-          {selected === "add-host" ? (
-            missingHosts.map((host) => (
-              <div data-sheet key={host.id} className="flex items-center gap-2">
-                <AgentLogo host={host.id} className="size-3.5 shrink-0" />
-                <span className="truncate text-[11px]">{host.label}</span>
-                <span className="ml-auto">
-                  <MenuAction disabled={busy !== null} onClick={() => onHostAction(`host-${host.id}`, "install")}>
-                    Install
-                  </MenuAction>
-                </span>
-              </div>
-            ))
-          ) : null}
-          {selected === "combo" && picker ? (
+          {selected?.startsWith("combo-") && picker ? (
             <div data-sheet className="flex items-center gap-1">
               {(["all", "omp", "pi", "opencode"] as const).map((s) => (
                 <button
@@ -1059,7 +968,7 @@ function PipelineCanvas({
                 active={current === option.id}
                 disabled={busy !== null}
                 hint={inherited && current === option.id ? "inherited" : undefined}
-                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, selected === "combo" && scope !== "all" ? scope : undefined)}
+                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, selected.startsWith("combo-") && scope !== "all" ? scope : undefined)}
               />
             ))
           ) : null}
@@ -1102,6 +1011,9 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   const toast = useToast();
   const [hostState, setHostState] = useState<HostState>({ installed: {}, versions: {} });
   const [busy, setBusy] = useState<NodeId | null>(null);
+  // Adding an agent lives in the card header, separate from the mode workflow it feeds.
+  const [addOpen, setAddOpen] = useState(false);
+  const missingHosts = HOSTS.filter((host) => hostState.installed[host.id] === false);
   const [hostsLoaded, setHostsLoaded] = useState(false);
   const pipelinePending = usePending(!hostsLoaded);
 
@@ -1204,6 +1116,35 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
         title="The pipeline"
         icon="workflow"
         description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled — click a node to switch it."
+        actions={
+          missingHosts.length > 0 ? (
+            <div className="relative">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen((open) => !open)}>
+                <Icon name="plus" className="size-3.5" />
+                Add agent
+              </Button>
+              {addOpen ? (
+                <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-xl border border-line bg-panel p-2 shadow-xl">
+                  <p className="mono m-0 px-1 pb-1 text-[9px] text-dim">Installs the Tersio tree for this agent</p>
+                  {missingHosts.map((host) => (
+                    <div key={host.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-track/60">
+                      <AgentLogo host={host.id} className="size-3.5 shrink-0" />
+                      <span className="truncate text-[11px]">{host.label}</span>
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => { setAddOpen(false); hostAction(`host-${host.id}`, "install"); }}
+                        className="mono ml-auto cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+                      >
+                        Install
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : undefined
+        }
       >
         {pipelinePending ? <PipelineSkeleton /> : (
           <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
