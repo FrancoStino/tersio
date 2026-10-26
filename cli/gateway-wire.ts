@@ -172,12 +172,13 @@ export function printGatewayWiring(): void {
   const cfg = readGatewayConfig();
   const keys = Object.keys(cfg.providers);
   if (keys.length === 0) {
-    console.log('No providers are wired through the gateway. Wire one with `tersio gateway wire --host <pi|opencode> --provider <name>`.');
-    return;
+    console.log(`No providers are wired through the gateway. Wire one with \`tersio gateway wire --host <${WIRED_HOST_IDS.join('|')}> --provider <name>\`.`);
+  } else {
+    for (const key of keys) {
+      const entry = cfg.providers[key];
+      console.log(`  ${entry.host.padEnd(8)} ${entry.provider.padEnd(16)} → ${gatewayUrl(cfg, key)}  (upstream ${entry.url})`);
+    }
   }
-  for (const key of keys) {
-    const entry = cfg.providers[key];
-    console.log(`  ${entry.host.padEnd(8)} ${entry.provider.padEnd(16)} → ${gatewayUrl(cfg, key)}  (upstream ${entry.url})`);
-  }
-  console.log(`Recording: ${cfg.record ? 'on' : 'off'} · retention 7 days / 256 MiB`);
+  // Adapters, not capture: any host id can be captured, but only these have a config writer.
+  console.log(`Adapter hosts: ${WIRED_HOST_IDS.join(', ')} · recording ${cfg.record ? 'on' : 'off'} · retention 7 days / 256 MiB`);
 }
