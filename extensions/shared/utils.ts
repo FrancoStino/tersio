@@ -1,6 +1,7 @@
 // Shared helpers for the installer and AI add-ons updater. Node built-ins only — must stay dependency-free.
 
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { accessSync, constants, createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import https from 'node:https';
@@ -117,10 +118,10 @@ const RTK_PLATFORM_SPECS: Record<string, RtkPlatformSpec> = {
   'darwin/arm64': { triple: 'aarch64-apple-darwin', ext: '.tar.gz', binary: 'rtk' },
 };
 
-// First executable `name` on PATH, else the managed Bun bin dir.
-function firstExecutable(name: string, managedDir: string | null): string | null {
+// First executable `name` on PATH, then any extra dirs, then the managed Bun bin dir.
+function firstExecutable(name: string, managedDir: string | null, extraDirs: ReadonlyArray<string> = []): string | null {
   const ext = process.platform === 'win32' ? '.cmd' : '';
-  const candidates = (process.env.PATH || '').split(path.delimiter).filter(Boolean)
+  const candidates = [...(process.env.PATH || '').split(path.delimiter).filter(Boolean), ...extraDirs]
     .flatMap((dir) => [path.join(dir, name + ext), path.join(dir, name)]);
   if (managedDir) candidates.push(path.join(managedDir, name + ext), path.join(managedDir, name));
   for (const candidate of candidates) {
@@ -137,9 +138,28 @@ export function resolveRtkBinary(managedDir = path.join(homeDir(), '.bun', 'bin'
   return firstExecutable(process.platform === 'win32' ? 'rtk.exe' : 'rtk', managedDir);
 }
 
-// Headroom ships as a pip package whose console script lands on PATH; same probe as rtk, no managed dir by default.
+// `pip install --user` drops console scripts in a directory that is usually not on PATH (macOS:
+// ~/Library/Python/3.x/bin), so the probe reads python's own user base. Keyed by HOME, since a
+// pinned test home must not inherit a user base computed from the real one.
+let headroomUserDir: { home: string; dir: string | null } | null = null;
+function headroomUserScriptDir(): string | null {
+  const home = homeDir();
+  if (headroomUserDir?.home === home) return headroomUserDir.dir;
+  let dir: string | null = null;
+  try {
+    const base = execFileSync('python3', ['-m', 'site', '--user-base'], { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim();
+    if (base) dir = path.join(base, process.platform === 'win32' ? 'Scripts' : 'bin');
+  } catch { /* no python3 on PATH: the static candidates still stand */ }
+  headroomUserDir = { home, dir };
+  return dir;
+}
+
+// Headroom ships as a pip/uv package whose console script often lands off PATH, so the probe walks
+// python's user-script dir and ~/.local/bin (uv's tool bin) after PATH; no managed dir by default.
 export function resolveHeadroomBinary(managedDir: string | null = null): string | null {
-  return firstExecutable(process.platform === 'win32' ? 'headroom.exe' : 'headroom', managedDir);
+  const user = headroomUserScriptDir();
+  const extraDirs = [user, path.join(homeDir(), '.local', 'bin')].filter((dir): dir is string => dir !== null);
+  return firstExecutable(process.platform === 'win32' ? 'headroom.exe' : 'headroom', managedDir, extraDirs);
 }
 
 // A host binary to scan for its subagent marker.

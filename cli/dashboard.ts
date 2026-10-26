@@ -24,7 +24,7 @@ import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULT
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, resolveHeadroomBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { findPackageRoot, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -191,12 +191,18 @@ function headroomInstallState(): { startedAt: number; code: number | null; error
 
 /**
  * Install Headroom from the dashboard. Always user-initiated and never a tersio side effect: the
- * mode only tracks the binary, and the pip call runs only when this endpoint was called.
+ * mode only tracks the binary, and the install runs only when this endpoint was called. uv is the
+ * resilient path (it carries its own interpreter and shims into ~/.local/bin); pip --user is the
+ * fallback, whose scripts dir the binary resolver probes even when it is off PATH.
  */
 function spawnHeadroomInstall(): boolean {
-  const win = process.platform === 'win32';
-  const cmd = win ? 'pip' : 'python3';
-  const args = win ? ['install', '--user', 'headroom-ai[all]'] : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
+  const uv = resolveHostBinary('uv');
+  const cmd = uv ? 'uv' : process.platform === 'win32' ? 'pip' : 'python3';
+  const args = uv
+    ? ['tool', 'install', 'headroom-ai[all]']
+    : process.platform === 'win32'
+      ? ['install', '--user', 'headroom-ai[all]']
+      : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
   try { mkdirSync(tersioHome(), { recursive: true }); } catch { /* the log is best effort */ }
   let stderrFd: number | undefined;
   try { stderrFd = openSync(headroomInstallLog(), 'w'); } catch { stderrFd = undefined; }

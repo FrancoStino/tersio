@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import headroomSessionExtension, { HEADROOM_INSTALL_HINT, headroomInstruction } from "../../extensions/headroom/index.ts";
 import comboToggleExtension from "../../extensions/combo/index.ts";
 import { getSharedComboState, resetSharedComboState } from "../../extensions/shared/session-state.ts";
+import { resolveHeadroomBinary } from "../../extensions/shared/utils.ts";
 import type { ExtensionApi, SessionEntry } from "../../extensions/shared/types.ts";
 import { fakeExecutable, withHome } from "../helpers/env.ts";
 
@@ -164,6 +165,22 @@ test("the configured default starts a fresh session with headroom on", async () 
     await comboHandlers.get("session_start")!({}, comboCtx);
     expect(comboCtx.notifications.at(-1)).toBe(ON_LINE);
     expect(getSharedComboState().headroom).toBe("on");
+  });
+});
+
+test("a pip --user script dir that is off PATH still resolves, through the pinned home", async () => {
+  await withHome(async (home) => {
+    // pip's user scripts land here on Linux, and uv's tool shims land here everywhere.
+    const localBin = path.join(home, ".local", "bin");
+    const bin = fakeExecutable(localBin, process.platform === "win32" ? "headroom.exe" : "headroom", "#!/bin/sh\nexit 0\n", "exit /b 0");
+    const previousPath = process.env.PATH;
+    process.env.PATH = "/definitely-no-headroom-here";
+    try {
+      // A fresh HOME must not inherit a user base computed from the real one.
+      expect(resolveHeadroomBinary()).toBe(bin);
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 });
 

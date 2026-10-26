@@ -799,7 +799,8 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
             {installError ? (
               <>
                 Install failed: <span className="text-danger">{installError}</span> — run it yourself with{" "}
-                <span className="mono">pip install &quot;headroom-ai[all]&quot;</span>.
+                <span className="mono">uv tool install &quot;headroom-ai[all]&quot;</span> or{" "}
+                <span className="mono">pip install --user &quot;headroom-ai[all]&quot;</span>.
               </>
             ) : headroomPresent ? (
               "No compression events yet, so nothing is measured."
