@@ -443,6 +443,7 @@ export interface AgentStats {
   toolSeries: Array<{ ts: number; tool: string; calls: number; errors: number }>;
   /** What rtk kept out of context in this range, and how much of the bash work it took. */
   rtk: AgentRtk;
+  headroom: AgentHeadroom;
   usageSeries: AgentWindowSeries[];
   windowInsights: AgentWindowInsight[];
   providerHourly: AgentProviderHour[];
@@ -475,6 +476,27 @@ export interface AgentRtk {
   rtkCalls: number;
   missedCalls: number;
   adoptionPct: number;
+}
+
+export interface HeadroomClientRow {
+  client: string;
+  calls: number;
+  tokensSaved: number;
+}
+
+/** Headroom's durable compression savings, read through its own savings CLI. */
+export interface AgentHeadroom {
+  measured: boolean;
+  failure: string;
+  tokensSaved: number;
+  tokensBefore: number;
+  costUsd: number;
+  calls: number;
+  savingsPercent: number;
+  todayTokens: number;
+  last7Tokens: number;
+  last30Tokens: number;
+  byClient: HeadroomClientRow[];
 }
 
 export type AgentView =
@@ -633,6 +655,7 @@ export interface HealthReport {
   opencodeDir: string | null;
   provider: string | null;
   rtk: { present: boolean; version: string | null; path: string };
+  headroom: { present: boolean; version: string | null; path: string };
   home: string;
 }
 

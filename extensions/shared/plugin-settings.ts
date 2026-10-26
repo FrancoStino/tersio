@@ -51,6 +51,8 @@ const CAVEMAN_MODES = new Set(['off', 'lite', 'full', 'ultra', 'megacave', 'mega
 const PONYTAIL_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 // Opt-in only: no combo preset writes this, so it never reaches a user who did not ask for it.
 const PSTACK_MODES = new Set(['off', 'on']);
+// Same opt-in contract as pstack: the binary is the user's own install, the mode only tracks it.
+const HEADROOM_MODES = new Set(['off', 'on']);
 
 function readStringDefault(key: string, valid: Set<string>): string {
   const raw = readPluginSettings()[key];
@@ -79,6 +81,10 @@ export function readPonytailDefault(): string {
 
 export function readPstackDefault(): string {
   return readStringDefault('pstackDefault', PSTACK_MODES);
+}
+
+export function readHeadroomDefault(): string {
+  return readStringDefault('headroomDefault', HEADROOM_MODES);
 }
 
 export function isComboSetupComplete(): boolean {

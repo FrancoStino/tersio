@@ -134,6 +134,11 @@ export function resolveRtkBinary(managedDir = path.join(homeDir(), '.bun', 'bin'
   return firstExecutable(process.platform === 'win32' ? 'rtk.exe' : 'rtk', managedDir);
 }
 
+// Headroom ships as a pip package whose console script lands on PATH; same probe as rtk, no managed dir by default.
+export function resolveHeadroomBinary(managedDir: string | null = null): string | null {
+  return firstExecutable(process.platform === 'win32' ? 'headroom.exe' : 'headroom', managedDir);
+}
+
 // A host binary to scan for its subagent marker.
 export function resolveHostBinary(name: string, managedDir = path.join(homeDir(), '.bun', 'bin')): string | null {
   return firstExecutable(name, managedDir);

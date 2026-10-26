@@ -32,7 +32,7 @@ describe('the MCP server protocol', () => {
     const { sent, send } = collector();
     await handleMessage(call(2, 'tools/list'), send);
     const answer = sent[0] as { result: { tools: Array<{ name: string }> } };
-    expect(answer.result.tools.map((t) => t.name)).toEqual(['tersio_stats', 'tersio_activity', 'tersio_modes']);
+    expect(answer.result.tools.map((t) => t.name)).toEqual(['tersio_stats', 'tersio_activity', 'tersio_modes', 'tersio_headroom']);
   });
 
   test('a bad range and an unknown tool answer with invalid-params', async () => {

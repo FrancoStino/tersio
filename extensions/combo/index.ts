@@ -24,6 +24,7 @@ import {
   isComboSetupComplete,
   readCavemanDefault,
   readComboDefault,
+  readHeadroomDefault,
   readPluginSettings,
   readPonytailDefault,
   readPstackDefault,
@@ -84,13 +85,13 @@ async function loadPonytailInstructions(mode: string): Promise<string> {
   return ponytailFallback(mode);
 }
 
-// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies the three it owns. pstackDefault counts as its own default, so a session that stores only it still honors it instead of losing it to the preset.
-function savedModes(): { caveman: string; rtk: string; ponytail: string; pstack: string } {
-  const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault'].some((key) => key in readPluginSettings());
+// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies the three it owns. pstackDefault and headroomDefault count as their own defaults, so a session that stores only one still honors it instead of losing it to the preset.
+function savedModes(): { caveman: string; rtk: string; ponytail: string; pstack: string; headroom: string } {
+  const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'].some((key) => key in readPluginSettings());
   const preset = COMBO_LEVELS[readComboDefault()];
   return hasModeDefaults
-    ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault() }
-    : { ...preset, pstack: 'off' };
+    ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault(), headroom: readHeadroomDefault() }
+    : { ...preset, pstack: 'off', headroom: 'off' };
 }
 
 export default function comboToggleExtension(pi: ExtensionApi): void {
@@ -114,11 +115,12 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     const preset = COMBO_LEVELS[combo];
     const modes = savedModes();
     setSharedComboModes(modes);
-    if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off') return;
+    if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off' && modes.headroom === 'off') return;
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
     pi.appendEntry?.('rtk-mode', { enabled: modes.rtk === 'on' });
     pi.appendEntry?.('ponytail-mode', { mode: modes.ponytail });
     if (modes.pstack !== 'off') pi.appendEntry?.('pstack-mode', { mode: modes.pstack });
+    if (modes.headroom !== 'off') pi.appendEntry?.('headroom-mode', { mode: modes.headroom });
     if (preset && modes.caveman === preset.caveman && modes.rtk === preset.rtk && modes.ponytail === preset.ponytail) {
       pi.appendEntry?.('combo-level', { level: combo });
     }
@@ -158,7 +160,8 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
           '/combo lite     — light: caveman=lite, rtk=on, ponytail=lite\n' +
           '/combo balanced — middle: caveman=full, rtk=on, ponytail=full\n' +
           '/combo max      — aggressive: caveman=ultra, rtk=on, ponytail=ultra\n' +
-          'pstack is not part of a preset. Set it on its own with /pstack on|off',
+          'pstack is not part of a preset. Set it on its own with /pstack on|off\n' +
+          'headroom is not part of a preset either. Set it on its own with /headroom on|off',
           'info'
         );
         return;
@@ -226,7 +229,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     else if (!hasModeState(entries)) {
       // A headless root session has no UI to publish the bridge, so Ponytail never loaded; publish the saved modes only while the bridge is clear, or a subagent branch stops inheriting.
       const shared = getSharedComboState();
-      if (shared.caveman === 'off' && shared.rtk === 'off' && shared.ponytail === 'off' && shared.pstack === 'off') {
+      if (shared.caveman === 'off' && shared.rtk === 'off' && shared.ponytail === 'off' && shared.pstack === 'off' && shared.headroom === 'off') {
         setSharedComboModes(savedModes());
       }
     }

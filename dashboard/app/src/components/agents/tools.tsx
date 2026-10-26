@@ -1,5 +1,5 @@
 // Tools page: which tools the agent called, how often they failed, and what they cost.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   CellBar,
@@ -16,8 +16,10 @@ import {
 } from "@/components/charts";
 import type { Column, SeriesSpec } from "@/components/charts";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { AgentStats, AgentToolRow, RtkVerbRow } from "@/lib/data";
-import { AGENT_RANGE_LABEL } from "@/lib/data";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/icon";
+import type { AgentStats, AgentToolRow, HealthReport, RtkVerbRow } from "@/lib/data";
+import { AGENT_RANGE_LABEL, fetchHealth } from "@/lib/data";
 import { PALETTE, fmt, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
 
 type CallMetric = "calls" | "errors";
@@ -410,6 +412,36 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
   );
   // rtk's own numbers. A read that failed draws "not measured"; it never draws a zero.
   const rtk = agent.rtk;
+  // Headroom is opt-in, so the card also carries the install offer when the binary is absent.
+  const headroom = agent.headroom;
+  const [health, setHealth] = useState<HealthReport | null>(null);
+  const [installing, setInstalling] = useState(false);
+  useEffect(() => {
+    fetchHealth().then(setHealth).catch(() => setHealth(null));
+  }, []);
+  const headroomPresent = health?.headroom?.present ?? false;
+  function installHeadroom(): void {
+    setInstalling(true);
+    void fetch("/api/headroom/install", { method: "POST" })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; present?: boolean }) => {
+        if (d?.present) setHealth((h) => (h ? { ...h, headroom: { ...h.headroom, present: true } } : h));
+        // pip can take a minute; poll health until the binary lands, then let the stats memo expire.
+        const started = Date.now();
+        const timer = window.setInterval(() => {
+          void fetchHealth()
+            .then((h) => {
+              if (h?.headroom?.present || Date.now() - started > 180_000) {
+                window.clearInterval(timer);
+                setInstalling(false);
+                if (h) setHealth(h);
+              } else if (h) setHealth(h);
+            })
+            .catch(() => {});
+        }, 3000);
+      })
+      .catch(() => setInstalling(false));
+  }
   const rtkRows = useMemo(() => {
     const rows = [...rtk.byVerb].toSorted((a, b) => b.saved - a.saved);
     // The tail is folded only when the reader asks for it, so the default view is the commands that matter.
@@ -518,6 +550,16 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
                 : "rtk's history could not be read"
             }
             spark={rtkSpark}
+          />
+          <Stat
+            label="Saved by Headroom"
+            title="Tokens Headroom's compression kept out of context, from its own savings ledger"
+            value={headroom.measured ? fmtShort(headroom.tokensSaved) : "not measured"}
+            hint={
+              headroom.measured
+                ? `${pct(headroom.savingsPercent / 100, 1)} of ${fmtShort(headroom.tokensBefore)} across ${fmt(headroom.calls)} calls`
+                : "install Headroom and run its proxy to record savings"
+            }
           />
         </StatGrid>
         <StatGrid cols={4}>
@@ -690,6 +732,46 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
           <p className="p-4 text-xs text-dim">
             rtk's history could not be read, so its savings are not measured.
             {rtk.failure ? ` (${rtk.failure})` : ""}
+          </p>
+        )}
+      </Card>
+      <Card
+        title="Headroom" icon="leaf"
+        description={
+          headroom.measured
+            ? `Tokens Headroom's compression kept out of context, from its durable ledger. Today: ${fmtShort(headroom.todayTokens)} · 7 days: ${fmtShort(headroom.last7Tokens)} · 30 days: ${fmtShort(headroom.last30Tokens)}.`
+            : headroomPresent
+              ? `Headroom ${health?.headroom?.version ? `(${health.headroom.version}) ` : ""}is installed, but no savings are recorded yet. Run \`headroom proxy\` or \`headroom wrap <agent>\` so traffic flows through it.`
+              : "Headroom is not installed. Installing adds the headroom CLI; nothing is enabled on its own."
+        }
+        flush
+        actions={
+          !headroomPresent && !headroom.measured ? (
+            <Button size="sm" className="mono h-8 gap-1.5 rounded-xl" disabled={installing} onClick={installHeadroom}>
+              <Icon name={installing ? "rotate-ccw" : "download"} className="size-3.5" />
+              <span>{installing ? "Installing Headroom" : "Install Headroom"}</span>
+            </Button>
+          ) : undefined
+        }
+      >
+        {headroom.measured ? (
+          <div className="mono flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-3.5 py-2 text-[11px] text-dim">
+            <span>
+              lifetime <span className="text-ink">{fmtShort(headroom.tokensSaved)}</span> of {fmtShort(headroom.tokensBefore)} tokens ({pct(headroom.savingsPercent / 100, 1)})
+            </span>
+            <span>{fmt(headroom.calls)} calls</span>
+            <span>${headroom.costUsd.toFixed(4)} avoided</span>
+            {headroom.byClient.slice(0, 4).map((row) => (
+              <span key={row.client}>
+                {row.client}: {fmt(row.calls)} calls · {fmtShort(row.tokensSaved)} saved
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="p-4 text-xs text-dim">
+            {headroomPresent
+              ? "No compression events yet, so nothing is measured."
+              : `Headroom savings are not measured. ${headroom.failure ? `(${headroom.failure}) ` : ""}Enable the mode with /headroom on, or set it as a session default in Settings.`}
           </p>
         )}
       </Card>

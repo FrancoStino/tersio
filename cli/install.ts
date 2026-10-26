@@ -7,7 +7,7 @@ import {
   BUN_BIN_DIR, BUN_BIN, COMBO_PRESET_MODES, HOME, IS_WINDOWS, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
   allowUnverified, applyUpdate, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
-  ponytailDefaultFlag, pstackDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
+  ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
   dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
   execP, parseJsonObject, readPluginsPackage,
@@ -440,6 +440,12 @@ async function stepPstack(extDir: string, options: InstallOptions): Promise<void
   await copySources(extDir, filesUnder('pstack'), 'pstack/index.ts', options);
 }
 
+// The mode tracks the user's own Headroom install and never installs it: opt-in end to end.
+async function stepHeadroom(extDir: string, options: InstallOptions): Promise<void> {
+  if (!options.quiet) console.log('  Headroom — install the token-saver mode');
+  await copySources(extDir, filesUnder('headroom'), 'headroom/index.ts', options);
+}
+
 // The tree ships no node_modules, so the ruleset rides along as files. Both hosts need the same six.
 async function stepPonytailBundle(treeDir: string, options: InstallOptions): Promise<void> {
   const root = PONYTAIL_DIR;
@@ -474,6 +480,7 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
   await copySources(dir, filesUnder('caveman'), 'caveman/index.ts', options);
   await stepCombo(dir, options);
   await stepPstack(dir, options);
+  await stepHeadroom(dir, options);
   await copySources(dir, filesUnder('commands'), 'commands/index.ts', options);
   await stepUpdater(dir, options);
   await stepPonytailBundle(dir, options);
@@ -532,8 +539,9 @@ async function resolveProfile(opts: { quiet?: boolean } = {}): Promise<Profile> 
   if (rtkDefaultFlag !== undefined) profile.rtkDefault = rtkDefaultFlag === 'on';
   if (ponytailDefaultFlag !== undefined) profile.ponytailDefault = ponytailDefaultFlag;
   if (pstackDefaultFlag !== undefined) profile.pstackDefault = pstackDefaultFlag;
+  if (headroomDefaultFlag !== undefined) profile.headroomDefault = headroomDefaultFlag;
 
-  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault})`);
+  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
   return profile;
 }
 
@@ -673,6 +681,7 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
   await stepCaveman(extDir, options);
   await stepCombo(extDir, options);
   await stepPstack(extDir, options);
+  await stepHeadroom(extDir, options);
   await stepTersioCommands(extDir, options);
   await stepUpdater(extDir, options);
   await stepPonytailForPi(agentDir, options);
@@ -886,6 +895,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('caveman', () => stepCaveman(extDir, installOptions));
   await capture('combo', () => stepCombo(extDir, installOptions));
   await capture('pstack', () => stepPstack(extDir, installOptions));
+  await capture('headroom', () => stepHeadroom(extDir, installOptions));
   await capture('commands', () => stepTersioCommands(extDir, installOptions));
   await capture('updater', () => stepUpdater(extDir, installOptions));
   // One package, one file set: the repair writes every tree file here, so the install does too.

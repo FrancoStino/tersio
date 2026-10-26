@@ -8,7 +8,7 @@
 [![Build](https://shieldcn.dev/github/ci/KurutoDenzeru/tersio.svg?variant=branded&size=xs&logo=githubactions&label=Build)](https://github.com/KurutoDenzeru/tersio/actions)
 [![MIT](https://shieldcn.dev/badge/license-MIT-2563eb.svg?variant=branded&size=xs&logo=opensourceinitiative)](./LICENSE)
 
-Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard — one-command combos over one shared extension tree.
+Token saver & usage tracker for coding agents: terse caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, Headroom compression, and a gain dashboard — one-command combos over one shared extension tree.
 
 Measured savings per mode, the prompt overhead each one adds, and the rerun protocol: [docs/BENCHMARK_GUIDE.md](./docs/BENCHMARK_GUIDE.md).
 
@@ -28,6 +28,7 @@ Tersio installs into Oh My Pi, pi, or OpenCode, and cuts those costs:
 | 🗜️ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
 | 🧠 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
 | 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. Opt-in, on its own switch. |
+| 🍃 **Headroom** | Compression below the shell layer: [Headroom](https://github.com/headroomlabs-ai/headroom) shrinks tool outputs, file reads, and history through a local proxy, keeping originals recoverable. Tersio tracks the mode and reads its savings; the binary stays yours to install. Opt-in, on its own switch. |
 | 🧩 **Combo** | One command sets Caveman, RTK, and Ponytail, at three strengths. |
 | 📊 **Dashboard** | What you spent, per model and per day. |
 
@@ -107,7 +108,7 @@ Add this entry under `mcpServers` in the client's MCP settings:
 
 That is the whole setup. No extra command, no port, no token, and no process to keep alive.
 
-Three tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), and `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack — overriding its piece of the preset).
+Three tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack, headroom — overriding its piece of the preset), and `tersio_headroom` (the savings Headroom's own ledger records).
 
 ## 🖥️ CLI
 
@@ -121,25 +122,26 @@ Three tools become available: `tersio_stats` (requests, errors, tokens, cache ra
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
-Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the dashboard's own default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
+Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-default`/`--rtk-default`/`--ponytail-default`/`--pstack-default`/`--headroom-default`, `--currency <code>` (usage/dashboard display currency; flag wins, then the dashboard's own default, then USD). Legacy `--doctor` / `--uninstall` forms still work.
 
 ## ⌨️ Commands reference
 
 Mode switches live on their own commands; bare `/tersio` prints status. Every mode command, and every session start, prints the status line:
 
 ```
-🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON
+🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON
 ```
 
 It is display-only — it never enters the model context, so it costs the session nothing.
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. pstack is separate and no preset changes it. |
+| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. pstack and headroom are separate and no preset changes them. |
 | `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies at six levels. `full`, `ultra`, and `megacave-full` ship upstream's bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own, for registers upstream defines but no longer ships, and each names its upstream row. Legacy `wenyan` spellings still resolve: `wenyan`/`wenyan-full` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-ultra` → `megacave-ultra`. |
 | `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
 | `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes, one body at four levels. Review runs as its own skill. |
 | `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: set it on its own, since no preset turns it on; `normal mode` clears it. |
+| `/headroom on\|off\|status` | Tracks the [Headroom](https://github.com/headroomlabs-ai/headroom) compression layer. Opt-in, and the binary is never installed for you: turning it on without one prints the install command, and with one it injects a short block on how to recover compressed detail. The dashboard's Tools page shows the savings Headroom's own ledger records. |
 | `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
 | `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
 | `/tersio dashboard` | Open the Dashboard. |
@@ -151,7 +153,7 @@ Shared, and identical for every host:
 
 | What | Path |
 |---|---|
-| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, and the display currency |
+| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, headroom, and the display currency |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
 | Session state | `~/.tersio/state.json` — reset watermark, update check and cadence, rtk heads, and the doctor report |

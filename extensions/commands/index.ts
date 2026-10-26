@@ -17,7 +17,7 @@ const HELP = [
   '/tersio update <ponytail|rtk|caveman|all> [--dry-run]',
   '/tersio dashboard — open the Dashboard',
   '/tersio help — this table',
-  'mode switches: /caveman /rtk /combo (tersio) + /ponytail (upstream)',
+  'mode switches: /caveman /rtk /combo (tersio) + /ponytail (upstream) + /headroom',
 ].join('\n');
 
 
@@ -97,8 +97,8 @@ export default function tersioCommandsExtension(pi: ExtensionApi): void {
         await openScorecard(pi, ctx, parts.includes('--offline'));
         return;
       }
-      // Removed mode switches redirect to their own commands, so there is one spelling: /caveman, /rtk, /combo, /ponytail.
-      if (sub === 'caveman' || sub === 'rtk' || sub === 'combo' || sub === 'ponytail') {
+      // Removed mode switches redirect to their own commands, so there is one spelling: /caveman, /rtk, /combo, /ponytail, /headroom.
+      if (sub === 'caveman' || sub === 'rtk' || sub === 'combo' || sub === 'ponytail' || sub === 'headroom') {
         ctx?.ui?.notify?.(`Use /${sub} instead — /tersio no longer duplicates mode switches.\n${HELP}`, 'warning');
         return;
       }

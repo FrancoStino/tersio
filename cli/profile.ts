@@ -2,7 +2,7 @@
 import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
+  ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
   verbose,
 } from './common.ts';
 import type { WriteOptions } from './common.ts';
@@ -27,6 +27,7 @@ interface Profile {
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
+  headroomDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
   // The dashboard's Developer tools switch and accent. Both live here, not in browser storage, so
@@ -49,6 +50,7 @@ function defaultProfile(): Profile {
     rtkDefault: false,
     ponytailDefault: 'off',
     pstackDefault: 'off',
+    headroomDefault: 'off',
     currency: DEFAULT_CURRENCY,
     backupSchedule: 'monthly',
     devTools: false,
@@ -69,6 +71,7 @@ interface StoredSettings {
   rtkDefault?: unknown;
   ponytailDefault?: unknown;
   pstackDefault?: unknown;
+  headroomDefault?: unknown;
   currency?: unknown;
   backupSchedule?: unknown;
   devTools?: unknown;
@@ -92,6 +95,7 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   if (typeof stored.rtkDefault === 'boolean') base.rtkDefault = stored.rtkDefault;
   if (typeof stored.ponytailDefault === 'string' && PONYTAIL_DEFAULTS.has(stored.ponytailDefault)) base.ponytailDefault = stored.ponytailDefault;
   if (typeof stored.pstackDefault === 'string' && PSTACK_DEFAULTS.has(stored.pstackDefault)) base.pstackDefault = stored.pstackDefault;
+  if (typeof stored.headroomDefault === 'string' && HEADROOM_DEFAULTS.has(stored.headroomDefault)) base.headroomDefault = stored.headroomDefault;
   if (typeof stored.currency === 'string' && isCurrencyCode(stored.currency.trim().toUpperCase())) {
     base.currency = stored.currency.trim().toUpperCase() as CurrencyCode;
   }
@@ -168,6 +172,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     rtkDefault: profile.rtkDefault,
     ponytailDefault: profile.ponytailDefault,
     pstackDefault: profile.pstackDefault,
+    headroomDefault: profile.headroomDefault,
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     devTools: profile.devTools,
@@ -182,7 +187,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
   // Only a mode write is a session default; an accent or currency save is not, and would mislabel one.
-  const modesChanged = !before || ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault']
+  const modesChanged = !before || ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault']
     .some((key) => before[key as keyof StoredSettings] !== values[key as keyof typeof values]);
   if (modesChanged) recordActivity('mode', 'Session defaults saved', formatProfile(profile));
   console.log(`  [write] Session defaults in ${file}`);
@@ -190,7 +195,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
 }
 
 function formatProfile(profile: Profile): string {
-  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault}) · currency=${profile.currency}`;
+  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault}) · currency=${profile.currency}`;
 }
 
 export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
@@ -219,10 +224,11 @@ export function comboLevelOf(profile: Profile): string {
   return matches ? comboDefault : 'custom';
 }
 
-/** The status line the extensions print, read from the persisted profile. */
+/** The status line the extensions print, read from the persisted profile. Lockstep with formatStatus in extensions/shared/status.ts. */
 export function formatCliStatus(profile: Profile): string {
   const level = comboLevelOf(profile);
-  if (level === 'off') return '🧩 COMBO OFF';
-  const rtk = profile.rtkDefault ? 'ON' : 'OFF';
-  return `🧩 COMBO ${level.toUpperCase()}: 🪨 caveman=${profile.cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk} | 🧠 ponytail=${profile.ponytailDefault.toUpperCase()} | 🥔 pstack=${profile.pstackDefault.toUpperCase()}`;
+  const rtk = profile.rtkDefault ? 'on' : 'off';
+  if (level === 'off' && profile.cavemanDefault === 'off' && rtk === 'off' && profile.ponytailDefault === 'off' && profile.pstackDefault === 'off' && profile.headroomDefault === 'off') return '🧩 COMBO OFF';
+  const label = level === 'off' || level === 'custom' ? 'CUSTOM' : level.toUpperCase();
+  return `🧩 COMBO ${label}: 🪨 caveman=${profile.cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk.toUpperCase()} | 🍃 headroom=${profile.headroomDefault.toUpperCase()} | 🧠 ponytail=${profile.ponytailDefault.toUpperCase()} | 🥔 pstack=${profile.pstackDefault.toUpperCase()}`;
 }

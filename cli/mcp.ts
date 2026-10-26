@@ -2,12 +2,13 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
-import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
+import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, HEADROOM_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
 import { formatCurrency, readStoredCurrency } from './currency.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
 import type { RangeKey } from '../extensions/shared/agent-stats.ts';
+import { readHeadroomSavings } from '../extensions/shared/headroom-gain.ts';
 
 /** The spec version this server speaks; a client naming another is answered with this one. */
 const PROTOCOL_VERSION = '2025-06-18';
@@ -41,6 +42,7 @@ interface ModesToolArgs {
   rtk?: unknown;
   ponytail?: unknown;
   pstack?: unknown;
+  headroom?: unknown;
 }
 
 /** One validated value per mode a call may set; null means the call left that mode alone. */
@@ -50,6 +52,7 @@ interface ModeWants {
   rtk: 'on' | 'off' | null;
   ponytail: string | null;
   pstack: 'on' | 'off' | null;
+  headroom: 'on' | 'off' | null;
 }
 
 /**
@@ -101,9 +104,10 @@ async function modesText(want: ModeWants): Promise<string> {
   if (want.rtk !== null) next = { ...next, rtkDefault: want.rtk === 'on' };
   if (want.ponytail !== null) next = { ...next, ponytailDefault: want.ponytail };
   if (want.pstack !== null) next = { ...next, pstackDefault: want.pstack };
-  const changed = want.combo !== null || want.caveman !== null || want.rtk !== null || want.ponytail !== null || want.pstack !== null;
+  if (want.headroom !== null) next = { ...next, headroomDefault: want.headroom };
+  const changed = want.combo !== null || want.caveman !== null || want.rtk !== null || want.ponytail !== null || want.pstack !== null || want.headroom !== null;
   if (!changed) {
-    return `Current session defaults: ${formatProfile(next)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) or any single mode — caveman, rtk, ponytail, pstack — to change them.`;
+    return `Current session defaults: ${formatProfile(next)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) or any single mode — caveman, rtk, ponytail, pstack, headroom — to change them.`;
   }
   const { text } = await captureLog(() => writePluginSettings(next, { quiet: true }));
   return [text, `Session defaults saved: ${formatProfile(next)}`].filter(Boolean).join('\n');
@@ -129,7 +133,7 @@ const TOOLS = [
   },
   {
     name: 'tersio_modes',
-    description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack) overrides its piece of that preset.',
+    description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack, headroom) overrides its piece of that preset.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -138,8 +142,14 @@ const TOOLS = [
         rtk: { type: 'string', enum: [...RTK_DEFAULTS], description: 'Condensed shell output: on or off.' },
         ponytail: { type: 'string', enum: [...PONYTAIL_DEFAULTS], description: `Lean-code level: ${[...PONYTAIL_DEFAULTS].join(', ')}.` },
         pstack: { type: 'string', enum: [...PSTACK_DEFAULTS], description: 'Rigor mode: on or off.' },
+        headroom: { type: 'string', enum: [...HEADROOM_DEFAULTS], description: 'Headroom token-saver mode: on or off. Opt-in; tracks the user\'s own Headroom install.' },
       },
     },
+  },
+  {
+    name: 'tersio_headroom',
+    description: 'Durable Headroom compression savings: tokens saved, calls, cost avoided, and the by-client breakdown. Unmeasured when Headroom is not installed.',
+    inputSchema: { type: 'object', properties: {} },
   },
 ] as const;
 
@@ -173,8 +183,19 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
       rtk: rtkOrPstack(args.rtk, RTK_DEFAULTS, 'rtk'),
       ponytail: oneOf(args.ponytail, PONYTAIL_DEFAULTS, 'ponytail'),
       pstack: rtkOrPstack(args.pstack, PSTACK_DEFAULTS, 'pstack'),
+      headroom: rtkOrPstack(args.headroom, HEADROOM_DEFAULTS, 'headroom'),
     };
     return { content: [{ type: 'text', text: await modesText(want) }] };
+  }
+  if (name === 'tersio_headroom') {
+    const gain = readHeadroomSavings();
+    if (!gain.measured) return { content: [{ type: 'text', text: `Headroom savings: not measured — ${gain.failure}. Install Headroom, then run its proxy or wrap your agent.` }] };
+    const lines = [
+      `Headroom savings — lifetime: ${gain.lifetime.tokensSaved.toLocaleString()} of ${gain.lifetime.tokensBefore.toLocaleString()} tokens (${gain.lifetime.savingsPercent.toFixed(1)}%), $${gain.lifetime.costUsd.toFixed(4)} avoided across ${gain.lifetime.calls} calls.`,
+      `Today: ${gain.windows.today.tokensSaved.toLocaleString()} tokens · 7 days: ${gain.windows.last7Days.tokensSaved.toLocaleString()} · 30 days: ${gain.windows.last30Days.tokensSaved.toLocaleString()}.`,
+      ...gain.byClient.map((row) => `${row.client}: ${row.calls} calls · ${row.tokensSaved.toLocaleString()} tokens saved`),
+    ];
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
   throw new RpcError(-32602, `unknown tool: ${name}`);
 }
@@ -197,7 +218,7 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'tersio', version: PACKAGE_VERSION },
-        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, and read or set session modes with tersio_modes.',
+        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, read or set session modes with tersio_modes, and Headroom compression savings with tersio_headroom.',
       };
     } else if (method === 'ping') result = {};
     else if (method === 'tools/list') result = { tools: TOOLS };

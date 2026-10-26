@@ -1,6 +1,10 @@
 ## Unreleased
 
 ### Added
+ - **Headroom** joins the mode set. [Headroom](https://github.com/headroomlabs-ai/headroom) compresses tool outputs, file reads, and history through a local proxy, and Tersio now tracks it end to end: `/headroom on|off` toggles the mode, the status line gains a `🍃 headroom=` segment, and the Combo presets leave it alone the way they leave pstack alone. The binary stays yours to install — turning the mode on without one names the install command and installs nothing — and with one present, the session gets a short block telling the model how to recover compressed detail.
+ - The dashboard detects the Headroom install, and the Tools page carries it both ways: with the binary absent it offers an explicit Install button, and once installed it reads Headroom's own durable savings ledger, so its tokens kept, calls, and cost avoided sit next to rtk's on the same page. A Headroom row in Settings sets the session-start default.
+ - A **`tersio_headroom`** tool on the MCP server, reading the same savings ledger: tokens saved per window and the by-client breakdown, or an explicit "not measured" when the binary is absent. `tersio_modes` gained the `headroom` value alongside the other single modes.
+ - A `--headroom-default on|off` flag, matching the other per-mode defaults.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
 
 ### Fixed

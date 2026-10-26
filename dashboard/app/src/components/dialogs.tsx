@@ -636,6 +636,7 @@ interface DefaultsPayload {
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
+  headroomDefault: string;
 }
 
 const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyph: string; hint: string; options: Array<{ id: string; label: string }> }> = [
@@ -688,13 +689,20 @@ const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyp
     hint: "Rigor mode. Opt-in, so no preset turns it on or off.",
     options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
   },
+  {
+    field: "headroomDefault",
+    label: "Headroom",
+    glyph: "🍃",
+    hint: "Headroom compression for new sessions. Opt-in: install the headroom CLI yourself; no preset turns it on.",
+    options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
+  },
 ];
 
 // Session-start defaults mirror `tersio settings`; each row saves on its own.
 function DefaultModes() {
   const toast = useToast();
   const [current, setCurrent] = useState<DefaultsPayload>({
-    comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off",
+    comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off", headroomDefault: "off",
   });
   const [loaded, setLoaded] = useState(false);
 

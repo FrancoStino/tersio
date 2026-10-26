@@ -1,7 +1,7 @@
 {
   "name": "@krtclcdy/tersio",
   "version": "2.25.14",
-  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
+  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, Headroom compression, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
   "keywords": [
     "token-saving",
     "ai-tools",
@@ -30,6 +30,7 @@
     "extensions": [
       "./extensions/caveman/index.ts",
       "./extensions/pstack/index.ts",
+      "./extensions/headroom/index.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
       "./extensions/timing/index.ts",
@@ -47,6 +48,7 @@
     "extensions": [
       "./extensions/caveman/index.ts",
       "./extensions/pstack/index.ts",
+      "./extensions/headroom/index.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
       "./extensions/combo/index.ts",
@@ -114,6 +116,15 @@
       "pstackDefault": {
         "type": "enum",
         "description": "Session-start default; every combo preset above off turns it on",
+        "values": [
+          "off",
+          "on"
+        ],
+        "default": "off"
+      },
+      "headroomDefault": {
+        "type": "enum",
+        "description": "Session-start default for the opt-in Headroom token-saver; no combo preset turns it on",
         "values": [
           "off",
           "on"

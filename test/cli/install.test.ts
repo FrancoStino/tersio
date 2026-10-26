@@ -206,6 +206,7 @@ test("package manifest declares always-on extensions plus updater feature and se
   expect(manifest.omp?.extensions).toEqual([
     "./extensions/caveman/index.ts",
     "./extensions/pstack/index.ts",
+    "./extensions/headroom/index.ts",
     "./extensions/rtk/session.ts",
     "./extensions/rtk/filter.ts",
     "./extensions/combo/index.ts",
@@ -296,7 +297,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
       env: cliEnv(home),
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on\)/);
+    expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=on · headroom=off\)/);
   } finally {
     rmTree(home);
   }

@@ -20,11 +20,11 @@ import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } 
 import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
+import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { findPackageRoot, resolveHeadroomBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -149,6 +149,7 @@ async function statusJson(): Promise<string> {
     rtk: profile.rtkDefault ? 'on' : 'off',
     ponytail: profile.ponytailDefault,
     pstack: profile.pstackDefault,
+    headroom: profile.headroomDefault,
   });
 }
 
@@ -165,6 +166,33 @@ interface HostJob {
 
 /** The last command run per host, so the guide can stop waiting the moment it exits. */
 const hostJobs = new Map<string, HostJob>();
+
+/** The one Headroom install job, so the Tools page can poll /health until the binary appears. */
+const headroomJob: { startedAt: number; code: number | null } = { startedAt: 0, code: null };
+
+/**
+ * Install Headroom from the dashboard. Always user-initiated and never a tersio side effect: the
+ * mode only tracks the binary, and the pip call runs only when this endpoint was called.
+ */
+function spawnHeadroomInstall(): boolean {
+  const win = process.platform === 'win32';
+  const cmd = win ? 'pip' : 'python3';
+  const args = win ? ['install', '--user', 'headroom-ai[all]'] : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  headroomJob.startedAt = Date.now();
+  headroomJob.code = null;
+  recordActivity('agent', 'Headroom install started');
+  child.on('exit', (code) => {
+    headroomJob.code = code ?? 0;
+    recordActivity('agent', `Headroom install ${headroomJob.code === 0 ? 'finished' : 'failed'}`, undefined, headroomJob.code === 0);
+  });
+  child.on('error', (error) => {
+    headroomJob.code = -1;
+    recordActivity('agent', 'Headroom install failed', error.message, false);
+  });
+  child.unref();
+  return true;
+}
 
 /** The favicon types the mark catalog uses, served as the type the bytes actually are. */
 const MARK_TYPES: Readonly<Record<string, string>> = {
@@ -252,6 +280,13 @@ function rtkVersion(bin: string): string | null {
   }
 }
 
+function headroomVersion(bin: string): string | null {
+  // Headroom prints `headroom, version 0.40.0`; keep the bare version so the UI reads like the agents' rows.
+  const raw = rtkVersion(bin);
+  const m = raw?.match(/version\s+(\S+)/);
+  return m ? m[1] : raw;
+}
+
 function ompDefaultModel(): string | null {
   try {
     const text = readFileSync(path.join(OMP_AGENT_DIR, 'config.yml'), 'utf8');
@@ -265,6 +300,8 @@ function ompDefaultModel(): string | null {
 function healthJson(): string {
   const rtkBin = resolveRtkBinary();
   const rtkPresent = rtkBin !== null;
+  const headroomBin = resolveHeadroomBinary();
+  const headroomPresent = headroomBin !== null;
   const detectedOmpPath = ompPath();
   const detectedPiPath = piPath();
   const detectedOpencodePath = opencodePath();
@@ -288,6 +325,7 @@ function healthJson(): string {
     opencodeDir: agentDir('opencode'),
     provider: ompDefaultModel(),
     rtk: { present: rtkPresent, version: rtkPresent ? rtkVersion(rtkBin as string) : null, path: rtkBin || 'not found in PATH' },
+    headroom: { present: headroomPresent, version: headroomPresent ? headroomVersion(headroomBin as string) : null, path: headroomBin || 'not found in PATH' },
     home: tersioHomePath(),
   });
 }
@@ -401,6 +439,7 @@ function computeDoctorRows(): DoctorRow[] {
   addon('Extension files present', dangling.length === 0, dangling.length ? dangling.join(', ') : 'ok', 'Extensions');
   ext('Caveman extension', path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts'));
   ext('pstack extension', path.join(tersioPluginDir, 'extensions', 'pstack', 'index.ts'));
+  ext('Headroom extension', path.join(tersioPluginDir, 'extensions', 'headroom', 'index.ts'));
   ext('RTK extension', path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts'));
   const rule = path.join(tersioPluginDir, 'extensions', 'caveman', 'rule.md');
   const ruleAge = ageStr(rule);
@@ -419,6 +458,9 @@ function computeDoctorRows(): DoctorRow[] {
   const rtkAge = rtkBin ? ageStr(rtkBin) : null;
   const rtkAt = rtkBin ? absTime(rtkBin) : null;
   addon('RTK binary', rtkVer !== null, rtkVer && rtkAge && rtkAt ? `${rtkVer} (updated ${rtkAge} · ${rtkAt})` : rtkBin || 'not found in PATH');
+  // Opt-in and user-owned: the row reports the binary when it exists and stays quiet when it does not.
+  const headroomBin = resolveHeadroomBinary();
+  if (headroomBin) addon('Headroom binary', true, headroomVersion(headroomBin) ?? headroomBin);
   // Ponytail rides inside the plugin now, so the version comes from the vendored copy, not a sibling package.
   const ponytailPkg = path.join(tersioPluginDir, 'extensions', 'ponytail', 'package.json');
   let ponytailVer: string | null = null;
@@ -506,6 +548,12 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     profile.pstackDefault = v;
     events.push(`pstack to ${v}`);
   }
+  if (body.headroomDefault !== undefined) {
+    const v = String(body.headroomDefault);
+    if (!HEADROOM_DEFAULTS.has(v)) return { ok: false, error: 'unknown headroom level' };
+    profile.headroomDefault = v;
+    events.push(`Headroom to ${v}`);
+  }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
     if (!BACKUP_SCHEDULES.has(v)) return { ok: false, error: 'unknown backup schedule' };
@@ -541,6 +589,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       rtkDefault: profile.rtkDefault,
       ponytailDefault: profile.ponytailDefault,
       pstackDefault: profile.pstackDefault,
+      headroomDefault: profile.headroomDefault,
       backupSchedule: profile.backupSchedule,
       devTools: profile.devTools,
       accent: profile.accent,
@@ -786,6 +835,21 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: true, pending: true, host, action }));
       return;
     }
+    if (req.url === '/api/headroom/install' && req.method === 'POST') {
+      if (resolveHeadroomBinary()) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, present: true }));
+        return;
+      }
+      if (!spawnHeadroomInstall()) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'cannot start the install here — run: pip install "headroom-ai[all]"' }));
+        return;
+      }
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, pending: true }));
+      return;
+    }
     if (req.url === '/settings' && req.method === 'GET') {
       storedProfile().then((profile) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -795,6 +859,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           rtkDefault: profile.rtkDefault,
           ponytailDefault: profile.ponytailDefault,
           pstackDefault: profile.pstackDefault,
+          headroomDefault: profile.headroomDefault,
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           devTools: profile.devTools,

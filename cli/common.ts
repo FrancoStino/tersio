@@ -46,6 +46,7 @@ const CAVEMAN_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra', 'megacave-lite
 const ACCENT_DEFAULTS = new Set(['emerald', 'violet', 'slate', 'cyan', 'rose', 'amber', 'orange']);
 const PONYTAIL_DEFAULTS = new Set(['off', 'lite', 'full', 'ultra']);
 const PSTACK_DEFAULTS = new Set(['off', 'on']);
+const HEADROOM_DEFAULTS = new Set(['off', 'on']);
 const RTK_DEFAULTS = new Set(['on', 'off']);
 
 // Mirrors COMBO_LEVELS in extensions/shared/session-state.ts: a preset owns three modes, and pstack stays opt-in.
@@ -80,7 +81,7 @@ const COMMANDS: Record<string, true> = { install: true, update: true, doctor: tr
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([
   '--host', '--port', '--export', '--currency', '--scope', '--write',
-  '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--rtk-default',
+  '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--headroom-default', '--rtk-default',
 ]);
 const args = process.argv.slice(2);
 const commandArg = args.find((arg, i) => !arg.startsWith('-') && !VALUE_FLAGS.has(args[i - 1]));
@@ -129,9 +130,10 @@ const comboDefaultFlag = rawComboFlag && COMBO_RETIRED.has(rawComboFlag) ? 'lite
 const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEFAULTS, '--caveman-default');
 const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
 const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');
+const headroomDefaultFlag = parseEnum(flagValue('--headroom-default'), HEADROOM_DEFAULTS, '--headroom-default');
 const rtkDefaultFlag = parseEnum(flagValue('--rtk-default'), RTK_DEFAULTS, '--rtk-default');
 
-const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag]
+const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag]
   .some((flag) => flag !== undefined);
 
 function debug(...a: unknown[]): void {
@@ -404,14 +406,14 @@ function textTable(headers: string[], rows: string[][], right: boolean[] = [], m
 export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
-  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
+  CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, HEADROOM_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
   parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand, mcp,
   install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
   dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,
-  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, rtkDefaultFlag, profileFlagsGiven,
+  comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag, rtkDefaultFlag, profileFlagsGiven,
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,
   writeConfigLines, ensureExtensionInConfig, removeExtensionFromConfig,
   readPonytailConfig, parseJsonObject, parsePonytailConfig, patchPonytailConfig,

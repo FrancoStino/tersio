@@ -49,6 +49,7 @@ export const TREE_FILES: readonly string[] = [
   'pstack/index.ts',
   'pstack/rule.md',
   ...TREE_PSTACK_FILES,
+  'headroom/index.ts',
   'rtk/session.ts',
   'rtk/filter.ts',
   'timing/index.ts',

@@ -14,7 +14,7 @@ import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { fetchJson, piAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { fetchJson, piAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
@@ -52,6 +52,8 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // OMP loads the plugin from its plugins dir; pi from its npm dir, per its settings.json.
   const pluginsDir = OMP_PLUGINS_DIR;
   const rtkBin = resolveRtkBinary();
+  // Headroom is the user's own opt-in install, so the row only reports it and never installs.
+  const headroomBin = resolveHeadroomBinary();
   // OpenCode's own binary, when installed: `~/.opencode/bin` first, then PATH.
   const opencodeBin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   // One source for the installed plugin path, so the doctor follows a package rename.
@@ -164,11 +166,18 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       return err.stdout?.trim() || err.stderr?.trim() || null;
     },
   ) : Promise.resolve(null);
+  const headroomVersionProbe: Promise<string | null> = headroomBin ? execP(headroomBin, ['--version'], { timeout: 5000 }).then(
+    (r) => r.stdout.trim() || r.stderr.trim() || null,
+    (e) => {
+      const err = e as { stdout?: string; stderr?: string };
+      return err.stdout?.trim() || err.stderr?.trim() || null;
+    },
+  ) : Promise.resolve(null);
   // A manager that lost its daemonized process reads stopped, while the orphan still holds the port.
   const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
     ? Promise.resolve(serviceState())
     : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime, headroomVersionRaw], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -194,6 +203,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       rtkVersionProbe,
       probes.ponytailMtime,
       probes.pricesMtime,
+      headroomVersionProbe,
     ]),
     Promise.all([opencodeServiceProbe]),
   ]));
@@ -350,6 +360,10 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   if (rtkBin === null) unused('RTK exec', '· install Tersio to place rtk in ~/.bun/bin');
   else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode'))) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
+  // Headroom is the user's own opt-in install, so the line stays informational: out of the tally either way.
+  const headroomVersion = headroomVersionRaw?.match(/version\s+(\S+)/)?.[1] ?? headroomVersionRaw ?? '';
+  if (headroomBin !== null) console.log(`  —  Headroom: ${headroomVersion || 'version unavailable'} (optional; /headroom on enables the mode)`);
+  else console.log('  —  Headroom: not installed · optional: pip install "headroom-ai[all]", then /headroom on');
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
   check('Ponytail', ponytailPkgText !== null, [PONYTAIL_VERSION, ponytailAge].filter(Boolean).join(' '));
   if (ponytailStale.length > 0) {

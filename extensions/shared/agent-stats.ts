@@ -7,6 +7,8 @@ import { homeDir } from './utils.ts';
 import { usageDbPath } from './usage-store.ts';
 import { readRtkGainByVerb, rtkGainFailure } from './rtk-gain.ts';
 import type { RtkCommandRow } from './rtk-gain.ts';
+import { readHeadroomSavings } from './headroom-gain.ts';
+import type { HeadroomClientRow } from './headroom-gain.ts';
 import { readRtkAdoption } from './usage-ledger.ts';
 import type { RtkAdoption } from './usage-ledger.ts';
 
@@ -519,6 +521,8 @@ export interface AgentStats {
   toolSeries: Array<{ ts: number; tool: string; calls: number; errors: number }>;
   /** What rtk kept out of context in this range, and how much of the work it took. */
   rtk: AgentRtk;
+  /** What Headroom's compression saved, read through its own savings CLI. */
+  headroom: AgentHeadroom;
   usageSeries: AgentWindowSeries[];
   windowInsights: AgentWindowInsight[];
   providerHourly: AgentProviderHour[];
@@ -577,6 +581,47 @@ function readRtk(cutoff: number): AgentRtk {
   };
 }
 
+/** Headroom's durable compression savings, read through its own `savings --json`. */
+export interface AgentHeadroom {
+  /** False when the binary was absent or the read failed: a zero here means "not measured", never "saved nothing". */
+  measured: boolean;
+  /** Why the read failed, when it did. Empty on a successful read. */
+  failure: string;
+  tokensSaved: number;
+  tokensBefore: number;
+  costUsd: number;
+  calls: number;
+  savingsPercent: number;
+  todayTokens: number;
+  last7Tokens: number;
+  last30Tokens: number;
+  byClient: HeadroomClientRow[];
+}
+
+/** A read that never ran, so a page draws "not measured" rather than a row of zeros. */
+const EMPTY_HEADROOM: AgentHeadroom = {
+  measured: false, failure: '', tokensSaved: 0, tokensBefore: 0, costUsd: 0, calls: 0, savingsPercent: 0,
+  todayTokens: 0, last7Tokens: 0, last30Tokens: 0, byClient: [],
+};
+
+/** Headroom's savings for the ledger's own windows; it aggregates, so no cutoff of ours applies. */
+function readHeadroom(): AgentHeadroom {
+  const gain = readHeadroomSavings();
+  return {
+    measured: gain.measured,
+    failure: gain.measured ? '' : gain.failure,
+    tokensSaved: gain.lifetime.tokensSaved,
+    tokensBefore: gain.lifetime.tokensBefore,
+    costUsd: gain.lifetime.costUsd,
+    calls: gain.lifetime.calls,
+    savingsPercent: gain.lifetime.savingsPercent,
+    todayTokens: gain.windows.today.tokensSaved,
+    last7Tokens: gain.windows.last7Days.tokensSaved,
+    last30Tokens: gain.windows.last30Days.tokensSaved,
+    byClient: gain.byClient,
+  };
+}
+
 export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
   return {
     available: false,
@@ -595,7 +640,7 @@ export function emptyAgentStats(range: RangeKey = '24h'): AgentStats {
     byModel: [], byProvider: [], byProject: [], byAgentType: [],
     series: [], seriesByProvider: [], modelSeries: [], modelPerformance: [], hourOfDay: [], topModels: [],
     recent: [], errorGroups: [], errorModels: [], traces: [],
-    tools: [], toolsByModel: [], toolSeries: [], rtk: EMPTY_RTK,
+    tools: [], toolsByModel: [], toolSeries: [], rtk: EMPTY_RTK, headroom: EMPTY_HEADROOM,
     usageSeries: [], windowInsights: [], providerHourly: [],
     requestStats: {
       requests: 0, failed: 0, aborted: 0, tokens: 0, costUsd: 0, unpriced: 0, shipped: 0,
@@ -1703,6 +1748,8 @@ export function readAgentStats(range: RangeKey = '24h', view: AgentView = 'all',
     Object.assign(stats, readToolSeries(db, cutoff, stats.bucketMs));
     // rtk's own database is second, so a Tools page never fails on it.
     stats.rtk = readRtk(cutoff);
+    // Headroom aggregates its own ledger and only reports when its CLI is present.
+    stats.headroom = readHeadroom();
   }
   if (stats.byModel.length > 0) stats.topModels = stats.byModel.slice(0, 12);
   if (parts.has('providerHourly')) stats.providerHourly = readProviderHourly(db, cutoff);

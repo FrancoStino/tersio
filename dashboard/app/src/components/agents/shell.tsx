@@ -60,7 +60,7 @@ export function ThemeToggle() {
   );
 }
 
-/** The five session-start mode fields the banner reads. */
+/** The six session-start mode fields the banner reads. */
 export interface ModeState {
   comboDefault: string;
   /** The level the banner may claim: `custom` once the three modes stop matching the preset. */
@@ -69,12 +69,14 @@ export interface ModeState {
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
+  headroomDefault: string;
 }
 
-/** One glyph and one short name per mode, in the order the combo names them; pstack trails the three. */
+/** One glyph and one short name per mode, in the order the combo names them; the opt-in modes trail the three. */
 const MODE_GLYPHS = [
   { key: "caveman", glyph: "🪨", label: "caveman", level: (m: ModeState) => (m.cavemanDefault ?? "off").toUpperCase() },
   { key: "rtk", glyph: "🗜️", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
+  { key: "headroom", glyph: "🍃", label: "headroom", level: (m: ModeState) => (m.headroomDefault ?? "off").toUpperCase() },
   { key: "ponytail", glyph: "🧠", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
   { key: "pstack", glyph: "🥔", label: "pstack", level: (m: ModeState) => (m.pstackDefault ?? "off").toUpperCase() },
 ] as const;
