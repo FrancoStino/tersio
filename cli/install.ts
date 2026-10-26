@@ -504,7 +504,7 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
 }
 
 
-async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = {}): Promise<Profile> {
+async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = {}): Promise<{ profile: Profile; choseDefaults: boolean }> {
   // Seed from the stored defaults so flag-less runs keep them; a named host reads its own section first.
   const profile = await storedProfile(opts.host);
 
@@ -542,7 +542,8 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
   if (headroomDefaultFlag !== undefined) profile.headroomDefault = headroomDefaultFlag;
 
   if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults${opts.host ? ` for ${opts.host}` : ''}: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
-  return profile;
+  // Only a run that actually chose (a preset pick or a per-mode flag) may write a host's own section; a bare pinned install must leave the shared store as that agent's source.
+  return { profile, choseDefaults: comboChosen || profileFlagsGiven };
 }
 
 let updatePromptDone = false;
@@ -816,7 +817,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   }
 
   // Resolve session defaults: flags > interactive prompt > defaults; a named host reads its own section first.
-  const profile = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
+  const { profile, choseDefaults } = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
 
   const userDir = OMP_AGENT_DIR;
   const userExtDir = path.join(userDir, 'extensions');
@@ -866,7 +867,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'opencode'));
     await capture('settings', async () => {
       await writePluginSettings(profile, installOptions);
-      if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+      if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('OpenCode', profile.comboDefault));
@@ -879,7 +880,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pi'));
     await capture('settings', async () => {
       await writePluginSettings(profile, installOptions);
-      if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+      if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('pi', profile.comboDefault));
@@ -914,7 +915,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
   if (selfPlugin) await capture('settings', async () => {
     await writePluginSettings(profile, installOptions);
-    if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+    if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
   });
 
   if (quiet) {

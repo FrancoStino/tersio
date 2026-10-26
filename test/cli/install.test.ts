@@ -285,6 +285,14 @@ test("a pinned host scopes the printed defaults and the per-host write to that a
   expect(result.stdout).toMatch(/would write session defaults for pi/);
 });
 
+test("a bare pinned install never snapshots the shared defaults into a host section", () => {
+  const result = run("install", "--dry-run", "--yes", "--verbose", "--host", "pi");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/Defaults for pi:/);
+  // No choice was made, so pi keeps reading the shared store and later global changes still reach it.
+  expect(result.stdout).not.toMatch(/would write session defaults for pi/);
+});
+
 test("installer rejects review as a Ponytail default", () => {
   const bad = run("install", "--dry-run", "--yes", "--ponytail-default", "review");
   expect(bad.status).toBe(1);
