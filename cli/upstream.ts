@@ -842,7 +842,8 @@ async function checkHeadroom(): Promise<SourceRow> {
     status: failure ? failure.status : 'ok',
     kind: 'version',
     link: local ? releaseUrl(HEADROOM_REPO, local) : '',
-    gaps: local === null ? ['the headroom binary is not on PATH'] : [],
+    // Headroom is the user's opt-in install, so an absent binary is not a gap of ours; the pin and note say so.
+    gaps: [],
     moved: [],
     appeared: [],
     gone: [],
