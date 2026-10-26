@@ -268,26 +268,24 @@ sequenceDiagram
 
 ## The capture gateway
 
-`tersio gateway` is a loopback proxy for one provider's model traffic. It exists because the hosts do not record the same things: omp writes duration and first-token latency into its transcript, pi writes neither, and OpenCode keeps no JSONL at all, so its traces draw empty. A reply carries those numbers whatever the host writes down, so recording them in one place levels the three hosts.
+`tersio gateway` is a loopback proxy for one provider's model traffic. It exists because hosts record different things: some keep duration and first-token latency, some keep only tokens, and some keep no transcript at all. A reply carries those numbers whatever the host writes down, so recording them in one place gives every host the same detail.
 
 ```mermaid
 flowchart LR
-  HOST["pi or OpenCode<br/>provider base URL rewritten"] -->|"POST /gw/&lt;host&gt;--&lt;provider&gt;/v1/…"| GW["tersio gateway<br/>127.0.0.1:3428"]
-  GW <-->|"forward, stream back"| UP["the host's original upstream<br/>vendor or another gateway"]
-  GW -->|"usage row"| DB["usage.db<br/>files: gateway://&lt;host&gt;/&lt;session&gt;"]
+  HOST["host, provider base URL rewritten"] -->|"POST /gw/&lt;host&gt;--&lt;provider&gt;/v1/…"| GW["tersio gateway<br/>127.0.0.1:3428"]
+  GW <-->|"forward, stream back"| UP["the host's original upstream"]
+  GW -->|"usage row"| DB["usage.db<br/>gateway://&lt;host&gt;/&lt;session&gt;"]
   GW -->|"turn text, recording on"| TURNS["~/.tersio/gateway/<br/>7 days · 256 MiB"]
   DB --> DASH["traces, requests, models"]
   TURNS --> TRACE["trace spans and the request drawer"]
 ```
 
-- **Wiring is a base-URL rewrite with a stash.** `tersio gateway wire` moves one provider's URL to `http://127.0.0.1:<port>/gw/<key>` and keeps the original in `~/.tersio/gateway.json`; unwire puts it back. pi also needs `compat.sendSessionAffinityHeaders`, which the wiring adds and remembers to remove.
-- **The proxy does not translate.** It forwards the method, headers, body, and query to the original URL and streams the reply back byte for byte. The only body change is `stream_options.include_usage` for an OpenAI stream, which otherwise reports no tokens. A provider that is itself a gateway chains without knowing it has a proxy in front.
-- **Identity comes from headers the hosts already send.** `x-opencode-session`, the session-affinity header, `session_id`, and `prompt_cache_key` are read in that order; with none, the first user message is hashed. No host config carries a Tersio session id.
-- **One row per turn, keyed by its start.** The row id is the turn's epoch-ms start, so a turn read back from the turn log and a row in the store join without extra state.
-- **The gateway's session wins.** A session id in `~/.tersio/gateway/sessions.jsonl` makes the sync skip that session's native pi transcript or OpenCode rows, so a wired provider cannot double count. Sessions captured before wiring keep their native rows.
-- **Recording is opt-in and bounded.** `--record on` keeps each turn's request and reply, each capped at 64 KiB; the store drops buckets older than 7 days first, then the oldest until it fits 256 MiB. With it off, a gateway session shows usage only.
-- **A gateway session is a dashboard session.** Its synthetic `gateway://` file row groups like a transcript: traces list it, the title is the first prompt, spans carry tokens and cost, and the drawer shows the recorded reply.
-- **The store protects the rows it cannot rebuild.** Gateway rows are not transcripts, so the backfill never zeroes their mtime, and the gateway's own store init stamps the parser version; a store without one reads as a foreign build whose tables the next sync would rebuild.
+- **Wiring is a base-URL rewrite with a stash.** One row per host in `cli/gateway-wire.ts` names its config file, where the URL lives, and any compat flag, so a new host is that row. The original URL goes into `~/.tersio/gateway.json`, and unwire puts it back.
+- **The proxy does not translate.** Method, headers, body, and query go to the original URL, and the reply streams back byte for byte. The only body change is `stream_options.include_usage` on an OpenAI stream, which otherwise reports no tokens.
+- **Identity comes from what the agent already sends.** The known session headers, then `prompt_cache_key`; with neither, the first user message is hashed. Nothing in the host's config carries a Tersio session id.
+- **One row per turn, keyed by its start.** The row id is the turn's epoch-ms start, so a turn in the log and a row in the store join without extra state. A captured session wins: the sync skips that session's native transcript or sqlite rows, so nothing double counts.
+- **Recording is opt-in and bounded.** `--record on` keeps request and reply, 64 KiB each; buckets past 7 days go first, then the oldest until the store fits 256 MiB. A captured session then renders like any other: title from the first prompt, spans with tokens and cost, and a drawer with the recorded reply.
+- **Rows the store cannot rebuild are protected.** Gateway rows are not transcripts, so the backfill never zeroes their mtime, and the gateway's store init stamps the parser version; without it the next sync would rebuild the tables and drop them.
 
 ## Key invariants
 
