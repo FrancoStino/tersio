@@ -167,18 +167,39 @@ export async function unwireGatewayHost(host: WiredHost, provider?: string): Pro
   writeGatewayConfig(cfg);
 }
 
-/** One line per wired provider; the health probe is best-effort, so an offline gateway still lists. */
-export function printGatewayWiring(): void {
+export interface GatewayProviderView {
+  provider: string;
+  /** The URL the host points at now. */
+  url: string;
+  /** The upstream the gateway forwards to; null when the provider is not wired. */
+  upstream: string | null;
+  wired: boolean;
+}
+
+export interface GatewayHostView {
+  host: WiredHost;
+  /** The config file this host's providers live in. */
+  file: string;
+  /** False when the file is missing or unreadable, so the pane can say why it is empty. */
+  readable: boolean;
+  providers: GatewayProviderView[];
+}
+
+/** What Settings shows: every adapter host, its providers, and which ones go through the gateway. */
+export function gatewayInventory(): GatewayHostView[] {
   const cfg = readGatewayConfig();
-  const keys = Object.keys(cfg.providers);
-  if (keys.length === 0) {
-    console.log(`No providers are wired through the gateway. Wire one with \`tersio gateway wire --host <${WIRED_HOST_IDS.join('|')}> --provider <name>\`.`);
-  } else {
-    for (const key of keys) {
-      const entry = cfg.providers[key];
-      console.log(`  ${entry.host.padEnd(8)} ${entry.provider.padEnd(16)} → ${gatewayUrl(cfg, key)}  (upstream ${entry.url})`);
+  return WIRED_HOST_IDS.map((host) => {
+    const file = gatewayHostConfigPath(host);
+    const config = readJson(file);
+    const providers = (config ? providersOf(config, host) : null) ?? {};
+    const views: GatewayProviderView[] = [];
+    for (const provider of Object.keys(providers)) {
+      const key = gatewayRouteKey(host, provider);
+      const found = config ? entryOf(config, host, provider) : null;
+      const url = found && typeof found.container[found.key] === 'string' ? String(found.container[found.key]) : '';
+      const wired = url === gatewayUrl(cfg, key);
+      views.push({ provider, url, wired, upstream: wired ? (cfg.providers[key]?.url ?? null) : null });
     }
-  }
-  // Adapters, not capture: any host id can be captured, but only these have a config writer.
-  console.log(`Adapter hosts: ${WIRED_HOST_IDS.join(', ')} · recording ${cfg.record ? 'on' : 'off'} · retention 7 days / 256 MiB`);
+    return { host, file, readable: config !== null, providers: views };
+  });
 }

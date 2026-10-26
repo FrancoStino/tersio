@@ -813,6 +813,59 @@ export async function postReset(): Promise<boolean> {
   }
 }
 
+export interface GatewayProviderView {
+  provider: string;
+  /** The URL the host points at now. */
+  url: string;
+  /** The upstream the gateway forwards to; null when the provider is not wired. */
+  upstream: string | null;
+  wired: boolean;
+}
+
+export interface GatewayHostView {
+  host: string;
+  file: string;
+  readable: boolean;
+  providers: GatewayProviderView[];
+}
+
+/** Mirrors the server's /api/gateway payload: one status, one recording switch, every adapter host. */
+export interface GatewayState {
+  running: boolean;
+  error: string;
+  port: number;
+  record: boolean;
+  hosts: GatewayHostView[];
+}
+
+export type GatewayAction =
+  | { action: "wire"; host: string; provider: string }
+  | { action: "unwire"; host: string; provider?: string }
+  | { action: "record"; on: boolean }
+  | { action: "start" }
+  | { action: "stop" };
+
+export async function fetchGateway(): Promise<GatewayState | null> {
+  try {
+    return await getJSON<GatewayState>("api/gateway");
+  } catch {
+    return null;
+  }
+}
+
+export async function actGateway(body: GatewayAction): Promise<GatewayState | null> {
+  try {
+    const res = await fetch("api/gateway", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return (await res.json()) as GatewayState;
+  } catch {
+    return null;
+  }
+}
+
 export type UpdateSchedule = "off" | "daily" | "weekly" | "monthly";
 export type UpdateStatus = "idle" | "checking" | "applying";
 

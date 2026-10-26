@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { startGatewayServer } from '../../cli/gateway.ts';
-import { gatewayProviderUrl, unwireGatewayHost, wireGatewayHost, printGatewayWiring, WIRED_HOST_IDS } from '../../cli/gateway-wire.ts';
+import { gatewayInventory, gatewayProviderUrl, unwireGatewayHost, wireGatewayHost } from '../../cli/gateway-wire.ts';
 import { gatewayTurnsDir, pruneGatewayStore, readGatewayConfig, readGatewaySessionIndex, readGatewayTurns, writeGatewayConfig } from '../../extensions/shared/gateway.ts';
 import { syncUsageDb, usageDbPath } from '../../extensions/shared/usage-store.ts';
 import { sqliteRead } from '../../extensions/shared/sqlite.ts';
@@ -208,19 +208,23 @@ test('wiring rewrites the provider URL and unwiring restores the file', async ()
   expect(readGatewayConfig().providers).toEqual({});
 });
 
-test('status names the adapter hosts instead of hard-coding two of them', () => {
-  const lines: string[] = [];
-  const original = console.log;
-  console.log = (...parts: unknown[]): void => { lines.push(parts.join(' ')); };
-  try {
-    printGatewayWiring();
-  } finally {
-    console.log = original;
-  }
-  const output = lines.join('\n');
-  // Both the empty-state hint and the footer read the adapter table.
-  expect(output).toContain(`--host <${WIRED_HOST_IDS.join('|')}>`);
-  expect(output).toContain(`Adapter hosts: ${WIRED_HOST_IDS.join(', ')}`);
+test('the inventory lists each adapter host provider with its wiring state', async () => {
+  const piFile = path.join(home, '.pi', 'agent', 'models.json');
+  fs.mkdirSync(path.dirname(piFile), { recursive: true });
+  fs.writeFileSync(piFile, `${JSON.stringify({ providers: { magpie: { baseUrl: 'http://127.0.0.1:3425/v1' } } }, null, 2)}\n`);
+  const ocFile = path.join(home, '.config', 'opencode', 'opencode.json');
+  fs.mkdirSync(path.dirname(ocFile), { recursive: true });
+  fs.writeFileSync(ocFile, `${JSON.stringify({ provider: { zen: { options: { baseURL: 'https://opencode.ai/zen/v1' } } } }, null, 2)}\n`);
+
+  const before = gatewayInventory();
+  const pi = before.find((host) => host.host === 'pi');
+  expect(pi?.providers).toEqual([{ provider: 'magpie', url: 'http://127.0.0.1:3425/v1', wired: false, upstream: null }]);
+  expect(before.find((host) => host.host === 'opencode')?.providers.map((p) => p.provider)).toEqual(['zen']);
+
+  await wireGatewayHost('pi', 'magpie');
+  const after = gatewayInventory().find((host) => host.host === 'pi');
+  expect(after?.providers[0].wired).toBe(true);
+  expect(after?.providers[0].upstream).toBe('http://127.0.0.1:3425/v1');
 });
 
 test('wiring an unknown provider names the ones the host has', async () => {

@@ -25,6 +25,9 @@ import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
 import { findPackageRoot, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { readGatewayConfig, writeGatewayConfig } from '../extensions/shared/gateway.ts';
+import { startGatewayServer } from './gateway.ts';
+import { gatewayInventory, isWiredHost, unwireGatewayHost, wireGatewayHost } from './gateway-wire.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -565,6 +568,11 @@ async function saveDashboardCurrency(raw: unknown): Promise<CurrencyCode | null>
 }
 
 
+function replyJson(res: http.ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let body = '';
@@ -625,6 +633,24 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     return;
   }
   requireDashboardBundle();
+  // The dashboard also serves the capture gateway: one process to start, and no second CLI to remember.
+  let gatewayServer: http.Server | null = null;
+  let gatewayError = '';
+  const gatewayState = (): Record<string, unknown> => {
+    const cfg = readGatewayConfig();
+    return { running: gatewayServer !== null, error: gatewayError, port: cfg.port, record: cfg.record, hosts: gatewayInventory() };
+  };
+  const startGateway = async (): Promise<void> => {
+    if (gatewayServer) return;
+    try {
+      gatewayServer = await startGatewayServer();
+      gatewayError = '';
+    } catch (error) {
+      gatewayError = (error as Error).message || 'port busy';
+    }
+  };
+  // Best-effort: a busy port leaves the dashboard usable and the pane says why the gateway is down.
+  await startGateway();
   const server = http.createServer(async (req, res) => {
     if (req.url === '/api/upstream' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -641,6 +667,59 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'check failed' }));
       }
       return;
+    }
+    if (req.url === '/api/gateway') {
+      if (req.method === 'GET') {
+        replyJson(res, 200, gatewayState());
+        return;
+      }
+      if (req.method === 'POST') {
+        let body: Record<string, unknown> = {};
+        try {
+          body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
+        } catch { body = {}; }
+        const action = String(body.action ?? '');
+        try {
+          if (action === 'wire' || action === 'unwire') {
+            const host = String(body.host ?? '');
+            const provider = typeof body.provider === 'string' && body.provider !== '' ? body.provider : undefined;
+            if (!isWiredHost(host)) {
+              replyJson(res, 400, { ...gatewayState(), error: `unknown host: ${host}` });
+              return;
+            }
+            if (action === 'wire') {
+              if (!provider) {
+                replyJson(res, 400, { ...gatewayState(), error: 'pick a provider first' });
+                return;
+              }
+              await wireGatewayHost(host, provider);
+            } else {
+              await unwireGatewayHost(host, provider);
+            }
+            // A freshly wired provider is useless until the gateway listens.
+            await startGateway();
+          } else if (action === 'record') {
+            const cfg = readGatewayConfig();
+            cfg.record = body.on === true;
+            writeGatewayConfig(cfg);
+          } else if (action === 'start') {
+            await startGateway();
+          } else if (action === 'stop') {
+            gatewayServer?.close();
+            gatewayServer?.closeIdleConnections();
+            gatewayServer = null;
+            gatewayError = '';
+          } else {
+            replyJson(res, 400, { ...gatewayState(), error: 'unknown action' });
+            return;
+          }
+        } catch (error) {
+          replyJson(res, 500, { ...gatewayState(), error: (error as Error).message || 'gateway action failed' });
+          return;
+        }
+        replyJson(res, 200, gatewayState());
+        return;
+      }
     }
     if (req.url === '/api/data' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -949,11 +1028,17 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let stopping = false;
     const rejectOnce = (err: Error): void => {
-      if (!stopping) reject(err);
+      if (stopping) return;
+      gatewayServer?.close();
+      gatewayServer = null;
+      reject(err);
     };
     const stop = (): void => {
       if (stopping) return;
       stopping = true;
+      // The gateway is a second listener in this process, so it closes with the dashboard.
+      gatewayServer?.close();
+      gatewayServer = null;
       server.close(() => resolve());
       server.closeIdleConnections();
     };

@@ -23,7 +23,7 @@ Commands:
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
   mcp           Start the Tersio MCP server on stdio, for any MCP client
-  gateway       Capture pi and opencode model traffic (wire|unwire|status, --record on|off, --port <n>)
+  gateway       Serve the capture gateway headless (Settings → Gateway wires a provider; --record on|off, --port <n>)
   uninstall    Remove the managed extensions
   version      Print the package version
   help         Show this help

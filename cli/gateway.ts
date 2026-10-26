@@ -1,11 +1,10 @@
-// gateway.ts — the capture gateway CLI: wire/unwire/status, config flags, and the forwarding server.
+// gateway.ts — the capture gateway: config flags, the forwarding server, and the dashboard-facing entry.
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 
 import {
   appendGatewayTurn,
   firstUserText,
-  gatewayRouteKey,
   pruneGatewayStore,
   readGatewayConfig,
   readGatewayTurns,
@@ -16,8 +15,6 @@ import {
 import { priceFor } from '../extensions/shared/pricing.ts';
 import { insertGatewayRow, usageDbPath, type GatewayStoreRow } from '../extensions/shared/usage-store.ts';
 import { isRecord } from '../extensions/shared/utils.ts';
-import { WIRED_HOST_IDS, printGatewayWiring, unwireGatewayHost, wireGatewayHost } from './gateway-wire.ts';
-import type { WiredHost } from './gateway-wire.ts';
 
 function flagOf(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -27,51 +24,10 @@ function flagOf(args: string[], name: string): string | undefined {
   return paired === undefined ? undefined : paired.slice(prefix.length);
 }
 
-function parseWiredHost(raw: string | undefined): WiredHost | null {
-  return WIRED_HOST_IDS.find((id) => id === raw) ?? null;
-}
-
-async function runWireSubcommand(sub: string, rest: string[]): Promise<void> {
-  const host = parseWiredHost(flagOf(rest, '--host'));
-  const provider = flagOf(rest, '--provider');
-  if (sub === 'status') {
-    printGatewayWiring();
-    const cfg = readGatewayConfig();
-    let ok = false;
-    try {
-      const answer = await fetch(`http://127.0.0.1:${cfg.port}/gw/health`, { signal: AbortSignal.timeout(500) });
-      ok = answer.ok;
-    } catch { /* server not running */ }
-    console.log(`server ${ok ? 'answering' : 'not answering'} on port ${cfg.port}`);
-    return;
-  }
-  if (!host) {
-    console.error(`[fail] gateway wire needs --host <${WIRED_HOST_IDS.join('|')}> and --provider <name>`);
-    process.exitCode = 1;
-    return;
-  }
-  if (sub === 'wire') {
-    if (!provider) {
-      console.error('[fail] gateway wire needs --provider <name>');
-      process.exitCode = 1;
-      return;
-    }
-    await wireGatewayHost(host, provider);
-    return;
-  }
-  // Unwire without a provider releases every wired provider of that host.
-  await unwireGatewayHost(host, provider);
-}
-
 export async function runGatewayCommand(args: string[]): Promise<void> {
   // The CLI switch passes the full argv; only what follows the `gateway` token belongs to us.
   const at = args.indexOf('gateway');
   const rest = at === -1 ? args : args.slice(at + 1);
-  const sub = rest[0];
-  if (sub === 'wire' || sub === 'unwire' || sub === 'status') {
-    await runWireSubcommand(sub, rest.slice(1));
-    return;
-  }
 
   const record = flagOf(rest, '--record');
   if (record !== undefined) {
@@ -95,7 +51,7 @@ export async function runGatewayCommand(args: string[]): Promise<void> {
     writeGatewayConfig(cfg);
     console.log(`[ok] Gateway port set to ${port}`);
     if (changed && Object.keys(cfg.providers).length > 0) {
-      console.log('Wired providers point at the old port; run `tersio gateway wire` again to rewire them.');
+      console.log('Wired providers point at the old port; open Settings → Gateway to rewire them.');
     }
     return;
   }
@@ -449,4 +405,3 @@ function recordCapture(cfg: GatewayConfig, turn: RecordedTurn): void {
   } catch { /* capture must never break the proxy path */ }
 }
 
-export { gatewayRouteKey };

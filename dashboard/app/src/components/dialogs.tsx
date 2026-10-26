@@ -16,14 +16,16 @@ import { useTheme, useResolvedTheme } from "@/components/theme-provider";
 import { ACCENTS, ACCENT_IDS, accentSwatch, type AccentId } from "@/lib/accent";
 import { FLAGS, FX_SNAPSHOT, relAge } from "@/lib/format";
 import {
+  actGateway,
   fetchDoctor,
+  fetchGateway,
   isFileExport,
   postDoctorFix,
   postDoctorSchedule,
   requestReload,
   snapshotVersion,
 } from "@/lib/data";
-import type { DoctorReport, UpdateSchedule } from "@/lib/data";
+import type { DoctorReport, GatewayAction, GatewayState, UpdateSchedule } from "@/lib/data";
 import type { UpdateFeed } from "@/lib/update-watch";
 import { useToast } from "./toaster";
 import { cn } from "cn";
@@ -32,7 +34,7 @@ import { SocialLinks } from "./brand";
 import { Icon } from "./icon";
 import { Card } from "./charts/stats";
 
-type Pane = "general" | "data" | "diagnosis" | "about";
+type Pane = "general" | "gateway" | "data" | "diagnosis" | "about";
 
 // Share destinations live in lib/share.ts so the host guarantee is testable.
 
@@ -577,6 +579,7 @@ function DoctorPane() {
 
 const PANES: Array<{ id: Pane; label: string; icon: string }> = [
   { id: "general", label: "General", icon: "settings" },
+  { id: "gateway", label: "Gateway", icon: "cable" },
   { id: "data", label: "Data", icon: "database" },
   { id: "diagnosis", label: "Diagnosis", icon: "stethoscope" },
   { id: "about", label: "About", icon: "info" },
@@ -584,6 +587,7 @@ const PANES: Array<{ id: Pane; label: string; icon: string }> = [
 
 const TITLES: Record<Pane, string> = {
   general: "Settings",
+  gateway: "Gateway",
   data: "Data",
   diagnosis: "Doctor",
   about: "About",
@@ -594,6 +598,9 @@ const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
   { pane: "general", label: "Theme", terms: "general appearance theme light dark system color scheme mode" },
   { pane: "general", label: "Accent color", terms: "general appearance accent color tint buttons links highlights palette emerald violet slate cyan rose amber orange charts background" },
   { pane: "general", label: "Currency", terms: "currency display cost usd euro" },
+  { pane: "gateway", label: "Gateway status", terms: "gateway proxy capture serve start stop port 3428" },
+  { pane: "gateway", label: "Wire a provider", terms: "gateway wire provider base url upstream point capture host" },
+  { pane: "gateway", label: "Record conversations", terms: "gateway record conversation text turns retention" },
   { pane: "data", label: "Snapshots", terms: "data snapshot backup restore copy mirror ledger settings price cache schedule keep size" },
   { pane: "diagnosis", label: "Auto-check schedule", terms: "diagnosis system health auto-check schedule manual daily weekly monthly" },
   { pane: "diagnosis", label: "Scan", terms: "diagnosis scan check" },
@@ -915,6 +922,101 @@ const CREDITS: ReadonlyArray<{ label: string; hint: string; href: string; glyph:
 ];
 
 /** Two settings and the moment's action: how often the dashboard asks, and whether it installs alone. */
+function GatewayPane() {
+  const [state, setState] = useState<GatewayState | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetchGateway().then((next) => {
+      if (live) setState(next);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const act = async (body: GatewayAction): Promise<void> => {
+    setBusy(true);
+    try {
+      const next = await actGateway(body);
+      if (next) setState(next);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!state) return <p className="m-0 text-xs text-dim">Reading the gateway state…</p>;
+  return (
+    <section aria-label="Gateway" className="grid gap-7">
+      <div className="grid gap-4">
+        <p className="m-0 text-[11px] uppercase tracking-[0.14em] text-dim">Capture gateway</p>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="m-0 text-[13px] font-semibold">Status</p>
+            <p className="mt-0.5 mb-0 text-xs text-dim">
+              {state.running
+                ? `Serving on 127.0.0.1:${state.port}. Wired providers report their usage through it.`
+                : state.error
+                  ? `Not serving: ${state.error}`
+                  : `Not serving on port ${state.port}.`}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-xl border border-line px-3 py-1.5 text-xs font-semibold [transition:background_.2s] hover:bg-accent-soft disabled:opacity-50"
+            disabled={busy}
+            onClick={() => act({ action: state.running ? "stop" : "start" })}
+          >
+            {state.running ? "Stop" : "Start"}
+          </button>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="m-0 text-[13px] font-semibold">Record conversations</p>
+            <p className="mt-0.5 mb-0 text-xs text-dim">
+              Keep each turn's text for 7 days or 256 MiB. Off, a captured session shows usage only.
+            </p>
+          </div>
+          <Switch checked={state.record} disabled={busy} onCheckedChange={(on) => act({ action: "record", on })} aria-label="Record gateway conversations" />
+        </div>
+      </div>
+      <div className="grid gap-5">
+        <p className="m-0 text-[11px] uppercase tracking-[0.14em] text-dim">Providers</p>
+        {state.hosts.map((host) => (
+          <div key={host.host} className="grid gap-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="m-0 text-[13px] font-semibold capitalize">{host.host}</p>
+              <span className="mono min-w-0 truncate text-[10px] text-dim" title={host.file}>{host.file}</span>
+            </div>
+            {host.providers.length === 0 ? (
+              <p className="m-0 text-xs text-dim">{host.readable ? "No providers configured." : "No config file yet. Run the host once, then reload."}</p>
+            ) : (
+              host.providers.map((provider) => (
+                <div key={provider.provider} className="flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="m-0 text-[13px]">{provider.provider}</p>
+                    <p className="mono mt-0.5 mb-0 truncate text-[10px] text-dim" title={provider.wired ? provider.upstream ?? "" : provider.url}>
+                      {provider.wired ? `through the gateway → ${provider.upstream ?? "unknown upstream"}` : provider.url || "no base URL"}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={provider.wired}
+                    disabled={busy}
+                    onCheckedChange={(on) =>
+                      act(on
+                        ? { action: "wire", host: host.host, provider: provider.provider }
+                        : { action: "unwire", host: host.host, provider: provider.provider })
+                    }
+                    aria-label={`Send ${host.host} provider ${provider.provider} through the gateway`}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AboutPane({ update }: { update: UpdateFeed }) {
   const toast = useToast();
   const dev = useDevMode();
@@ -1218,6 +1320,7 @@ export function SettingsDialog({
                   </div>
                 </section>
               )}
+              {pane === "gateway" && <GatewayPane />}
               {pane === "data" && (
                 <section aria-label="Data">
                   <DataPane />
