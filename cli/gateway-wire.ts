@@ -2,17 +2,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { homeDir, piAgentDir } from '../extensions/shared/utils.ts';
+import { homeDir, isRecord, piAgentDir } from '../extensions/shared/utils.ts';
 import { gatewayRouteKey, readGatewayConfig, writeGatewayConfig } from '../extensions/shared/gateway.ts';
 import type { GatewayConfig, GatewayProviderConfig } from '../extensions/shared/gateway.ts';
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-}
-
 function readJson(file: string): Record<string, unknown> | null {
   try {
-    return asRecord(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -23,16 +20,41 @@ function writeJson(file: string, value: Record<string, unknown>): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-/** The file each host keeps its providers in: pi's models.json, opencode's opencode.json. */
-export function gatewayHostConfigPath(host: 'pi' | 'opencode'): string {
-  return host === 'pi'
-    ? path.join(piAgentDir(), 'models.json')
-    : path.join(homeDir(), '.config', 'opencode', 'opencode.json');
+/** Everything Tersio needs to know about a host's provider config. A new host is one row. */
+interface HostWiring {
+  /** The file the host keeps its providers in. */
+  file: () => string;
+  /** The root key that holds the providers. */
+  root: 'providers' | 'provider';
+  /** The key inside a provider entry that holds the base URL. */
+  urlKey: 'baseUrl' | 'baseURL';
+  /** The provider entry nests its options instead of carrying the URL itself. */
+  nested?: true;
+  /** This host only names its session when the adapter's compat flag is on. */
+  affinity?: true;
 }
 
-// pi lists providers at the root and names the URL `baseUrl`; opencode nests it under `provider.<name>.options.baseURL`.
-function providersOf(config: Record<string, unknown>, host: 'pi' | 'opencode'): Record<string, unknown> | null {
-  return asRecord(config[host === 'pi' ? 'providers' : 'provider']);
+const WIRED_HOSTS: Record<'pi' | 'opencode', HostWiring> = {
+  pi: { file: () => path.join(piAgentDir(), 'models.json'), root: 'providers', urlKey: 'baseUrl', affinity: true },
+  opencode: { file: () => path.join(homeDir(), '.config', 'opencode', 'opencode.json'), root: 'provider', urlKey: 'baseURL', nested: true },
+};
+
+export type WiredHost = keyof typeof WIRED_HOSTS;
+
+/** The hosts `wire` can edit today; capture itself accepts any host id. */
+export const WIRED_HOST_IDS = Object.keys(WIRED_HOSTS) as WiredHost[];
+
+export function isWiredHost(host: string): host is WiredHost {
+  return Object.hasOwn(WIRED_HOSTS, host);
+}
+
+export function gatewayHostConfigPath(host: WiredHost): string {
+  return WIRED_HOSTS[host].file();
+}
+
+function providersOf(config: Record<string, unknown>, host: WiredHost): Record<string, unknown> | null {
+  const providers = config[WIRED_HOSTS[host].root];
+  return isRecord(providers) ? providers : null;
 }
 
 interface ProviderEntry {
@@ -41,13 +63,15 @@ interface ProviderEntry {
   key: string;
 }
 
-function entryOf(config: Record<string, unknown>, host: 'pi' | 'opencode', provider: string): ProviderEntry | null {
+function entryOf(config: Record<string, unknown>, host: WiredHost, provider: string): ProviderEntry | null {
   const providers = providersOf(config, host);
-  const entry = providers ? asRecord(providers[provider]) : null;
+  const value = providers ? providers[provider] : undefined;
+  const entry = isRecord(value) ? value : null;
   if (!entry) return null;
-  if (host === 'pi') return { entry, container: entry, key: 'baseUrl' };
-  const options = asRecord(entry.options);
-  return options ? { entry, container: options, key: 'baseURL' } : null;
+  const wiring = WIRED_HOSTS[host];
+  if (!wiring.nested) return { entry, container: entry, key: wiring.urlKey };
+  const options = isRecord(entry.options) ? entry.options : null;
+  return options ? { entry, container: options, key: wiring.urlKey } : null;
 }
 
 function gatewayUrl(cfg: GatewayConfig, key: string): string {
@@ -55,7 +79,8 @@ function gatewayUrl(cfg: GatewayConfig, key: string): string {
 }
 
 /** The URL the host currently points a provider at, so the doctor can spot a stale wiring. */
-export function gatewayProviderUrl(host: 'pi' | 'opencode', provider: string): string | null {
+export function gatewayProviderUrl(host: string, provider: string): string | null {
+  if (!isWiredHost(host)) return null;
   const config = readJson(gatewayHostConfigPath(host));
   const found = config ? entryOf(config, host, provider) : null;
   if (!found) return null;
@@ -63,7 +88,7 @@ export function gatewayProviderUrl(host: 'pi' | 'opencode', provider: string): s
   return typeof value === 'string' ? value : null;
 }
 
-export async function wireGatewayHost(host: 'pi' | 'opencode', provider: string): Promise<void> {
+export async function wireGatewayHost(host: WiredHost, provider: string): Promise<void> {
   const file = gatewayHostConfigPath(host);
   const config = readJson(file);
   if (!config) {
@@ -90,9 +115,9 @@ export async function wireGatewayHost(host: 'pi' | 'opencode', provider: string)
     return;
   }
   let compatAdded = prior?.compatAdded === true;
-  if (host === 'pi') {
+  if (WIRED_HOSTS[host].affinity) {
     // Without this, pi sends no session header and every turn would open its own session.
-    const compat = asRecord(found.entry.compat) ?? {};
+    const compat = isRecord(found.entry.compat) ? found.entry.compat : {};
     if (compat.sendSessionAffinityHeaders !== true) {
       compat.sendSessionAffinityHeaders = true;
       found.entry.compat = compat;
@@ -108,7 +133,7 @@ export async function wireGatewayHost(host: 'pi' | 'opencode', provider: string)
   console.log("Start the gateway with `tersio gateway` so the host's requests pass through it.");
 }
 
-export async function unwireGatewayHost(host: 'pi' | 'opencode', provider?: string): Promise<void> {
+export async function unwireGatewayHost(host: WiredHost, provider?: string): Promise<void> {
   const cfg = readGatewayConfig();
   const keys = Object.keys(cfg.providers).filter((key) => {
     const entry = cfg.providers[key];
@@ -125,8 +150,8 @@ export async function unwireGatewayHost(host: 'pi' | 'opencode', provider?: stri
     const found = config ? entryOf(config, host, entry.provider) : null;
     if (found) {
       found.container[found.key] = entry.url;
-      if (host === 'pi' && entry.compatAdded) {
-        const compat = asRecord(found.entry.compat);
+      if (WIRED_HOSTS[host].affinity && entry.compatAdded) {
+        const compat = isRecord(found.entry.compat) ? found.entry.compat : null;
         if (compat) {
           delete compat.sendSessionAffinityHeaders;
           if (Object.keys(compat).length === 0) delete found.entry.compat;

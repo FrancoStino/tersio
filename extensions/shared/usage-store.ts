@@ -26,7 +26,7 @@ import {
   walkJsonl,
 } from './usage-ledger.ts';
 import { readGatewaySessionIndex } from './gateway.ts';
-import { piAgentDir, tersioDataPath } from './utils.ts';
+import { tersioDataPath } from './utils.ts';
 import { createDataBackup, newestDataBackup, readSnapshotMember, restoreSnapshotMember } from './snapshots.ts';
 import { MODEL_ALIASES } from './pricing.ts';
 import { tersioSettingsFile } from './plugin-settings.ts';
@@ -668,11 +668,14 @@ export function syncUsageDb(): boolean {
   }
   const files: string[] = [];
   const ocFiles: string[] = [];
-  // A session the gateway captured already has its rows; its host files would count the same turns twice.
-  const captured = readGatewaySessionIndex();
-  const piCaptured = new Set(captured.filter((e) => e.host === 'pi').map((e) => e.session));
-  const opencodeCaptured = new Set(captured.filter((e) => e.host === 'opencode').map((e) => e.session));
-  const piSessions = path.join(piAgentDir(), 'sessions');
+  // A session the gateway captured already has its rows; its host file would count the same turns twice.
+  const capturedByHost = new Map<string, Set<string>>();
+  for (const entry of readGatewaySessionIndex()) {
+    const ids = capturedByHost.get(entry.host) ?? new Set<string>();
+    ids.add(entry.session);
+    capturedByHost.set(entry.host, ids);
+  }
+  const opencodeCaptured = capturedByHost.get('opencode') ?? new Set<string>();
   try {
     for (const dir of sessionsDirs()) walkJsonl(dir, files, 2000);
     // OpenCode stores one JSON document per message, not JSONL.
@@ -682,9 +685,10 @@ export function syncUsageDb(): boolean {
   } catch {
     return false;
   }
-  // omp has no gateway wiring, so only a pi transcript is gated by its session id.
+  // Host-neutral: a transcript whose filename carries a captured session id is that session's duplicate.
   for (let i = files.length - 1; i >= 0; i -= 1) {
-    if (files[i].startsWith(piSessions) && piCaptured.has(sessionIdOfSessionFile(files[i]))) files.splice(i, 1);
+    if (!files[i].endsWith('.jsonl')) continue;
+    if (capturedByHost.get(hostOfSessionFile(files[i]))?.has(sessionIdOfSessionFile(files[i]))) files.splice(i, 1);
   }
   files.push(...ocFiles);
   // v2 hosts keep messages in sqlite; rows past the watermark are new. Overlap re-reads the tail idempotently.
@@ -698,7 +702,7 @@ export function syncUsageDb(): boolean {
       ocDbRows.push(...readOpencodeDbRows(ocDbPath, since));
     }
   }
-  // Same rule as the pi transcripts: a captured session keeps the gateway's rows, not a second copy.
+  // Same rule where a host keeps message rows in sqlite instead of a transcript.
   if (opencodeCaptured.size > 0) {
     for (let i = ocDbRows.length - 1; i >= 0; i -= 1) {
       if (opencodeCaptured.has(ocDbRows[i].sessionId)) ocDbRows.splice(i, 1);

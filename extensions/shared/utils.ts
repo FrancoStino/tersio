@@ -30,6 +30,11 @@ export function homeDir(): string {
   return home && home.trim() !== '' ? home : os.homedir();
 }
 
+/** The one object guard: parsed JSON, host configs, and captured replies all narrow through it. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** Windows cannot run a `.cmd` or `.bat` directly, so a shim path goes through the shell; a real `.exe` or POSIX binary passes through. */
 export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
   if (process.platform !== 'win32' || !/\.(?:cmd|bat)$/i.test(cmd)) return { cmd, args };

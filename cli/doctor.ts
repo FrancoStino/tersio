@@ -21,7 +21,7 @@ import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES,
 import { serviceRunning, serviceState } from './doctor-fix.ts';
 import { readState } from '../extensions/shared/state.ts';
 import { readGatewayConfig } from '../extensions/shared/gateway.ts';
-import { gatewayProviderUrl } from './gateway-wire.ts';
+import { WIRED_HOST_IDS, gatewayProviderUrl, isWiredHost } from './gateway-wire.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
 import { newerThan } from './update.ts';
 
@@ -298,11 +298,13 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const gatewayCfg = readGatewayConfig();
   const wiredKeys = Object.keys(gatewayCfg.providers);
   if (wiredKeys.length === 0) {
-    unused('Gateway', '— wire one with: tersio gateway wire --host <pi|opencode> --provider <name>');
+    unused('Gateway', `— wire one with: tersio gateway wire --host <${WIRED_HOST_IDS.join('|')}> --provider <name>`);
   } else {
-    // A provider left on an old port would send every turn to a socket nothing listens on.
+    // A host left on an old port would send every turn to a socket nothing listens on.
     const stale = wiredKeys.filter((key) => {
       const entry = gatewayCfg.providers[key];
+      // A host with no wiring adapter (captured by hand) has no config for the doctor to check.
+      if (!isWiredHost(entry.host)) return false;
       return gatewayProviderUrl(entry.host, entry.provider) !== `http://127.0.0.1:${gatewayCfg.port}/gw/${key}`;
     });
     check('Gateway wiring', stale.length === 0,

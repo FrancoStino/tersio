@@ -111,9 +111,9 @@ test('an anthropic reply is proxied untouched and recorded as one usage row', as
 
 test('an OpenAI stream gets include_usage, and recording stores the turn and its title', async () => {
   const upstreamPort = await startUpstream();
-  const base = await startGateway({ 'oc--zen': { host: 'opencode', provider: 'zen', url: `http://127.0.0.1:${upstreamPort}/v1` } }, true);
+  const base = await startGateway({ 'opencode--zen': { host: 'opencode', provider: 'zen', url: `http://127.0.0.1:${upstreamPort}/v1` } }, true);
   const body = JSON.stringify({ model: 'glm-4', stream: true, messages: [{ role: 'user', content: 'fix the login bug' }] });
-  const answer = await fetch(`${base}/gw/oc--zen/v1/chat/completions`, {
+  const answer = await fetch(`${base}/gw/opencode--zen/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-opencode-session': 'OC1' },
     body,

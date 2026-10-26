@@ -4,6 +4,7 @@ import http from 'node:http';
 
 import {
   appendGatewayTurn,
+  firstUserText,
   gatewayRouteKey,
   pruneGatewayStore,
   readGatewayConfig,
@@ -14,7 +15,9 @@ import {
 } from '../extensions/shared/gateway.ts';
 import { priceFor } from '../extensions/shared/pricing.ts';
 import { insertGatewayRow, usageDbPath, type GatewayStoreRow } from '../extensions/shared/usage-store.ts';
-import { printGatewayWiring, unwireGatewayHost, wireGatewayHost } from './gateway-wire.ts';
+import { isRecord } from '../extensions/shared/utils.ts';
+import { WIRED_HOST_IDS, printGatewayWiring, unwireGatewayHost, wireGatewayHost } from './gateway-wire.ts';
+import type { WiredHost } from './gateway-wire.ts';
 
 function flagOf(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -24,8 +27,8 @@ function flagOf(args: string[], name: string): string | undefined {
   return paired === undefined ? undefined : paired.slice(prefix.length);
 }
 
-function parseWiredHost(raw: string | undefined): 'pi' | 'opencode' | null {
-  return raw === 'pi' || raw === 'opencode' ? raw : null;
+function parseWiredHost(raw: string | undefined): WiredHost | null {
+  return WIRED_HOST_IDS.find((id) => id === raw) ?? null;
 }
 
 async function runWireSubcommand(sub: string, rest: string[]): Promise<void> {
@@ -43,7 +46,7 @@ async function runWireSubcommand(sub: string, rest: string[]): Promise<void> {
     return;
   }
   if (!host) {
-    console.error('[fail] gateway wire needs --host <pi|opencode> and --provider <name>');
+    console.error(`[fail] gateway wire needs --host <${WIRED_HOST_IDS.join('|')}> and --provider <name>`);
     process.exitCode = 1;
     return;
   }
@@ -99,11 +102,9 @@ export async function runGatewayCommand(args: string[]): Promise<void> {
   await serveGateway();
 }
 
-async function serveGateway(): Promise<void> {
-  const cfg = readGatewayConfig();
+/** One server for the CLI and the tests: the tests pass an ephemeral port and close it themselves. */
+export async function startGatewayServer(port?: number): Promise<http.Server> {
   pruneGatewayStore();
-  const pruner = setInterval(() => pruneGatewayStore(), 3_600_000);
-  pruner.unref();
   const server = http.createServer((req, res) => {
     void handleGatewayRequest(req, res).catch(() => {
       if (!res.headersSent) res.writeHead(500);
@@ -111,38 +112,32 @@ async function serveGateway(): Promise<void> {
     });
   });
   await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port ?? readGatewayConfig().port, '127.0.0.1', () => resolve());
+  });
+  return server;
+}
+
+async function serveGateway(): Promise<void> {
+  const cfg = readGatewayConfig();
+  const server = await startGatewayServer(cfg.port);
+  // Prune while serving, so a long-lived gateway honours retention rather than only its start.
+  const pruner = setInterval(() => pruneGatewayStore(), 3_600_000);
+  pruner.unref();
+  try { process.title = 'tersio gateway'; } catch { /* non-POSIX shells keep node */ }
+  console.log(`[ok] Gateway live → http://127.0.0.1:${cfg.port} (Ctrl-C to stop)`);
+  await new Promise<void>((resolve) => {
     let stopping = false;
     const stop = (): void => {
       if (stopping) return;
       stopping = true;
+      clearInterval(pruner);
       server.close(() => resolve());
       server.closeIdleConnections();
     };
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
-    server.once('error', reject);
-    server.listen(cfg.port, '127.0.0.1', () => {
-      try { process.title = 'tersio gateway'; } catch { /* non-POSIX shells keep node */ }
-      console.log(`[ok] Gateway live → http://127.0.0.1:${cfg.port} (Ctrl-C to stop)`);
-    });
   });
-}
-
-/** Started directly by the tests on an ephemeral port; serveGateway is the CLI wrapper around it. */
-export async function startGatewayServer(portOverride?: number): Promise<http.Server> {
-  const cfg = readGatewayConfig();
-  pruneGatewayStore();
-  const server = http.createServer((req, res) => {
-    void handleGatewayRequest(req, res).catch(() => {
-      if (!res.headersSent) res.writeHead(500);
-      res.end('gateway error');
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(portOverride ?? cfg.port, '127.0.0.1', () => resolve());
-  });
-  return server;
 }
 
 async function readBody(req: http.IncomingMessage): Promise<string> {
@@ -158,26 +153,6 @@ const SESSION_HEADERS = [
   'x-claude-code-session-id',
   'x-conversation-id',
 ] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function firstUserText(parsed: Record<string, unknown> | null): string {
-  if (!parsed || !Array.isArray(parsed.messages)) return '';
-  for (const message of parsed.messages) {
-    if (!isRecord(message) || message.role !== 'user') continue;
-    if (typeof message.content === 'string') return message.content;
-    if (Array.isArray(message.content)) {
-      return message.content
-        .filter(isRecord)
-        .map((part) => (part.type === 'text' && typeof part.text === 'string' ? part.text : ''))
-        .join('');
-    }
-    return '';
-  }
-  return '';
-}
 
 function sessionIdOf(req: http.IncomingMessage, parsed: Record<string, unknown> | null): string {
   for (const header of SESSION_HEADERS) {
@@ -363,7 +338,13 @@ async function handleGatewayRequest(req: http.IncomingMessage, res: http.ServerR
   try {
     upstream = await fetch(target, { method: 'POST', headers, body: outBody });
   } catch {
-    if (capture) recordCapture(cfg, provider.host, provider.provider, openaiProtocol, null, rawBody, [], 'error', undefined, undefined, undefined, sessionIdOf(req, parsed), start, null);
+    if (capture) {
+      recordCapture(cfg, {
+        host: provider.host, provider: provider.provider, parsed: null, rawBody,
+        status: 'error', code: undefined, ttftMs: undefined, durMs: undefined,
+        session: sessionIdOf(req, parsed), t: start, captured: null,
+      });
+    }
     res.writeHead(502, { 'Content-Type': 'text/plain' });
     res.end('gateway upstream failed');
     return;
@@ -393,80 +374,77 @@ async function handleGatewayRequest(req: http.IncomingMessage, res: http.ServerR
   // A whole-body reply carries no terminator, so a 2xx answer is finished by definition.
   if (!streamed && upstream.status >= 200 && upstream.status < 300) captured.finished = true;
   const status = upstream.status >= 200 && upstream.status < 300 && captured.finished ? 'completed' : 'error';
-  recordCapture(
-    cfg,
-    provider.host,
-    provider.provider,
-    openaiProtocol,
+  recordCapture(cfg, {
+    host: provider.host,
+    provider: provider.provider,
     parsed,
     rawBody,
-    captured.tools,
     status,
-    upstream.status,
+    code: upstream.status,
     ttftMs,
-    Date.now() - start,
-    sessionIdOf(req, parsed),
-    start,
+    durMs: Date.now() - start,
+    session: sessionIdOf(req, parsed),
+    t: start,
     captured,
-  );
+  });
 }
 
-function recordCapture(
-  cfg: GatewayConfig,
-  host: 'pi' | 'opencode',
-  provider: string,
-  openaiProtocol: boolean,
-  parsed: Record<string, unknown> | null,
-  rawBody: string,
-  tools: string[],
-  status: 'completed' | 'error',
-  code: number | undefined,
-  ttftMs: number | undefined,
-  durMs: number | undefined,
-  session: string,
-  t: number,
-  captured: Captured | null,
-): void {
-  const model = typeof parsed?.model === 'string' && parsed.model !== '' ? parsed.model : 'unknown';
-  const fileKey = `gateway://${host}/${session}`;
+interface RecordedTurn {
+  host: string;
+  provider: string;
+  parsed: Record<string, unknown> | null;
+  rawBody: string;
+  status: 'completed' | 'error';
+  code: number | undefined;
+  ttftMs: number | undefined;
+  durMs: number | undefined;
+  session: string;
+  t: number;
+  captured: Captured | null;
+}
+
+function recordCapture(cfg: GatewayConfig, turn: RecordedTurn): void {
+  const { captured } = turn;
+  const model = typeof turn.parsed?.model === 'string' && turn.parsed.model !== '' ? turn.parsed.model : 'unknown';
+  const fileKey = `gateway://${turn.host}/${turn.session}`;
   try {
     if (captured) {
-      const count = turnCounts.get(fileKey) ?? readGatewayTurns(host, session, 1_000_000).length;
+      const count = turnCounts.get(fileKey) ?? readGatewayTurns(turn.host, turn.session, 1_000_000).length;
       turnCounts.set(fileKey, count + 1);
       storeRow({
-        t,
+        t: turn.t,
         model,
         i: captured.i,
         o: captured.o,
-        d: durMs,
-        tf: ttftMs,
+        d: turn.durMs,
+        tf: turn.ttftMs,
         cr: captured.cr,
         cw: captured.cw,
         usd: costUsd(captured, model),
-        st: status,
-        code,
-        tools,
-        host,
+        st: turn.status,
+        code: turn.code,
+        tools: captured.tools,
+        host: turn.host,
         agent: 'main',
-        id: String(t),
-        gateway: provider,
-        mtime: t,
+        id: String(turn.t),
+        gateway: turn.provider,
+        mtime: turn.t,
         size: count + 1,
       }, usageDbPath(), fileKey);
     }
     if (cfg.record) {
-      const turn: GatewayTurn = {
-        t,
+      const recorded: GatewayTurn = {
+        t: turn.t,
         model,
-        status,
-        ...(code !== undefined ? { code } : {}),
-        in: rawBody,
+        status: turn.status,
+        ...(turn.code !== undefined ? { code: turn.code } : {}),
+        in: turn.rawBody,
         out: captured?.out ?? '',
-        tools,
-        ...(ttftMs !== undefined ? { ttftMs } : {}),
-        ...(durMs !== undefined ? { durMs } : {}),
+        tools: captured?.tools ?? [],
+        ...(turn.ttftMs !== undefined ? { ttftMs: turn.ttftMs } : {}),
+        ...(turn.durMs !== undefined ? { durMs: turn.durMs } : {}),
       };
-      appendGatewayTurn(cfg, host, session, turn);
+      appendGatewayTurn(cfg, turn.host, turn.session, recorded);
     }
   } catch { /* capture must never break the proxy path */ }
 }

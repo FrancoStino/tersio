@@ -20,7 +20,8 @@ export function gatewaySessionsFile(): string {
 }
 
 export interface GatewayProviderConfig {
-  host: 'pi' | 'opencode';
+  /** The host id that reported the turn; any string, so a host Tersio has never met still reads back. */
+  host: string;
   provider: string;
   /** The upstream base URL the host used before wiring; unwire restores it. */
   url: string;
@@ -38,7 +39,7 @@ export function readGatewayConfig(): GatewayConfig {
     for (const [key, value] of Object.entries(raw.providers ?? {})) {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
       const v = value as Partial<GatewayProviderConfig>;
-      if ((v.host === 'pi' || v.host === 'opencode') && typeof v.provider === 'string' && typeof v.url === 'string') {
+      if (typeof v.host === 'string' && v.host !== '' && typeof v.provider === 'string' && typeof v.url === 'string') {
         providers[key] = { host: v.host, provider: v.provider, url: v.url, ...(v.compatAdded === true ? { compatAdded: true } : {}) };
       }
     }
@@ -58,22 +59,16 @@ export function writeGatewayConfig(cfg: GatewayConfig): void {
   fs.writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
 }
 
-export function gatewayRouteKey(host: 'pi' | 'opencode', provider: string): string {
-  return `${host === 'pi' ? 'pi' : 'oc'}--${provider}`;
+export function gatewayRouteKey(host: string, provider: string): string {
+  return `${host}--${provider}`;
 }
 
 export function gatewayIdentity(host: string, session: string): string {
   return createHash('sha256').update(`${host}\n${session}`).digest('hex').slice(0, 16);
 }
 
-/** The opening user text of a captured request body, for a session title; '' when the shape is unknown. */
-export function firstUserTextOf(body: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return '';
-  }
+/** The opening user text of a request payload, for a session title; '' when the shape is unknown. */
+export function firstUserText(parsed: unknown): string {
   if (typeof parsed !== 'object' || parsed === null) return '';
   const messages = (parsed as { messages?: unknown }).messages;
   if (!Array.isArray(messages)) return '';
@@ -89,6 +84,15 @@ export function firstUserTextOf(body: string): string {
       .trim();
   }
   return '';
+}
+
+/** The same, from a raw request body; '' when the body is not JSON. */
+export function firstUserTextOf(body: string): string {
+  try {
+    return firstUserText(JSON.parse(body));
+  } catch {
+    return '';
+  }
 }
 
 export interface GatewayTurn {
