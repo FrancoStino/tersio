@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - A **`tersio gateway`** command. It serves a loopback proxy in front of any provider's base URL and records what the reply carries: tokens, cache reads and writes, first-token latency, duration, status, tools, and the serving provider. `wire` rewrites a host's provider URL and stashes the original for `unwire`; `--record on` also keeps the turn text for 7 days or 256 MiB. A captured session replaces its native rows instead of adding to them.
+ - A **Gateway** pane in Settings, and the capture gateway behind it. Switch a host's provider on and every turn through it is recorded — tokens, cache reads and writes, first-token latency, duration, status, tools, and the serving provider — into the same store the dashboard reads. The dashboard serves the gateway while it runs; `tersio gateway` serves it headless. Recording is a switch there too, keeping each turn's text for 7 days or 256 MiB. A captured session replaces its native rows instead of adding to them.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
 
 ### Fixed

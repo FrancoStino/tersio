@@ -118,7 +118,7 @@ Three tools become available: `tersio_stats` (requests, errors, tokens, cache ra
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
 | `tersio mcp` | Start the Tersio MCP server on stdio (see [MCP](#-mcp)) |
-| `tersio gateway` | Serve a local capture gateway for one pi or OpenCode provider, so its sessions reach the dashboard in full (`wire`, `unwire`, `status`, `--record on\|off`, `--port <n>`; see [Gateway](#-gateway)) |
+| `tersio gateway` | Serve the capture gateway headless, for when the dashboard is closed (`--record on\|off`, `--port <n>`). Settings → Gateway wires providers; the dashboard also serves the gateway while it runs (see [Gateway](#-gateway)) |
 | `tersio uninstall` | Remove extensions, registrations, the Ponytail plugin, and the `rtk.ts` OMP wiring (`--keep-ponytail` keeps Ponytail; `--remove-rtk` also removes the RTK binary) |
 | `tersio version` | Print version |
 
@@ -126,25 +126,17 @@ Flags: `--dry-run`, `--yes`/`-y`, `--verbose`, `--combo-default`/`--caveman-defa
 
 ## 🔗 Gateway
 
-Tersio reads each host's own session files, and they record different things: some write duration and first-token latency, some keep only tokens, and some keep no transcript at all, so their traces stay empty. `tersio gateway` closes that gap. It sits in front of a provider's base URL and records what the reply itself carried, so the dashboard sees the same detail for every host.
+Tersio reads each host's own session files, and they record different things: some write duration and first-token latency, some keep only tokens, and some keep no transcript at all, so their traces stay empty. The capture gateway closes that gap. It sits in front of a provider's base URL and records what the reply itself carried, so the dashboard sees the same detail for every host.
 
-```bash
-tersio gateway wire --host <host> --provider <provider>   # one host Tersio has an adapter for
-tersio gateway                                           # serve on 127.0.0.1:3428
-```
+Wire one in **Settings → Gateway**. Each host Tersio ships an adapter for lists its providers; switch one on and every turn through it lands in `usage.db` with tokens, cache reads and writes, first-token latency, duration, status, tools, and the serving provider. The session id comes from a header the host already sends, or the request's `prompt_cache_key`, so one session stays one session. A provider that is itself a gateway keeps working, because nothing in the request is rewritten.
 
-Every request is forwarded untouched to its original URL. Tersio records the reply's tokens, cache reads and writes, first-token latency, duration, status, tools, and provider into the same `usage.db` the dashboard reads. The session id comes from a header the host already sends, or the request's `prompt_cache_key`, so one session stays one session. A provider that is itself a gateway keeps working, because nothing in the request is rewritten.
+The dashboard serves the gateway itself while it runs, on `127.0.0.1:3428`, so there is no second process to start. `tersio gateway` serves it headless when the dashboard is closed.
 
-`tersio gateway --record on` also keeps each turn's text, request and reply, for 7 days or 256 MiB, whichever comes first, under `~/.tersio/gateway/`. Those turns are what the trace view and the request drawer read for a captured session. Recording is off by default, and with it off a session shows its usage only.
+`--record on` also keeps each turn's text — request and reply, 64 KiB per side — for 7 days or 256 MiB, whichever comes first, under `~/.tersio/gateway/`. Those turns are what the trace view and the request drawer read for a captured session. Recording is off by default, and with it off a session shows its usage only.
 
-A captured session wins over the host's own file, so a wired provider never counts twice. Unwire restores the exact base URL the host had:
+A captured session wins over the host's own file, so a wired provider never counts twice. Switching a provider back off restores the exact base URL it had.
 
-```bash
-tersio gateway status
-tersio gateway unwire --host <host>
-```
-
-`tersio gateway --port <n>` moves the port; re-run `wire` afterward so the host follows. `tersio doctor` reports a provider left on a stale port. `wire` knows the hosts Tersio ships an adapter for (`tersio gateway status` prints them); capture itself accepts any host id. The design follows magpie's local gateway: one loopback proxy, the agent's own headers for identity, and recording that loses to native files.
+`tersio gateway --port <n>` moves the port; a wired provider then needs switching off and on again in Settings. `tersio doctor` reports a provider left on a stale port. The design follows magpie's local gateway: one loopback proxy, the agent's own headers for identity, and recording that loses to native files.
 
 ## ⌨️ Commands reference
 

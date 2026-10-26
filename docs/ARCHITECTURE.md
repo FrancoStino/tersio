@@ -268,7 +268,7 @@ sequenceDiagram
 
 ## The capture gateway
 
-`tersio gateway` is a loopback proxy for one provider's model traffic. It exists because hosts record different things: some keep duration and first-token latency, some keep only tokens, and some keep no transcript at all. A reply carries those numbers whatever the host writes down, so recording them in one place gives every host the same detail.
+`tersio gateway` is a loopback proxy for one provider's model traffic. The dashboard serves it while it is open, through `GET`/`POST /api/gateway`; `tersio gateway` serves it headless for the same store. It exists because hosts record different things: some keep duration and first-token latency, some keep only tokens, and some keep no transcript at all. A reply carries those numbers whatever the host writes down, so recording them in one place gives every host the same detail.
 
 ```mermaid
 flowchart LR
@@ -280,7 +280,7 @@ flowchart LR
   TURNS --> TRACE["trace spans and the request drawer"]
 ```
 
-- **Wiring is a base-URL rewrite with a stash.** One row per host in `cli/gateway-wire.ts` names its config file, where the URL lives, and any compat flag, so a new host is that row. The original URL goes into `~/.tersio/gateway.json`, and unwire puts it back.
+- **Wiring is a base-URL rewrite with a stash, driven from Settings.** One row per host in `cli/gateway-wire.ts` names its config file, where the URL lives, and any compat flag, so a new host is that row. The original URL goes into `~/.tersio/gateway.json`, and switching the provider off puts it back. The pane reads the inventory over `/api/gateway`; no CLI is involved.
 - **The proxy does not translate.** Method, headers, body, and query go to the original URL, and the reply streams back byte for byte. The only body change is `stream_options.include_usage` on an OpenAI stream, which otherwise reports no tokens.
 - **Identity comes from what the agent already sends.** The known session headers, then `prompt_cache_key`; with neither, the first user message is hashed. Nothing in the host's config carries a Tersio session id.
 - **One row per turn, keyed by its start.** The row id is the turn's epoch-ms start, so a turn in the log and a row in the store join without extra state. A captured session wins: the sync skips that session's native transcript or sqlite rows, so nothing double counts.
