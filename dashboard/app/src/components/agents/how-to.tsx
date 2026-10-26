@@ -10,6 +10,8 @@ import { fetchHealth } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
 import { cn } from "cn";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 
 type Point = readonly [number, number];
 type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "headroom" | "rtk" | "ponytail";
@@ -282,7 +284,7 @@ const STEPS = [
   },
   {
     title: "Pick a preset",
-    body: "Combo sets caveman, RTK, and Ponytail together. It leaves pstack where you had it, because pstack is opt-in.",
+    body: "Combo sets caveman, RTK, and Ponytail together. It leaves pstack and headroom where you had them, because both are opt-in.",
     command: "/combo balanced",
   },
   {
@@ -380,6 +382,145 @@ function MenuAction({ onClick, disabled, danger, children }: {
       )}
     >
       {children}
+    </button>
+  );
+}
+
+/** The folder menu hangs off the node in screen space, so it keeps its type size at any zoom. */
+const MENU_WIDTH = 292;
+
+/**
+ * The node menu as a file folder: a tab carries the mode's name, and the body unfolds from under it
+ * in one 3D fold while the option sheets stagger in. A selection change remounts the folder, so the
+ * fold replays; reduced-motion readers get the final state immediately.
+ */
+function NodeFolder({
+  title,
+  glyph,
+  stateLabel,
+  about,
+  busy,
+  x,
+  y,
+  onClose,
+  children,
+  footer,
+}: {
+  title: string;
+  glyph: string | null;
+  stateLabel: string | null;
+  about: string;
+  busy: boolean;
+  x: number;
+  y: number;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const sheet = useRef<HTMLDivElement>(null);
+  useGSAP(() => {
+    if (!sheet.current) return;
+    const sheets = root.current?.querySelectorAll("[data-sheet]") ?? [];
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      gsap.set(sheet.current, { rotateX: 0, opacity: 1 });
+      gsap.set(sheets, { y: 0, opacity: 1, scale: 1 });
+      return;
+    }
+    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+    tl.fromTo(
+      sheet.current,
+      { rotateX: -72, opacity: 0.35 },
+      { rotateX: 0, opacity: 1, duration: 0.5, ease: "back.out(1.5)", transformOrigin: "top center" },
+    ).fromTo(
+      sheets,
+      { y: 12, opacity: 0, scale: 0.96 },
+      { y: 0, opacity: 1, scale: 1, duration: 0.34, stagger: 0.045 },
+      "-=0.18",
+    );
+    return () => { tl.kill(); };
+  }, { scope: root });
+
+  return (
+    <div
+      ref={root}
+      role="dialog"
+      aria-label={`${title} options`}
+      className="absolute z-20"
+      style={{ left: x, top: y, width: MENU_WIDTH }}
+    >
+      <div className="relative z-10 ml-3 inline-flex h-8 max-w-full items-center gap-2 rounded-t-lg border border-b-0 border-line bg-track px-3">
+        {glyph ? <span aria-hidden="true" className="text-[11px] leading-none">{glyph}</span> : null}
+        <span className="text-[12px] font-semibold leading-none">{title}</span>
+        {stateLabel ? (
+          <span className="mono rounded border border-line px-1 py-px text-[9px] leading-none text-dim">{stateLabel}</span>
+        ) : null}
+        {busy ? <span className="mono text-[9px] leading-none text-accent">working</span> : null}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close options"
+          className="ml-auto grid size-5 cursor-pointer place-items-center rounded text-dim hover:bg-panel hover:text-ink"
+        >
+          <Icon name="x" className="size-3" />
+        </button>
+      </div>
+      <div style={{ perspective: "900px" }}>
+        <div
+          ref={sheet}
+          className="grid gap-1 rounded-b-xl rounded-tr-xl border border-line bg-panel p-2.5 shadow-xl will-change-transform"
+        >
+          <p data-sheet className="m-0 text-[10px] leading-relaxed text-dim">{about}</p>
+          {children}
+          {footer}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One option sheet inside the folder: a full-width row with a check chip, so no label ever wraps. */
+function OptionSheet({
+  label,
+  active,
+  disabled,
+  onClick,
+  hint,
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  hint?: string;
+}) {
+  return (
+    <button
+      data-sheet
+      type="button"
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "group flex w-full cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all duration-300 ease-out",
+        active
+          ? "border-accent/60 bg-accent-soft"
+          : "border-transparent hover:border-line hover:bg-track/60",
+        disabled && "cursor-default opacity-50",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "grid size-4 shrink-0 place-items-center rounded-[4px] border transition-colors",
+          active ? "border-accent bg-accent text-panel" : "border-line text-transparent group-hover:border-dim",
+        )}
+      >
+        <Icon name="check" className="size-3" />
+      </span>
+      <span className={cn("mono truncate text-[11px]", active ? "text-ink" : "text-dim group-hover:text-ink")}>{label}</span>
+      <span className={cn("mono ml-auto shrink-0 text-[9px]", active ? "text-accent" : "text-transparent")}>
+        {hint ?? "current"}
+      </span>
     </button>
   );
 }
@@ -575,6 +716,11 @@ function PipelineCanvas({
     return TURN.find((t) => t.id === id)?.title ?? id;
   };
 
+  const glyphOf = (id: NodeId): string | null => {
+    if (id === "combo") return "🧩";
+    return MODES.find((m) => m.key === id)?.glyph ?? null;
+  };
+
   const stateOf = (id: NodeId): { label: string; on: boolean | null } => {
     if (id.startsWith("host-")) {
       const key = id.slice(5);
@@ -611,8 +757,8 @@ function PipelineCanvas({
   };
 
   const selectedState = selected ? stateOf(selected) : null;
-  const MENU_W = 264;
-  const MENU_H = 200;
+  const MENU_WIDTH = 292;
+  const MENU_ESTIMATE = 240;
   const viewportW = layout.w * view.fit;
   const viewportH = layout.h * view.fit;
   const selectedBox = selected ? layout.nodes.find(([id]) => id === selected)?.[1] ?? null : null;
@@ -621,10 +767,10 @@ function PipelineCanvas({
   // The menu hangs off the node in screen space, so it keeps its type size at any zoom.
   const menu = selectedBox
     ? {
-      left: Math.min(Math.max(8, selectedBox.x * scale + pan.x), Math.max(8, viewportW - MENU_W - 8)),
-      top: (selectedBox.y + selectedBox.h) * scale + pan.y + MENU_H <= viewportH
+      left: Math.min(Math.max(8, selectedBox.x * scale + pan.x), Math.max(8, viewportW - MENU_WIDTH - 8)),
+      top: (selectedBox.y + selectedBox.h) * scale + pan.y + MENU_ESTIMATE <= viewportH
         ? (selectedBox.y + selectedBox.h) * scale + pan.y + 8
-        : Math.max(8, selectedBox.y * scale + pan.y - MENU_H - 8),
+        : Math.max(8, selectedBox.y * scale + pan.y - MENU_ESTIMATE - 8),
     }
     : null;
   const picker = selected ? PICKER[selected] : undefined;
@@ -821,30 +967,29 @@ function PipelineCanvas({
       </div>
 
       {selected && selectedState && menu ? (
-        <div
-          role="dialog"
-          aria-label={`${titleOf(selected)} options`}
-          style={{ left: menu.left, top: menu.top, width: MENU_W }}
-          className="absolute z-20 grid gap-1.5 rounded-xl border border-line bg-panel p-2.5 shadow-lg"
+        <NodeFolder
+          key={selected}
+          x={menu.left}
+          y={menu.top}
+          title={titleOf(selected)}
+          glyph={glyphOf(selected)}
+          stateLabel={selectedState.label}
+          about={ABOUT[selected]}
+          busy={busy === selected}
+          onClose={() => setSelected(null)}
+          footer={
+            picker ? (
+              <div data-sheet className="mt-0.5 flex flex-wrap items-center gap-1.5 border-t border-line pt-1.5">
+                {picked ? (
+                  <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
+                ) : null}
+                <span className="mono ml-auto text-[9px] text-dim">every agent reads this</span>
+              </div>
+            ) : undefined
+          }
         >
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold">{titleOf(selected)}</span>
-            {selectedState.label ? (
-              <span className="mono rounded border border-line px-1 text-[9px] text-dim">{selectedState.label}</span>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setSelected(null)}
-              aria-label="Close options"
-              className="ml-auto grid size-5 cursor-pointer place-items-center rounded text-dim hover:bg-track hover:text-ink"
-            >
-              <Icon name="x" className="size-3" />
-            </button>
-          </div>
-          <p className="m-0 text-[10px] leading-relaxed text-dim">{ABOUT[selected]}</p>
-          {busy === selected ? <p className="mono m-0 text-[10px] text-accent">Working</p> : null}
           {hostId ? (
-            <div className="flex flex-wrap items-center gap-1">
+            <div data-sheet className="flex flex-wrap items-center gap-1.5">
               {hostInstalled ? (
                 <MenuAction disabled={busy !== null} onClick={() => onHostAction(selected, "update")}>Update</MenuAction>
               ) : (
@@ -860,49 +1005,30 @@ function PipelineCanvas({
             </div>
           ) : null}
           {selected === "add-host" ? (
-            <div className="grid gap-1">
-              {missingHosts.map((host) => (
-                <div key={host.id} className="flex items-center gap-2">
-                  <AgentLogo host={host.id} className="size-3.5 shrink-0" />
-                  <span className="truncate text-[11px]">{host.label}</span>
-                  <span className="ml-auto">
-                    <MenuAction disabled={busy !== null} onClick={() => onHostAction(`host-${host.id}`, "install")}>
-                      Install
-                    </MenuAction>
-                  </span>
-                </div>
-              ))}
-            </div>
+            missingHosts.map((host) => (
+              <div data-sheet key={host.id} className="flex items-center gap-2">
+                <AgentLogo host={host.id} className="size-3.5 shrink-0" />
+                <span className="truncate text-[11px]">{host.label}</span>
+                <span className="ml-auto">
+                  <MenuAction disabled={busy !== null} onClick={() => onHostAction(`host-${host.id}`, "install")}>
+                    Install
+                  </MenuAction>
+                </span>
+              </div>
+            ))
           ) : null}
           {picker ? (
-            <>
-              <div className="grid grid-cols-2 gap-1">
-                {picker.options.map((option) => {
-                  const active = current === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      aria-pressed={active}
-                      disabled={busy !== null}
-                      onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id)}
-                      className={cn(
-                        "mono cursor-pointer rounded-md border px-1.5 py-1 text-[10px] transition-colors",
-                        active ? "border-accent bg-accent-soft text-ink" : "border-line text-dim hover:border-accent/50 hover:text-ink",
-                        busy !== null && "opacity-50",
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {picked ? (
-                <code className="mono w-fit rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
-              ) : null}
-            </>
+            picker.options.map((option) => (
+              <OptionSheet
+                key={option.id}
+                label={option.label}
+                active={current === option.id}
+                disabled={busy !== null}
+                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id)}
+              />
+            ))
           ) : null}
-        </div>
+        </NodeFolder>
       ) : null}
       <p className="mono m-0 mt-2 text-[10px] text-dim">
         Click a node for its options. Drag to pan, and use the controls to zoom.
