@@ -26,6 +26,7 @@ import {
   readComboDefault,
   readPluginSettings,
   readRtkDefault,
+  saveComboSetup,
 } from "../../extensions/shared/plugin-settings.ts";
 import { readUsageDb, syncUsageDb } from "../../extensions/shared/usage-store.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
@@ -108,6 +109,40 @@ test("readPluginSettings tolerates a corrupt lock file", () => {
     writeFileSync(path.join(dir, "omp-plugins.lock.json"), "{ not json", "utf8");
     expect(readComboDefault()).toBe("off");
     expect(readPluginSettings()).toEqual({});
+  });
+});
+
+test("a host's own section wins over the shared defaults, and other hosts keep them", () => {
+  withHome((home) => {
+    writeLock(home, {
+      "@krtclcdy/tersio": {
+        comboDefault: "lite", cavemanDefault: "lite", rtkDefault: true,
+        hosts: { pi: { comboDefault: "max", cavemanDefault: "ultra", rtkDefault: false }, codex: { comboDefault: "bogus" } },
+      },
+    });
+    expect(readComboDefault("pi")).toBe("max");
+    expect(readCavemanDefault("pi")).toBe("ultra");
+    expect(readRtkDefault("pi")).toBe(false);
+    // Another known host with no section inherits the flat keys.
+    expect(readComboDefault("omp")).toBe("lite");
+    expect(readCavemanDefault("omp")).toBe("lite");
+    expect(readRtkDefault("omp")).toBe(true);
+    // An unknown section and a no-scope read never see the layer.
+    expect(readComboDefault("opencode")).toBe("lite");
+    expect(readComboDefault()).toBe("lite");
+  });
+});
+
+test("saveComboSetup writes a host's preset into that host's own section", () => {
+  withHome((home) => {
+    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "lite", cavemanDefault: "lite", rtkDefault: true } });
+    expect(saveComboSetup("max", "pi")).toBe(true);
+    // The host section carries the preset; the flat keys and the other agents stay untouched.
+    expect(readComboDefault("pi")).toBe("max");
+    expect(readCavemanDefault("pi")).toBe("ultra");
+    expect(readComboDefault("omp")).toBe("lite");
+    expect(readComboDefault()).toBe("lite");
+    expect(JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")).comboSetupComplete).toBe(true);
   });
 });
 
@@ -241,6 +276,13 @@ test("installer accepts --ponytail-default override and reports it", () => {
   const result = run("install", "--dry-run", "--yes", "--ponytail-default", "full");
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toMatch(/ponytail=full/);
+});
+
+test("a pinned host scopes the printed defaults and the per-host write to that agent", () => {
+  const result = run("install", "--dry-run", "--yes", "--verbose", "--host", "pi", "--combo-default", "balanced");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/Defaults for pi: combo=balanced/);
+  expect(result.stdout).toMatch(/would write session defaults for pi/);
 });
 
 test("installer rejects review as a Ponytail default", () => {

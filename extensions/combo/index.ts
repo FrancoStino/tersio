@@ -18,7 +18,8 @@ import {
   setSharedComboModes,
   systemPromptIncludes,
 } from '../shared/session-state.ts';
-import { hostSelect, injectPromptText, isOpencodeHost, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
+import { hostIdOf, hostSelect, injectPromptText, isOpencodeHost, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
+import type { HostScope } from '../shared/plugin-settings.ts';
 import { announceStatus } from '../shared/status.ts';
 import {
   isComboSetupComplete,
@@ -85,16 +86,24 @@ async function loadPonytailInstructions(mode: string): Promise<string> {
   return ponytailFallback(mode);
 }
 
-// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies the three it owns. pstackDefault and headroomDefault count as their own defaults, so a session that stores only one still honors it instead of losing it to the preset.
-function savedModes(): { caveman: string; rtk: string; ponytail: string; pstack: string; headroom: string } {
-  const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'].some((key) => key in readPluginSettings());
-  const preset = COMBO_LEVELS[readComboDefault()];
+// What a fresh session starts from: a stored per-mode default wins, and with none the Combo preset supplies the three it owns. pstackDefault and headroomDefault count as their own defaults, so a session that stores only one still honors it instead of losing it to the preset. A host's own section wins over the shared keys, and a host that stores only a preset gets that preset's three modes rather than a mix of its preset and the shared levels.
+function savedModes(host: HostScope): { caveman: string; rtk: string; ponytail: string; pstack: string; headroom: string } {
+  const settings = readPluginSettings();
+  const own = (settings.hosts as Record<string, Record<string, unknown>> | undefined)?.[host] ?? {};
+  const hasOwnModes = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'].some((key) => key in own);
+  if (!hasOwnModes && 'comboDefault' in own) {
+    const preset = COMBO_LEVELS[readComboDefault(host)] ?? COMBO_LEVELS.off;
+    return { ...preset, pstack: readPstackDefault(host), headroom: readHeadroomDefault(host) };
+  }
+  const hasModeDefaults = ['cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'].some((key) => key in settings);
+  const preset = COMBO_LEVELS[readComboDefault(host)];
   return hasModeDefaults
-    ? { caveman: readCavemanDefault(), rtk: readRtkDefault() ? 'on' : 'off', ponytail: readPonytailDefault(), pstack: readPstackDefault(), headroom: readHeadroomDefault() }
+    ? { caveman: readCavemanDefault(host), rtk: readRtkDefault(host) ? 'on' : 'off', ponytail: readPonytailDefault(host), pstack: readPstackDefault(host), headroom: readHeadroomDefault(host) }
     : { ...preset, pstack: 'off', headroom: 'off' };
 }
 
 export default function comboToggleExtension(pi: ExtensionApi): void {
+  const host = hostIdOf(pi);
   setExtensionLabel(pi, 'Combo session toggle (caveman, RTK, Ponytail)');
 
   let setupPrompted = false;
@@ -111,9 +120,9 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     pi.appendEntry?.('combo-level', { level });
   }
   function restoreConfiguredDefaults(): void {
-    const combo = readComboDefault();
+    const combo = readComboDefault(host);
     const preset = COMBO_LEVELS[combo];
-    const modes = savedModes();
+    const modes = savedModes(host);
     setSharedComboModes(modes);
     if (modes.caveman === 'off' && modes.rtk === 'off' && modes.ponytail === 'off' && modes.pstack === 'off' && modes.headroom === 'off') return;
     pi.appendEntry?.('caveman-mode', { mode: modes.caveman });
@@ -213,6 +222,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
       { label: 'max', description: 'caveman=ultra, rtk=on, ponytail=ultra' },
     ], { selectionMarker: 'radio', helpText: 'You can change this later with /tersio settings. pstack is separate.' });
     const level = choice || 'off';
+    // The first-run prompt stays machine-wide: it runs before any per-host choice exists, and a host-scoped write here would strand the other agents on off.
     if (saveComboSetup(level) && level !== 'off') {
       persistPreset(level);
       setSharedComboLevel(level);
@@ -230,7 +240,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
       // A headless root session has no UI to publish the bridge, so Ponytail never loaded; publish the saved modes only while the bridge is clear, or a subagent branch stops inheriting.
       const shared = getSharedComboState();
       if (shared.caveman === 'off' && shared.rtk === 'off' && shared.ponytail === 'off' && shared.pstack === 'off' && shared.headroom === 'off') {
-        setSharedComboModes(savedModes());
+        setSharedComboModes(savedModes(host));
       }
     }
     // Announced last, so any default above is reflected.

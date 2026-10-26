@@ -18,9 +18,9 @@ import {
   setSharedComboMode,
 } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry } from "../../extensions/shared/types.ts";
-import { readCavemanDefault } from "../../extensions/shared/plugin-settings.ts";
+import { readCavemanDefault, readPluginSettings } from "../../extensions/shared/plugin-settings.ts";
 import { ruleBodyProblem, ruleDir } from "../../extensions/shared/utils.ts";
-import { cliEnv } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable, fakeRtkBin, hasSqlite, isWindows, withHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/modes", import.meta.url));
@@ -675,6 +675,41 @@ test("a combo preset keeps a pstack the session already had", async () => {
   expect(getSharedComboState().pstack).toBe("on");
   expect(getSharedComboState().level).toBe("lite");
   expect(statuses.at(-1)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=LITE | 🥔 pstack=ON");
+});
+
+test("a host section feeds the combo defaults this host starts from", async () => {
+  await withHome(async (home) => {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
+      comboDefault: "lite", cavemanDefault: "lite", rtkDefault: true, ponytailDefault: "lite",
+      hosts: { omp: { comboDefault: "max" } },
+    }), "utf8");
+    resetSharedComboState();
+    const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+    const notifications: string[] = [];
+    const statuses = new Map<string, string>();
+    comboToggleExtension({
+      zod: { z: {} },
+      setLabel() {},
+      registerCommand() {},
+      registerTool() {},
+      appendEntry() {},
+      on(event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) { handlers.set(event, handler); },
+    } as unknown as ExtensionApi);
+    const ctx = {
+      hasUI: true,
+      notifications,
+      statuses,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setStatus(name: string, v: string | undefined) { if (v !== undefined) { statuses.set(name, v); if (name === "tersio") notifications.push(v); } },
+        notify() {},
+      },
+    };
+    await handlers.get("session_start")!({}, ctx);
+    // omp reads its own section: max, not the shared lite.
+    expect(statuses.get("tersio")).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  });
 });
 
 test("deriveLevel maps every preset back to its level, including balanced", () => {

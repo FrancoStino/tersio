@@ -60,7 +60,7 @@ export function ThemeToggle() {
   );
 }
 
-/** The six session-start mode fields the banner reads. */
+/** The six session-start mode fields the banner reads, plus the per-host sections the folders write. */
 export interface ModeState {
   comboDefault: string;
   /** The level the banner may claim: `custom` once the three modes stop matching the preset. */
@@ -70,6 +70,7 @@ export interface ModeState {
   ponytailDefault: string;
   pstackDefault: string;
   headroomDefault: string;
+  hosts?: Record<string, Record<string, string | boolean>>;
 }
 
 /** One glyph and one short name per mode, in the order the combo names them; the opt-in modes trail the three. */

@@ -7,6 +7,7 @@ import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue
 import { injectPromptText, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus } from '../shared/status.ts';
 import { readPstackDefault } from '../shared/plugin-settings.ts';
+import { hostIdOf } from '../shared/host.ts';
 import { ruleDir } from '../shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
@@ -40,6 +41,7 @@ function isOffCommand(text: unknown): boolean {
 }
 
 export default function pstackSessionExtension(pi: ExtensionApi): void {
+  const host = hostIdOf(pi);
   let currentMode = DEFAULT_MODE;
   let lastInjected: string | undefined = undefined;
 
@@ -92,7 +94,7 @@ export default function pstackSessionExtension(pi: ExtensionApi): void {
     // Persisted state wins, then a mode already chosen, then the configured default. `off` is the start value, not unset.
     const persisted = resolveMode(entries, '');
     const alreadyChosen = currentMode !== DEFAULT_MODE;
-    currentMode = persisted || (alreadyChosen ? currentMode : normalizeMode('pstack', readPstackDefault())) || DEFAULT_MODE;
+    currentMode = persisted || (alreadyChosen ? currentMode : normalizeMode('pstack', readPstackDefault(host))) || DEFAULT_MODE;
     announceStatus(ctx);
   }
 

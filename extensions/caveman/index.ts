@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { injectPromptText, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus, formatCavemanStatus } from '../shared/status.ts';
 import { readCavemanDefault } from '../shared/plugin-settings.ts';
+import { hostIdOf } from '../shared/host.ts';
 import { ruleDir } from '../shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
@@ -41,6 +42,7 @@ function isOffCommand(text: unknown): boolean {
 }
 
 export default function cavemanSessionExtension(pi: ExtensionApi): void {
+  const host = hostIdOf(pi);
   let currentMode = DEFAULT_MODE;
   let lastInjected: string | undefined = undefined;
 
@@ -94,7 +96,7 @@ export default function cavemanSessionExtension(pi: ExtensionApi): void {
     // Persisted state wins, then a mode already chosen, then the default. `off` is the start value, not unset.
     const persisted = resolveMode(entries, '');
     const alreadyChosen = currentMode !== DEFAULT_MODE;
-    currentMode = persisted || (alreadyChosen ? currentMode : normalizeMode('caveman', readCavemanDefault())) || DEFAULT_MODE;
+    currentMode = persisted || (alreadyChosen ? currentMode : normalizeMode('caveman', readCavemanDefault(host))) || DEFAULT_MODE;
     announceStatus(ctx);
   }
 

@@ -81,7 +81,7 @@ const LAYOUTS: Record<Exclude<LayoutKey, "wide">, Layout> = {
     nodes: [
       ["hosts", { x: 16, y: 16, w: 212, h: 72 }],
       ["combo", { x: 16, y: 104, w: 212, h: 56 }],
-      ["add-host", { x: 16, y: 176, w: 212, h: 44 }],
+      ["add-host", { x: 520, y: 16, w: 212, h: 44 }],
       ["caveman", { x: 252, y: 16, w: 230, h: 64 }],
       ["pstack", { x: 252, y: 96, w: 230, h: 64 }],
       ["headroom", { x: 252, y: 176, w: 230, h: 64 }],
@@ -106,7 +106,7 @@ const LAYOUTS: Record<Exclude<LayoutKey, "wide">, Layout> = {
     h: 712,
     nodes: [
       ["hosts", { x: 20, y: 48, w: 190, h: 88 }],
-      ["add-host", { x: 20, y: 144, w: 190, h: 44 }],
+      ["add-host", { x: 230, y: 8, w: 190, h: 44 }],
       ["combo", { x: 230, y: 64, w: 190, h: 56 }],
       ["caveman", { x: 20, y: 204, w: 400, h: 64 }],
       ["pstack", { x: 20, y: 276, w: 400, h: 64 }],
@@ -136,14 +136,13 @@ function wideLayout(hosts: ReadonlyArray<{ id: string }>): Layout {
   const top = 48;
   const step = 68; // 56 tall, 12 apart
   const bottom = hosts.length ? top + (hosts.length - 1) * step + 56 : 0;
-  const addY = hosts.length ? bottom + 12 : top;
-  const center = hosts.length ? (top + bottom) / 2 : addY + 22;
+  const center = hosts.length ? (top + bottom) / 2 : top + 28;
   const nodes: Array<readonly [NodeId, Box]> = hosts.map((host, i) => [
     `host-${host.id}` as NodeId,
     { x: 20, y: top + i * step, w: 190, h: 56 },
   ]);
   nodes.push(
-    ["add-host", { x: 20, y: addY, w: 190, h: 44 }],
+    ["add-host", { x: 752, y: 24, w: 240, h: 44 }],
     ["combo", { x: 246, y: center - 29, w: 200, h: 58 }],
     ["caveman", { x: 486, y: 24, w: 230, h: 62 }],
     ["pstack", { x: 486, y: 102, w: 230, h: 62 }],
@@ -534,7 +533,7 @@ function PipelineCanvas({
 }: {
   modes: ModeState | null;
   hostState: HostState;
-  onSet: (node: NodeId, field: string, value: string | boolean) => void;
+  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode") => void;
   onHostAction: (node: NodeId, action: HostAction) => void;
   busy: NodeId | null;
 }) {
@@ -543,6 +542,8 @@ function PipelineCanvas({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selected, setSelected] = useState<NodeId | null>(null);
+  // The combo folder scopes its preset: the shared default, or one agent's own section.
+  const [scope, setScope] = useState<"all" | "omp" | "pi" | "opencode">("all");
   const [confirming, setConfirming] = useState<NodeId | null>(null);
   const [panning, setPanning] = useState(false);
   const [hovered, setHovered] = useState<NodeId | null>(null);
@@ -776,7 +777,14 @@ function PipelineCanvas({
   const picker = selected ? PICKER[selected] : undefined;
   const currentValue = (id: NodeId): string | null => {
     if (!modes) return null;
-    if (id === "combo") return modes.comboLevel || modes.comboDefault;
+    if (id === "combo") {
+      // A host scope shows its own preset when it has one, else the value it inherits.
+      if (scope !== "all") {
+        const own = modes.hosts?.[scope]?.comboDefault;
+        if (typeof own === "string") return own;
+      }
+      return modes.comboLevel || modes.comboDefault;
+    }
     if (id === "caveman") return modes.cavemanDefault;
     if (id === "ponytail") return modes.ponytailDefault;
     if (id === "pstack") return modes.pstackDefault;
@@ -785,8 +793,14 @@ function PipelineCanvas({
     return null;
   };
   const current = selected ? currentValue(selected) : null;
+  // A host scope without its own section inherits the shared value, so the sheet says so.
+  const inherited = selected === "combo" && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
   // `custom` is what the three modes say, so it matches no preset button and names no command.
   const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
+
+  useEffect(() => {
+    setScope("all");
+  }, [selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -983,7 +997,9 @@ function PipelineCanvas({
                 {picked ? (
                   <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
                 ) : null}
-                <span className="mono ml-auto text-[9px] text-dim">every agent reads this</span>
+                <span className="mono ml-auto text-[9px] text-dim">
+                  {selected === "combo" && scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
+                </span>
               </div>
             ) : undefined
           }
@@ -1017,6 +1033,24 @@ function PipelineCanvas({
               </div>
             ))
           ) : null}
+          {selected === "combo" && picker ? (
+            <div data-sheet className="flex items-center gap-1">
+              {(["all", "omp", "pi", "opencode"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={scope === s}
+                  onClick={() => setScope(s)}
+                  className={cn(
+                    "mono flex-1 cursor-pointer rounded-md border px-1 py-1 text-[9px] transition-colors",
+                    scope === s ? "border-accent bg-accent-soft text-ink" : "border-line text-dim hover:border-accent/50 hover:text-ink",
+                  )}
+                >
+                  {s === "all" ? "all agents" : s}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {picker ? (
             picker.options.map((option) => (
               <OptionSheet
@@ -1024,7 +1058,8 @@ function PipelineCanvas({
                 label={option.label}
                 active={current === option.id}
                 disabled={busy !== null}
-                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id)}
+                hint={inherited && current === option.id ? "inherited" : undefined}
+                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, selected === "combo" && scope !== "all" ? scope : undefined)}
               />
             ))
           ) : null}
@@ -1085,12 +1120,12 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     });
   }, []);
 
-  const save = (node: NodeId, field: string, value: string | boolean): void => {
+  const save = (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode"): void => {
     setBusy(node);
     void fetch("/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [field]: value }),
+      body: JSON.stringify({ [field]: value, ...(host ? { host } : {}) }),
     })
       .then((r) => r.json())
       .then((d: { ok?: boolean; error?: string } | null) => {
@@ -1168,7 +1203,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
       <Card
         title="The pipeline"
         icon="workflow"
-        description="The host loads the extensions. Each mode appends one block to the prompt, then RTK rewrites and filters what the model runs. A dimmed node is off, or not installed. Click a node for its options; a mode switches straight from its menu."
+        description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled — click a node to switch it."
       >
         {pipelinePending ? <PipelineSkeleton /> : (
           <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />

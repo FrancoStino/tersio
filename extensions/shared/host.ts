@@ -145,6 +145,11 @@ function hostOf(pi: HostHandle): 'pi' | 'omp' | 'opencode' {
   return pi.zod ? 'omp' : 'pi';
 }
 
+/** Which host this ExtensionApi belongs to; the settings readers scope the per-host layer with it. */
+export function hostIdOf(pi: HostHandle): 'omp' | 'pi' | 'opencode' {
+  return hostOf(pi);
+}
+
 const ADAPTERS: Record<ReturnType<typeof hostOf>, HostAdapter> = {
   pi: piAdapter,
   omp: ompAdapter,

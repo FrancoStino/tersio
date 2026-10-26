@@ -29,7 +29,7 @@ import {
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
-import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
+import { formatCliStatus, saveHostDefaults, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
@@ -504,9 +504,9 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
 }
 
 
-async function resolveProfile(opts: { quiet?: boolean } = {}): Promise<Profile> {
-  // Seed from the stored defaults so flag-less runs keep them.
-  const profile = await storedProfile();
+async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = {}): Promise<Profile> {
+  // Seed from the stored defaults so flag-less runs keep them; a named host reads its own section first.
+  const profile = await storedProfile(opts.host);
 
   // The chosen preset owns all three modes.
   let comboChosen = comboDefaultFlag !== undefined;
@@ -541,7 +541,7 @@ async function resolveProfile(opts: { quiet?: boolean } = {}): Promise<Profile> 
   if (pstackDefaultFlag !== undefined) profile.pstackDefault = pstackDefaultFlag;
   if (headroomDefaultFlag !== undefined) profile.headroomDefault = headroomDefaultFlag;
 
-  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
+  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults${opts.host ? ` for ${opts.host}` : ''}: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
   return profile;
 }
 
@@ -759,6 +759,7 @@ function comboHint(host: string, comboDefault: string): string {
 }
 
 async function runInstall(forcedHost?: HostId): Promise<void> {
+  let hostChosen = false;
   if (command === null && tty() && !yes && !updatePromptDone) {
     await runCommandMenu();
     return;
@@ -776,7 +777,10 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   else if (pinned) targetHost = pinned;
   else if (tty() && !yes && !dryRun && !applyUpdate && command !== 'uninstall') {
     targetHost = await chooseHost('Install Tersio into which agent?');
+    hostChosen = true;
   }
+  // A default the run actually chose (flag, pinned host, or an interactive pick) belongs to that agent; a bare reinstall keeps the shared store.
+  const hostExplicit = forcedHost !== undefined || pinned !== undefined || hostChosen;
 
   // apply-update stays silent: the parent printed the plan.
   const quiet = applyUpdate;
@@ -811,8 +815,8 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     }
   }
 
-  // Resolve session defaults: flags > interactive prompt > defaults.
-  const profile = await resolveProfile({ quiet });
+  // Resolve session defaults: flags > interactive prompt > defaults; a named host reads its own section first.
+  const profile = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
 
   const userDir = OMP_AGENT_DIR;
   const userExtDir = path.join(userDir, 'extensions');
@@ -860,7 +864,10 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (targetHost === 'opencode') {
     await capture('opencode tree', () => stepOpencode(installOptions));
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'opencode'));
-    await capture('settings', () => writePluginSettings(profile, installOptions));
+    await capture('settings', async () => {
+      await writePluginSettings(profile, installOptions);
+      if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+    });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('OpenCode', profile.comboDefault));
     closeRL();
@@ -870,7 +877,10 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (targetHost === 'pi') {
     await capture('pi tree', () => stepPiLayer(installOptions));
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pi'));
-    await capture('settings', () => writePluginSettings(profile, installOptions));
+    await capture('settings', async () => {
+      await writePluginSettings(profile, installOptions);
+      if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+    });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('pi', profile.comboDefault));
     closeRL();
@@ -902,7 +912,10 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (ownsTree) await capture('plugin entry', () => stepPluginEntry(extDir, installOptions));
   if (ownsTree) await capture('plugin manifest', () => syncPluginManifest(path.dirname(pluginExtDir), installOptions));
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
-  if (selfPlugin) await capture('settings', () => writePluginSettings(profile, installOptions));
+  if (selfPlugin) await capture('settings', async () => {
+    await writePluginSettings(profile, installOptions);
+    if (hostExplicit) await saveHostDefaults(targetHost, profile, installOptions);
+  });
 
   if (quiet) {
     if (failures.length > 0) console.log(`  add-ons: ${failures.length} failed (${failures.join(', ')}) — see [fail] lines above`);

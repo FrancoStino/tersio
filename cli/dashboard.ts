@@ -13,7 +13,7 @@ import type { CurrencyCode } from './currency.ts';
 import {
   OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
 } from './common.ts';
-import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, saveHostDefaults, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
@@ -25,6 +25,7 @@ import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
 import { findPackageRoot, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
@@ -550,11 +551,17 @@ function setDiagSchedule(schedule: DiagSchedule): DoctorReport {
   return base;
 }
 
-// One field per call, validated against the same sets the CLI uses.
+// One field per call, validated against the same sets the CLI uses. A body with a `host` writes that
+// agent's own section, so one agent's preset never becomes every agent's.
 async function saveDefaults(body: Record<string, unknown>): Promise<
   { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
 > {
-  const profile = await storedProfile();
+  const HOST_SCOPES = ['omp', 'pi', 'opencode'] as const;
+  const hostScope = typeof body.host === 'string' && (HOST_SCOPES as readonly string[]).includes(body.host)
+    ? body.host as (typeof HOST_SCOPES)[number]
+    : null;
+  if (body.host !== undefined && hostScope === null) return { ok: false, error: 'unknown host scope' };
+  const profile = await storedProfile(hostScope);
   const events: string[] = [];
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
@@ -612,8 +619,9 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     // A drag changes it often, so it is saved without an activity line.
     profile.sidebarWidth = clampSidebarWidth(body.sidebarWidth);
   }
-  await writePluginSettings(profile, {});
-  for (const title of events) recordActivity('mode', title, 'Applies to new sessions.');
+  if (hostScope) await saveHostDefaults(hostScope, profile, {});
+  else await writePluginSettings(profile, {});
+  for (const title of events) recordActivity('mode', title, hostScope ? `Applies to new ${hostScope} sessions.` : 'Applies to new sessions.');
   return {
     ok: true,
     profile: {
@@ -890,6 +898,11 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     }
     if (req.url === '/settings' && req.method === 'GET') {
       storedProfile().then((profile) => {
+        // The per-host sections ride along, so the canvas can show and set one agent's own defaults.
+        let hosts: Record<string, unknown> = {};
+        try {
+          hosts = (JSON.parse(readFileSync(tersioSettingsFile(), 'utf8') ?? '{}') as { hosts?: Record<string, unknown> }).hosts ?? {};
+        } catch { /* no store yet: every host reads the flat defaults */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           comboDefault: profile.comboDefault,
@@ -898,6 +911,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           ponytailDefault: profile.ponytailDefault,
           pstackDefault: profile.pstackDefault,
           headroomDefault: profile.headroomDefault,
+          hosts,
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           devTools: profile.devTools,

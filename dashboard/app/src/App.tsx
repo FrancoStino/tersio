@@ -121,6 +121,7 @@ function useModeState(): readonly [ModeState | null, () => void, boolean] {
           ponytailDefault: typeof d.ponytailDefault === "string" ? d.ponytailDefault : "off",
           pstackDefault: typeof d.pstackDefault === "string" ? d.pstackDefault : "off",
           headroomDefault: typeof d.headroomDefault === "string" ? d.headroomDefault : "off",
+          hosts: d.hosts && typeof d.hosts === "object" ? d.hosts as ModeState["hosts"] : {},
         });
       })
       .catch(() => { /* no server: the banner keeps its placeholder */ })

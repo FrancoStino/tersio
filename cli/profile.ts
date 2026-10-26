@@ -10,6 +10,7 @@ import os from 'node:os';
 import { DEFAULT_CURRENCY, isCurrencyCode } from './currency.ts';
 import { recordActivity } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
+import type { HostId } from './hosts.ts';
 import { readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
@@ -72,6 +73,7 @@ interface StoredSettings {
   ponytailDefault?: unknown;
   pstackDefault?: unknown;
   headroomDefault?: unknown;
+  hosts?: unknown;
   currency?: unknown;
   backupSchedule?: unknown;
   devTools?: unknown;
@@ -80,12 +82,16 @@ interface StoredSettings {
   subagentMarkers?: unknown;
 }
 
-// Seed from OMP settings so pre-~/.tersio installs keep values. Sync: awaiting let piped stdin beat `ask()`.
-function storedProfileSync(): Profile {
+/** Seed from OMP settings so pre-~/.tersio installs keep values. Sync: awaiting let piped stdin beat `ask()`. A host section, when named, wins over the flat keys. */
+function storedProfileSync(host?: HostId | null): Profile {
   const base = defaultProfile();
   const stored = parseStored(readTextIfExistsSync(tersioSettingsFile()) ?? readTextIfExistsSync(legacyOmpLockPath()));
   if (!stored) return base;
   applyStored(base, stored);
+  if (host) {
+    const section = (stored.hosts as Record<string, Record<string, unknown>> | undefined)?.[host];
+    if (section) applyStored(base, section as StoredSettings);
+  }
   return base;
 }
 
@@ -111,8 +117,8 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   }
 }
 
-async function storedProfile(): Promise<Profile> {
-  return storedProfileSync();
+async function storedProfile(host?: HostId | null): Promise<Profile> {
+  return storedProfileSync(host);
 }
 
 function legacyOmpLockPath(): string {
@@ -194,12 +200,36 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   await mirrorPonytailDefault(profile.ponytailDefault, options);
 }
 
+/** A per-host layer over the shared defaults: a host's own section wins, the flat keys stay the fallback. */
+export async function saveHostDefaults(host: HostId, profile: Profile, options: WriteOptions): Promise<void> {
+  const file = tersioSettingsFile();
+  const before = parseStored(await readTextIfExists(file)) ?? {};
+  const section = {
+    comboDefault: profile.comboDefault,
+    cavemanDefault: profile.cavemanDefault,
+    rtkDefault: profile.rtkDefault,
+    ponytailDefault: profile.ponytailDefault,
+    pstackDefault: profile.pstackDefault,
+    headroomDefault: profile.headroomDefault,
+  };
+  const hosts = (before.hosts as Record<string, unknown> | undefined) ?? {};
+  const next = { ...before, hosts: { ...hosts, [host]: { ...((hosts[host] as Record<string, unknown> | undefined) ?? {}), ...section } } };
+  if (options.dryRun) {
+    if (verbose && !options.quiet) console.log(`  [dry-run] would write session defaults for ${host} to ${file}`);
+    return;
+  }
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  recordActivity('mode', `Session defaults for ${host} saved`, formatProfile(profile));
+  console.log(`  [write] Session defaults for ${host} in ${file}`);
+}
+
 function formatProfile(profile: Profile): string {
   return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault}) · currency=${profile.currency}`;
 }
 
 export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
-export type { Profile };
+export type { Profile, HostId };
 
 /** A combo level writes the three modes it owns, so the level names the preset that produced them. */
 export function applyComboPreset(profile: Profile, level: string): Profile {
