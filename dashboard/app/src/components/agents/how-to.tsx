@@ -535,7 +535,8 @@ function PipelineCanvas({
   const shownHosts = HOSTS.filter((host) => hostState.installed[host.id] !== false);
   const compact = containerW > 0 && containerW < 620;
   const layout = pipelineLayout(shownHosts, compact);
-  const fit = containerW > 0 ? containerW / layout.w : 1;
+  // Natural size only: a wide canvas overflows the card, so drag-pan and zoom reach the later agents instead of the nodes shrinking.
+  const fit = containerW > 0 ? Math.min(1, containerW / layout.w) : 1;
   const scale = fit * zoom;
 
   const isNodeOff = (id: NodeId): boolean => {
