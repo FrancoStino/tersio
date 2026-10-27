@@ -52,9 +52,10 @@ interface Layout {
 }
 
 /**
- * One design space, drawn per agent: each installed agent owns a column with its dedicated combo
- * preset, the mode blocks stay one shared column in injection order, and the output closes the turn.
- * Adding an agent widens the canvas, so the card pans and zooms instead of squeezing the nodes.
+ * One design space, drawn per agent: the hosts stack as host-plus-preset pairs on the left, the mode
+ * blocks run as one row in injection order, and the output closes the row. The row reads left to right
+ * the way the blocks append, so the canvas spends its width instead of its height. Adding an agent
+ * lengthens the left stack, never the width, so the card pans and zooms instead of squeezing the nodes.
  */
 export function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean): Layout {
   const nodes: Array<readonly [NodeId, Box]> = [];
@@ -87,36 +88,38 @@ export function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: bo
       captions: [{ x: 230, y: Math.max(pairBottom, blocksBottom) + 20, text: "appended in this order, one block each" }],
     };
   }
-  // Wide card: one column per agent, then the shared block column, then the output.
+  // Wide card: one host-plus-preset pair per agent on the left, then the shared block row, then output.
   hosts.forEach((host, i) => {
-    const colX = 20 + i * 244;
+    const top = 24 + i * 124;
     nodes.push(
-      [`host-${host.id}` as NodeId, { x: colX, y: 24, w: 200, h: 56 }],
-      [`combo-${host.id}` as NodeId, { x: colX, y: 96, w: 200, h: 58 }],
+      [`host-${host.id}` as NodeId, { x: 20, y: top, w: 190, h: 54 }],
+      [`combo-${host.id}` as NodeId, { x: 20, y: top + 60, w: 190, h: 54 }],
     );
-    links.push({ p: [[colX + 100, 80], [colX + 100, 96]], k: host.id as EdgeKey, arrow: true });
+    links.push({ p: [[115, top + 54], [115, top + 60]], k: host.id as EdgeKey, arrow: true });
   });
-  const busY = 430;
-  const blockX = 20 + hosts.length * 244 + 40;
+  const trunkX = 234;
+  const rowX = 250;
+  const rowY = 24;
   hosts.forEach((host, i) => {
-    const colX = 20 + i * 244;
-    // Every preset feeds one bus, and the bus enters the block column once.
-    links.push({ p: [[colX + 100, 154], [colX + 100, busY], [blockX - 20, busY]], k: host.id as EdgeKey });
+    const comboY = 24 + i * 124 + 60 + 27;
+    // Every preset feeds one trunk, and the trunk enters the block row once.
+    links.push({ p: [[210, comboY], [trunkX, comboY], [trunkX, rowY + 29]], k: host.id as EdgeKey });
   });
-  if (hosts.length > 0) links.push({ p: [[blockX - 20, busY], [blockX - 20, 55], [blockX, 55]], k: "caveman", arrow: true });
+  if (hosts.length > 0) links.push({ p: [[trunkX, rowY + 29], [rowX, rowY + 29]], k: "caveman", arrow: true });
   BLOCKS.forEach((block, j) => {
-    nodes.push([block, { x: blockX, y: 24 + j * 78, w: 230, h: 62 }]);
-    if (j > 0) links.push({ p: [[blockX + 115, 24 + (j - 1) * 78 + 62], [blockX + 115, 24 + j * 78]], k: block as EdgeKey, arrow: true });
+    nodes.push([block, { x: rowX + j * 214, y: rowY, w: 190, h: 58 }]);
+    if (j > 0) links.push({ p: [[rowX + (j - 1) * 214 + 190, rowY + 29], [rowX + j * 214, rowY + 29]], k: block as EdgeKey, arrow: true });
   });
-  const outputX = blockX + 230 + 40;
-  nodes.push(["output", { x: outputX, y: 179, w: 240, h: 64 }]);
-  links.push({ p: [[blockX + 115, 398], [blockX + 115, 412], [outputX + 120, 412], [outputX + 120, 211], [outputX, 211]], k: "ponytail", arrow: true });
+  const outputX = rowX + BLOCKS.length * 214 + 14;
+  nodes.push(["output", { x: outputX, y: rowY, w: 200, h: 58 }]);
+  links.push({ p: [[rowX + (BLOCKS.length - 1) * 214 + 190, rowY + 29], [outputX, rowY + 29]], k: "ponytail", arrow: true });
+  const stackBottom = hosts.length > 0 ? 24 + hosts.length * 124 - 4 : rowY + 58;
   return {
-    w: outputX + 240 + 20,
-    h: 560,
+    w: outputX + 200 + 20,
+    h: Math.max(stackBottom, rowY + 58) + 62,
     nodes,
     links,
-    captions: [{ x: blockX, y: 462, text: "appended in this order, one block each" }],
+    captions: [{ x: rowX, y: Math.max(stackBottom, rowY + 58) + 26, text: "appended in this order, one block each" }],
   };
 }
 

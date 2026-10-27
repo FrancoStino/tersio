@@ -628,7 +628,7 @@ export function PipelineCanvas({
             })}
           </div>
 
-          <div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
+          <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
             <button
               type="button"
               onClick={() => zoomBy(1 / 1.2)}
@@ -681,21 +681,21 @@ export function PipelineCanvas({
 
 
 
-/** The canvas's shape while the host list is still out: agent column, mode column, output. */
+/** The canvas's shape while the host list is still out: host pairs, a row of blocks, output. */
 export function PipelineSkeleton() {
   return (
     <div
       aria-busy="true"
       aria-label="Loading the pipeline"
-      className="flex min-h-[260px] flex-wrap items-center gap-6 rounded-lg border border-line p-4"
+      className="flex min-h-[200px] items-center gap-6 rounded-lg border border-line p-4"
     >
       <div className="grid gap-3">
-        {[0, 1, 2].map((row) => <Skeleton key={row} className="h-12 w-40 rounded-xl" />)}
+        {[0, 1].map((row) => <Skeleton key={row} className="h-12 w-44 rounded-xl" />)}
       </div>
-      <div className="grid gap-3">
-        {[0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-12 w-44 rounded-xl" />)}
+      <div className="flex items-center gap-4">
+        {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 w-44 rounded-xl" />)}
       </div>
-      <Skeleton className="h-16 w-52 rounded-xl" />
+      <Skeleton className="h-14 w-48 rounded-xl" />
     </div>
   );
 }
