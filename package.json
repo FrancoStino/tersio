@@ -35,8 +35,7 @@
       "./extensions/rtk/filter.ts",
       "./extensions/timing/index.ts",
       "./extensions/combo/index.ts",
-      "./extensions/commands/index.ts",
-      "./extensions/updater/index.ts"
+      "./extensions/commands/index.ts"
     ],
     "skills": [
       "./extensions/ponytail/skills"
@@ -62,7 +61,7 @@
         "description": "In-session updater for Ponytail, RTK, and Caveman (/tersio update)",
         "default": true,
         "extensions": [
-          "./extensions/updater/index.ts"
+          "./extensions/commands/index.ts"
         ]
       }
     },

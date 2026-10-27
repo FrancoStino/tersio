@@ -178,7 +178,7 @@ test("doctor --fix dry-run previews debris removal", () => {
 test("doctor --fix repairs missing extension files in an empty home", () => {
   const home = missingHome();
   try {
-    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-lite.md", "caveman/rule-megacave-lite.md", "caveman/rule-megacave-ultra.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "updater/index.ts"];
+    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-lite.md", "caveman/rule-megacave-lite.md", "caveman/rule-megacave-ultra.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "shared/updater.ts"];
     for (const rel of missing) {
       expect(resultFileMissing(home, rel)).toBe(true);
     }
@@ -208,7 +208,7 @@ test("doctor names a half-written tree that still has its entry points", () => {
   const home = missingHome();
   try {
     const ext = extDir(home);
-    for (const rel of ["caveman/index.ts", "rtk/session.ts", "updater/index.ts"]) {
+    for (const rel of ["caveman/index.ts", "rtk/session.ts", "shared/updater.ts"]) {
       mkdirSync(path.join(ext, path.dirname(rel)), { recursive: true });
       writeFileSync(path.join(ext, rel), "export default {}\n", "utf8");
     }

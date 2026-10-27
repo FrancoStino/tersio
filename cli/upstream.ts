@@ -10,7 +10,7 @@ import { readState } from '../extensions/shared/state.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 import { EXT_DIR, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, PONYTAIL_VERSION, shippedOmpManifest, sourcePath, treeFileText, treeFilesFor } from './manifest.ts';
 import { textTable } from './common.ts';
-import { adaptCavemanFull } from '../extensions/updater/index.ts';
+import { adaptCavemanFull } from '../extensions/shared/updater.ts';
 import {
   RTK_RELEASE_API,
   RTK_REPO,

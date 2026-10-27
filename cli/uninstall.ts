@@ -29,12 +29,12 @@ const PI_TREE_DIRS = [
   'caveman',
   'pstack',
   'rtk',
-  'updater',
   'combo',
   'commands',
   'shared',
   'server.ts',
   // Legacy: a tree an older build wrote, or a foreign name that was never shipped here.
+  'updater',
   'caveman-session',
   'rtk-session',
   'rtk-filter',
@@ -252,11 +252,11 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     // What an install writes now.
     'caveman',
     'rtk',
-    'updater',
     'combo',
     'commands',
     'shared',
     // Legacy: a tree an older build wrote into the agent tree, or a foreign name never shipped here.
+    'updater',
     'caveman-session',
     'rtk-session',
     'rtk-filter',

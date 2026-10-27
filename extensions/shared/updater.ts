@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { patchState } from '../shared/state.ts';
+import { patchState } from './state.ts';
 import {
   CAVEMAN_BODY_PATHS,
   CAVEMAN_RAW,
@@ -25,8 +25,8 @@ import {
   readTextIfExists,
   rtkPlatformSpec,
   resolveRtkBinary,
-} from '../shared/utils.ts';
-import type { RtkRelease } from '../shared/utils.ts';
+} from './utils.ts';
+import type { RtkRelease } from './utils.ts';
 
 const IS_WINDOWS = process.platform === 'win32';
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));

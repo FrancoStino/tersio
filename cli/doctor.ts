@@ -66,7 +66,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // The pstack body is a Tersio fork with no remote, so the check proves it is usable, not current.
   const pstackRule = path.join(tersioPluginDir, 'extensions', 'pstack', 'rule.md');
   const rtkIndex = path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts');
-  const updaterIndex = path.join(tersioPluginDir, 'extensions', 'updater', 'index.ts');
+  const updaterIndex = path.join(tersioPluginDir, 'extensions', 'shared', 'updater.ts');
 
   // Probes start concurrently and report in fixed order as data settles; each resolves instead of rejecting.
   const hosts = detectHosts();

@@ -1,5 +1,6 @@
 // Single list of install writes, shared by installer, doctor, and tests.
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { findPackageRoot, readTextIfExists } from '../extensions/shared/utils.ts';
@@ -39,6 +40,7 @@ export const TREE_FILES: readonly string[] = [
   'shared/carbon.ts',
   'shared/utils.ts',
   'shared/rtk-eligible.ts',
+  'shared/updater.ts',
   'caveman/index.ts',
   'caveman/rule.md',
   'caveman/rule-lite.md',
@@ -55,7 +57,6 @@ export const TREE_FILES: readonly string[] = [
   'timing/index.ts',
   'combo/index.ts',
   'commands/index.ts',
-  'updater/index.ts',
   'server.ts',
 ];
 
@@ -99,13 +100,28 @@ export function treeFilesFor(id: 'omp' | 'pi' | 'opencode'): readonly string[] {
 }
 
 /** Obsolete install debris; explicit, not a sweep, because these trees are shared with tersio's other steps. */
-const OBSOLETE_DIRS = ['caveman-session', 'rtk-filter', 'rtk-session', 'combo-toggle', 'tersio-commands', 'ai-addons-updater', 'lib', 'opencode'] as const;
+const OBSOLETE_DIRS = ['updater', 'caveman-session', 'rtk-filter', 'rtk-session', 'combo-toggle', 'tersio-commands', 'ai-addons-updater', 'lib', 'opencode'] as const;
 
 /** Debris test for a tree-relative path; one definition shared by detection and repair. */
 export function isObsoleteTreeFile(rel: string, id: 'omp' | 'pi' | 'opencode'): boolean {
   if (rel.endsWith('.bak') || rel === '.DS_Store') return true;
   if (OBSOLETE_DIRS.includes(rel.split('/')[0] as (typeof OBSOLETE_DIRS)[number])) return true;
   return rel === 'server.ts' && id !== 'opencode';
+}
+
+/** Drops the debris directories a written tree must never keep, and reports their names. */
+export async function reapObsoleteTreeDirs(dest: string, options: { dryRun?: boolean; verbose?: boolean }): Promise<string[]> {
+  let entries;
+  try { entries = await fs.readdir(dest, { withFileTypes: true }); } catch { return []; }
+  const gone: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!OBSOLETE_DIRS.includes(entry.name as (typeof OBSOLETE_DIRS)[number])) continue;
+    if (!options.dryRun) await fs.rm(path.join(dest, entry.name), { recursive: true, force: true });
+    gone.push(entry.name);
+  }
+  if (gone.length > 0 && options.verbose) console.log(`  Retired debris — remove ${gone.join(', ')}`);
+  return gone;
 }
 
 /** A tree file's text: copied files come from the repo, generated ones from their own definition. */

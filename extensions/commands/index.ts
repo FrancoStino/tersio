@@ -9,7 +9,7 @@ import { setExtensionLabel } from '../shared/host.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { appendUsage } from '../shared/usage-ledger.ts';
-import { runAddonUpdate } from '../updater/index.ts';
+import { runAddonUpdate } from '../shared/updater.ts';
 import type { ExtensionApi, ExtensionCtx } from '../shared/types.ts';
 
 const HELP = [
