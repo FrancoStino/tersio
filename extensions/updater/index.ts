@@ -353,3 +353,4 @@ async function updateCaveman(ctx: AddonUpdaterCtx, dryRun = false): Promise<stri
 }
 
 export { parseChecksum };
+export default function updaterExtension(): void {}

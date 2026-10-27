@@ -8,8 +8,9 @@ Tersio installs into an agent host. Pick the row for the host you use.
 | [OMP](https://github.com/can1357/oh-my-pi) | `tersio install --host omp` | `tersio update --host omp` | `tersio uninstall --host omp` |
 | [pi](https://github.com/earendil-works/pi) | `tersio install --host pi` | `tersio update --host pi` | `tersio uninstall --host pi` |
 | [OpenCode](https://opencode.ai) | `tersio install --host opencode` | `tersio update --host opencode` | `tersio uninstall --host opencode` |
+| [Pi-in-go (PiG)](https://pi-in-go.dev) | `tersio install --host pig` | `tersio update --host pig` | `tersio uninstall --host pig` |
 
-Host-native equivalents, same code: `omp plugin install @krtclcdy/tersio`, `pi install npm:@krtclcdy/tersio`, `opencode plugin add @krtclcdy/tersio`. Never run both forms for one host, or every command registers twice.
+Host-native equivalents, same code: `omp plugin install @krtclcdy/tersio`, `pi install npm:@krtclcdy/tersio`, `opencode plugin add @krtclcdy/tersio`, `pig install npm:@krtclcdy/tersio`. Never run both forms for one host, or every command registers twice.
 
 OpenCode users who installed via `opencode plugin add` update and remove through `opencode plugin update` / `opencode plugin remove` instead.
 

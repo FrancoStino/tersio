@@ -22,7 +22,7 @@ import timingExtension from "../../extensions/timing/index.ts";
 import { resetSharedComboState, setSharedComboMode } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry, ToolResultEvent } from "../../extensions/shared/types.ts";
 import { readRtkGain, readRtkGainByVerb, rtkDbPath, rtkGainFailure } from "../../extensions/shared/rtk-gain.ts";
-import { wireRtkOmp, wireRtkOpencode, wireRtkPi, type WiringOptions } from "../../cli/rtk-wiring.ts";
+import { wireRtkOmp, wireRtkOpencode, wireRtkPi, wireRtkPig, type WiringOptions } from "../../cli/rtk-wiring.ts";
 import { findFile, resolveRtkBinary, rtkPlatformSpec, shimCommand } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
 import { fakeRtkBin, hasSqlite, withHome as inHome } from "../helpers/env.ts";
@@ -583,8 +583,9 @@ async function rewiredCommand(
 
 const HOOK_TAIL = [".omp", "agent", "extensions", "rtk.ts"] as const;
 const PI_HOOK_TAIL = [".pi", "agent", "extensions", "rtk.ts"] as const;
+const PIG_HOOK_TAIL = [".pig", "agent", "extensions", "rtk.ts"] as const;
 
-test.skipIf(!realRtk)("the wired omp hook rewrites a bash command", async () => {
+test.skipIf(!realRtk || process.platform === "win32")("the wired omp hook rewrites a bash command", async () => {
   const wired = await rewiredCommand(wireRtkOmp, [...HOOK_TAIL]);
   expect(wired.registered, "rtk init must have written a hook that registers tool_call").toBe(true);
   expect(wired.command, "the generated hook must rewrite a bash command through rtk")
@@ -592,8 +593,15 @@ test.skipIf(!realRtk)("the wired omp hook rewrites a bash command", async () => 
 });
 
 // Same invocation, same hook, different agent directory: pi gets the same proof, not a second integration.
-test.skipIf(!realRtk)("the wired pi hook rewrites a bash command", async () => {
+test.skipIf(!realRtk || process.platform === "win32")("the wired pi hook rewrites a bash command", async () => {
   const wired = await rewiredCommand(wireRtkPi, [...PI_HOOK_TAIL]);
+  expect(wired.registered, "rtk init must have written a hook that registers tool_call").toBe(true);
+  expect(wired.command, "the generated hook must rewrite a bash command through rtk")
+    .toBe("rtk grep -rn foo .");
+});
+
+test.skipIf(!realRtk || process.platform === "win32")("the wired pig hook rewrites a bash command", async () => {
+  const wired = await rewiredCommand(wireRtkPig, [...PIG_HOOK_TAIL]);
   expect(wired.registered, "rtk init must have written a hook that registers tool_call").toBe(true);
   expect(wired.command, "the generated hook must rewrite a bash command through rtk")
     .toBe("rtk grep -rn foo .");

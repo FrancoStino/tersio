@@ -40,6 +40,7 @@ export const TREE_FILES: readonly string[] = [
   'shared/utils.ts',
   'shared/rtk-eligible.ts',
   'caveman/index.ts',
+  'caveman/caveman.ts',
   'caveman/rule.md',
   'caveman/rule-lite.md',
   'caveman/rule-megacave-lite.md',
@@ -47,14 +48,19 @@ export const TREE_FILES: readonly string[] = [
   'caveman/rule-ultra.md',
   'caveman/rule-megacave.md',
   'pstack/index.ts',
+  'pstack/pstack.ts',
   'pstack/rule.md',
   ...TREE_PSTACK_FILES,
   'rtk/session.ts',
   'rtk/filter.ts',
   'timing/index.ts',
+  'timing/timing.ts',
   'combo/index.ts',
+  'combo/combo.ts',
   'commands/index.ts',
+  'commands/commands.ts',
   'updater/index.ts',
+  'updater/updater.ts',
   'server.ts',
 ];
 
@@ -91,17 +97,17 @@ export const GENERATED_TREE_FILES: Readonly<Record<string, string>> = {
 };
 
 /** The files one host's extension tree holds. The package tree holds all of them. */
-export function treeFilesFor(id: 'omp' | 'pi' | 'opencode'): readonly string[] {
+export function treeFilesFor(id: 'omp' | 'pi' | 'opencode' | 'pig'): readonly string[] {
   if (id === 'opencode') return TREE_FILES;
   const files = TREE_FILES.filter((file) => file !== OPENCODE_ENTRY);
-  return id === 'pi' ? [...files, PI_RTK_MANIFEST] : files;
+  return id === 'pi' || id === 'pig' ? [...files, PI_RTK_MANIFEST] : files;
 }
 
 /** Obsolete install debris; explicit, not a sweep, because these trees are shared with tersio's other steps. */
 const OBSOLETE_DIRS = ['caveman-session', 'rtk-filter', 'rtk-session', 'combo-toggle', 'tersio-commands', 'ai-addons-updater', 'lib', 'opencode'] as const;
 
 /** Debris test for a tree-relative path; one definition shared by detection and repair. */
-export function isObsoleteTreeFile(rel: string, id: 'omp' | 'pi' | 'opencode'): boolean {
+export function isObsoleteTreeFile(rel: string, id: 'omp' | 'pi' | 'opencode' | 'pig'): boolean {
   if (rel.endsWith('.bak') || rel === '.DS_Store') return true;
   if (OBSOLETE_DIRS.includes(rel.split('/')[0] as (typeof OBSOLETE_DIRS)[number])) return true;
   return rel === 'server.ts' && id !== 'opencode';

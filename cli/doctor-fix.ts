@@ -12,7 +12,7 @@ import {
   shimCommand,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
-import { wireRtkOmp, wireRtkOpencode, wireRtkPi, ensureRtkInConfig } from './rtk-wiring.ts';
+import { wireRtkOmp, wireRtkOpencode, wireRtkPi, wireRtkPig, ensureRtkInConfig } from './rtk-wiring.ts';
 import {
   RTK_RELEASE_API, fetchJson, findFile, findPackageRoot, httpsGet,
   httpsDownload, parseChecksum, readTextIfExists, resolveHostBinary, rtkPlatformSpec, sha256File,
@@ -73,7 +73,7 @@ export function serviceRunning(status: string): boolean {
 }
 
 /** Every obsolete file under `dest`, or an empty list. `treeFilesFor` is what the install writes. */
-async function obsoleteFiles(dest: string, id: 'omp' | 'pi' | 'opencode'): Promise<string[]> {
+async function obsoleteFiles(dest: string, id: 'omp' | 'pi' | 'opencode' | 'pig'): Promise<string[]> {
   const keep = new Set(treeFilesFor(id));
   const out: string[] = [];
   const walk = async (dir: string, rel: string): Promise<void> => {
@@ -93,7 +93,7 @@ async function obsoleteFiles(dest: string, id: 'omp' | 'pi' | 'opencode'): Promi
 }
 
 /** Obsolete top-level directories, empty or not: a debris name is a whole directory, so a repair must drop the directory, not only the files inside it. */
-async function obsoleteDirs(dest: string, id: 'omp' | 'pi' | 'opencode'): Promise<string[]> {
+async function obsoleteDirs(dest: string, id: 'omp' | 'pi' | 'opencode' | 'pig'): Promise<string[]> {
   const out: string[] = [];
   let entries;
   try { entries = await fs.readdir(dest, { withFileTypes: true }); } catch { return out; }
@@ -106,8 +106,8 @@ async function obsoleteDirs(dest: string, id: 'omp' | 'pi' | 'opencode'): Promis
 
 // A written tree is the install for both hosts, so --fix restores it for whichever hosts have it.
 async function fixExtensionTrees(): Promise<void> {
-  // The entry imports @opencode/plugin, which pi and omp lack, so one shared filter keeps repairs out of their trees.
-  const forHost = (id: string): readonly string[] => treeFilesFor(id as 'omp' | 'pi' | 'opencode');
+  // The entry imports @opencode/plugin, which pi, pig and omp lack, so one shared filter keeps repairs out of their trees.
+  const forHost = (id: string): readonly string[] => treeFilesFor(id as 'omp' | 'pi' | 'opencode' | 'pig');
   // Older trees nested the entry; a repair under the old filter may have left it at the root, so remove both strays.
   const scrubOpencodeEntry = async (dest: string): Promise<void> => {
     for (const target of [path.join(dest, OPENCODE_ENTRY), path.join(dest, 'opencode')]) {
@@ -129,14 +129,14 @@ async function fixExtensionTrees(): Promise<void> {
     const missing = await syncTreeFiles(dest, forHost(host.id), { dryRun, verbose });
     for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
     // Writing the current tree repairs stale and missing at once; dropped debris needs removal, else it survives.
-    const debris = (await obsoleteFiles(dest, host.id as 'omp' | 'pi' | 'opencode')).sort();
+    const debris = (await obsoleteFiles(dest, host.id as 'omp' | 'pi' | 'opencode' | 'pig')).sort();
     for (const rel of debris) {
       const at = path.join(dest, ...rel.split('/'));
       if (dryRun) { sayTagged(`  [dry-run] would remove debris ${at}`); continue; }
       await fs.rm(at, { force: true });
       sayTagged(`  [rm] debris ${at}`);
     }
-    for (const rel of await obsoleteDirs(dest, host.id as 'omp' | 'pi' | 'opencode')) {
+    for (const rel of await obsoleteDirs(dest, host.id as 'omp' | 'pi' | 'opencode' | 'pig')) {
       const at = path.join(dest, ...rel.split('/'));
       if (dryRun) { sayTagged(`  [dry-run] would remove debris dir ${at}`); continue; }
       await fs.rm(at, { recursive: true, force: true });
@@ -291,6 +291,9 @@ async function fixRtk(binDir: string): Promise<void> {
   }
   if (existsSync(path.join(home, '.pi', 'agent', 'extensions'))) {
     await wireRtkPi(binDest, { dryRun, verbose });
+  }
+  if (existsSync(path.join(home, '.pig', 'agent', 'extensions'))) {
+    await wireRtkPig(binDest, { dryRun, verbose });
   }
 }
 

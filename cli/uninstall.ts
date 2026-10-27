@@ -10,7 +10,7 @@ import { PONYTAIL_PKG } from './manifest.ts';
 import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } from './interactive.ts';
 import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
-import { piAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
+import { piAgentDir, pigAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
 import { fileURLToPath } from 'node:url';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
@@ -46,30 +46,29 @@ const PI_TREE_DIRS = [
   'aaa-combo-boot',
 ];
 
-// One `pi remove`, for both packages the installer adds there.
-async function piRemove(spec: string, shouldDryRun: boolean): Promise<void> {
+// One package remove, for packages the installer adds.
+async function piRemove(spec: string, shouldDryRun: boolean, bin = 'pi'): Promise<void> {
   if (shouldDryRun) {
-    sayTagged(`  [dry-run] would run: pi remove ${spec}`);
+    sayTagged(`  [dry-run] would run: ${bin} remove ${spec}`);
     return;
   }
   try {
     const { execFile } = await import('node:child_process');
     await new Promise<void>((resolve, reject) => {
-      execFile('pi', ['remove', spec], { timeout: 120000 }, (err, _out, errOut) => {
+      execFile(bin, ['remove', spec], { timeout: 120000 }, (err, _out, errOut) => {
         if (err) reject(new Error(String(errOut).trim() || err.message));
         else resolve();
       });
     });
-    sayTagged(`  [ok] removed the pi package ${spec}`);
+    sayTagged(`  [ok] removed the ${bin} package ${spec}`);
   } catch (e) {
-    sayTagged(`  [fail] pi remove: ${(e as Error).message}`);
-    sayTagged(`  [hint] Manual: pi remove ${spec}`);
+    sayTagged(`  [fail] ${bin} remove: ${(e as Error).message}`);
+    sayTagged(`  [hint] Manual: ${bin} remove ${spec}`);
   }
 }
 
 // The installer writes a local package dir; drop it and its settings entry.
-async function removeCopiedPonytailSkills(shouldDryRun: boolean): Promise<void> {
-  const agentDir = piAgentDir();
+async function removeCopiedPonytailSkills(shouldDryRun: boolean, agentDir = piAgentDir()): Promise<void> {
   const settingsPath = path.join(agentDir, 'settings.json');
   try {
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8')) as { packages?: unknown[] };
@@ -82,11 +81,13 @@ async function removeCopiedPonytailSkills(shouldDryRun: boolean): Promise<void> 
   await removeUninstallTarget(path.join(agentDir, 'ponytail'), shouldDryRun);
 }
 
-// pi removal delegates to pi remove; always list and confirm first.
-async function removePiLayer(host: HostEntry, shouldDryRun: boolean, shouldRemovePonytail: boolean, shouldRemoveRtk: boolean, confirmed: boolean): Promise<boolean> {
-  const targets = PI_TREE_DIRS.map((dir) => path.join(piAgentDir(), 'extensions', dir));
-  const rtkWiring = path.join(piAgentDir(), 'extensions', 'rtk.ts');
-  const piPonytail = path.join(piAgentDir(), 'ponytail');
+// pi / pig removal delegates to host remove; always list and confirm first.
+async function removePiLayer(host: HostEntry, shouldDryRun: boolean, shouldRemovePonytail: boolean, shouldRemoveRtk: boolean, confirmed: boolean, targetHost: 'pi' | 'pig' = 'pi'): Promise<boolean> {
+  const agentDir = targetHost === 'pig' ? pigAgentDir() : piAgentDir();
+  const bin = targetHost;
+  const targets = PI_TREE_DIRS.map((dir) => path.join(agentDir, 'extensions', dir));
+  const rtkWiring = path.join(agentDir, 'extensions', 'rtk.ts');
+  const piPonytail = path.join(agentDir, 'ponytail');
 
   if (!host.installed && !host.declared) {
     sayTagged(`  [skip] ${host.label} — nothing installed (${host.installCmd})`);
@@ -95,16 +96,16 @@ async function removePiLayer(host: HostEntry, shouldDryRun: boolean, shouldRemov
   console.log('Will remove:');
   for (const t of targets) console.log(`  ${t}`);
   if (shouldRemovePonytail) {
-    console.log(`  npm:${PONYTAIL_PKG} (pi package)`);
+    console.log(`  npm:${PONYTAIL_PKG} (${bin} package)`);
     console.log(`  ${piPonytail} (local Ponytail package)`);
   }
   if (shouldRemoveRtk) console.log(`  ${rtkWiring} (rtk wiring)`);
   console.log(`  ${tersioSettingsFile()} (session defaults)`);
   if (!confirmed && !(await confirmDestructive(`Remove Tersio from ${host.label}?`))) { closeRL(); return false; }
-  if (host.declared) await piRemove(`npm:${PACKAGE_NAME}`, shouldDryRun);
+  if (host.declared) await piRemove(`npm:${PACKAGE_NAME}`, shouldDryRun, bin);
   if (shouldRemovePonytail) {
-    await piRemove(`npm:${PONYTAIL_PKG}`, shouldDryRun);
-    await removeCopiedPonytailSkills(shouldDryRun);
+    await piRemove(`npm:${PONYTAIL_PKG}`, shouldDryRun, bin);
+    await removeCopiedPonytailSkills(shouldDryRun, agentDir);
   }
   await Promise.all(targets.map((t) => removeUninstallTarget(t, shouldDryRun)));
   // rtk's wiring is a loose file, not a tree dir, so it survived --remove-rtk on pi while OMP removed its copy.
@@ -206,8 +207,14 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   }
   const selected = detectHosts().find((h) => h.id === host) as HostEntry;
   if (host === 'pi') {
-    const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed);
+    const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed, 'pi');
     if (removed) console.log('\nDone. Restart pi, then /combo lite.');
+    closeRL();
+    return removed;
+  }
+  if (host === 'pig') {
+    const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed, 'pig');
+    if (removed) console.log('\nDone. Restart pig, then /combo lite.');
     closeRL();
     return removed;
   }
