@@ -108,15 +108,6 @@ export interface HeadroomDoctor {
   checks: HeadroomCheck[];
 }
 
-// The probe costs a subprocess plus localhost round-trips; the dashboard polls, so hold it briefly.
-const DOCTOR_MEMO_MS = 15000;
-let doctorMemo: { at: number; value: HeadroomDoctor } | null = null;
-
-/** Tests only: drops the doctor memo so a refetch re-runs the probe. */
-export function resetHeadroomDoctorMemo(): void {
-  doctorMemo = null;
-}
-
 export function parseHeadroomDoctor(raw: string): HeadroomDoctor {
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   const checks = Array.isArray(parsed.checks) ? parsed.checks : [];
@@ -137,6 +128,53 @@ export function parseHeadroomDoctor(raw: string): HeadroomDoctor {
   };
 }
 
+// The probe costs a subprocess plus localhost round-trips; the dashboard polls, so each probe holds
+// its own answer briefly (the ledger moves slowly, the routing check less so).
+const MEMOS = new Map<string, { at: number; value: unknown }>();
+
+/** Tests only: drops one probe's memo so a refetch re-runs the CLI. */
+export function resetHeadroomProbeMemo(probe: 'savings' | 'doctor'): void {
+  MEMOS.delete(probe);
+}
+
+export function resetHeadroomGainMemo(): void {
+  resetHeadroomProbeMemo('savings');
+}
+
+export function resetHeadroomDoctorMemo(): void {
+  resetHeadroomProbeMemo('doctor');
+}
+
+function runProbe<T>(probe: 'savings' | 'doctor', binary: string, budgetMs: number, memoMs: number,
+  parse: (raw: string) => T, blank: (failure: string) => T): T {
+  const label = `headroom ${probe}`;
+  const hit = MEMOS.get(probe);
+  if (hit && Date.now() - hit.at < memoMs) return hit.value as T;
+  try {
+    // A Windows install can land as `headroom.cmd`, and cmd.exe only runs through the shim.
+    const shim = shimCommand(binary, [probe, '--json']);
+    const stdout = execFileSync(shim.cmd, shim.args, {
+      timeout: budgetMs,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    const value = parse(stdout);
+    MEMOS.set(probe, { at: Date.now(), value });
+    return value;
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
+    // `doctor` exits 2 on a failing check and still prints its JSON: the exit is a reading, not an error.
+    if (probe === 'doctor' && typeof err.stdout === 'string' && err.stdout.trim().startsWith('{')) {
+      const value = parse(err.stdout);
+      MEMOS.set(probe, { at: Date.now(), value });
+      return value;
+    }
+    MEMOS.delete(probe);
+    return blank(err.killed ? `${label} timed out` : (err.stderr?.trim() || err.message || `${label} failed`));
+  }
+}
+
 /**
  * Headroom's own routing check: proxy reachable, agents routed, wrap marker present. It exits 2 when a
  * check fails and still prints the JSON, so a non-zero exit is a reading, not a failure to read.
@@ -144,65 +182,12 @@ export function parseHeadroomDoctor(raw: string): HeadroomDoctor {
 export function readHeadroomDoctor(options: HeadroomGainOptions = {}): HeadroomDoctor {
   const binary = options.binary !== undefined ? options.binary : resolveHeadroomBinary();
   if (!binary) return { measured: false, failure: 'headroom binary not found in PATH', exitCode: null, version: null, checks: [] };
-  if (doctorMemo && Date.now() - doctorMemo.at < DOCTOR_MEMO_MS) return doctorMemo.value;
-  try {
-    // A Windows install can land as `headroom.cmd`, and cmd.exe only runs through the shim.
-    const shim = shimCommand(binary, ['doctor', '--json']);
-    const stdout = execFileSync(shim.cmd, shim.args, {
-      timeout: options.budgetMs ?? 8000,
-      maxBuffer: 4 * 1024 * 1024,
-      windowsHide: true,
-      encoding: 'utf8',
-    });
-    const value = parseHeadroomDoctor(stdout);
-    doctorMemo = { at: Date.now(), value };
-    return value;
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
-    if (typeof err.stdout === 'string' && err.stdout.trim().startsWith('{')) {
-      const value = parseHeadroomDoctor(err.stdout);
-      doctorMemo = { at: Date.now(), value };
-      return value;
-    }
-    doctorMemo = null;
-    return {
-      measured: false,
-      failure: err.killed ? 'headroom doctor timed out' : (err.stderr?.trim() || err.message || 'headroom doctor failed'),
-      exitCode: null,
-      version: null,
-      checks: [],
-    };
-  }
-}
-
-// The dashboard polls per render, and a subprocess per poll is too much for a ledger that moves slowly.
-const MEMO_MS = 5000;
-let memo: { at: number; gain: HeadroomGain } | null = null;
-
-/** Tests only: drops the memo so a refetch re-runs the CLI. */
-export function resetHeadroomGainMemo(): void {
-  memo = null;
+  return runProbe('doctor', binary, options.budgetMs ?? 8000, 15000, parseHeadroomDoctor,
+    (failure) => ({ measured: false, failure, exitCode: null, version: null, checks: [] }));
 }
 
 export function readHeadroomSavings(options: HeadroomGainOptions = {}): HeadroomGain {
   const binary = options.binary !== undefined ? options.binary : resolveHeadroomBinary();
   if (!binary) return emptyHeadroomGain('headroom binary not found in PATH');
-  if (memo && Date.now() - memo.at < MEMO_MS) return memo.gain;
-  try {
-    // A Windows install can land as `headroom.cmd`, and cmd.exe only runs through the shim.
-    const shim = shimCommand(binary, ['savings', '--json']);
-    const stdout = execFileSync(shim.cmd, shim.args, {
-      timeout: options.budgetMs ?? 5000,
-      maxBuffer: 4 * 1024 * 1024,
-      windowsHide: true,
-      encoding: 'utf8',
-    });
-    const gain = parseHeadroomSavings(stdout);
-    memo = { at: Date.now(), gain };
-    return gain;
-  } catch (e) {
-    const err = e as { message?: string; stderr?: string; killed?: boolean };
-    memo = null;
-    return emptyHeadroomGain(err.killed ? 'headroom savings timed out' : (err.stderr?.trim() || err.message || 'headroom savings failed'));
-  }
+  return runProbe('savings', binary, options.budgetMs ?? 5000, 5000, parseHeadroomSavings, emptyHeadroomGain);
 }

@@ -677,6 +677,29 @@ export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): P
   }
 }
 
+/**
+ * Installs Headroom from the dashboard and polls the job until the binary lands, the pip run names its
+ * failure, or the budget runs out. Resolves `present` when the binary exists, else the reason it does not.
+ */
+export async function installHeadroom(budgetMs = 180_000): Promise<{ present: boolean; error: string | null }> {
+  try {
+    const start = await fetch("/api/headroom/install", { method: "POST" })
+      .then((r) => r.json()) as { ok?: boolean; present?: boolean; error?: string } | null;
+    if (start?.present) return { present: true, error: null };
+    if (start && start.ok === false) return { present: false, error: start.error ?? "the install could not start" };
+    const started = Date.now();
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const job = await fetch("/api/headroom/install").then((r) => r.json()).catch(() => null) as { present?: boolean; code?: number | null; error?: string | null } | null;
+      if (job?.present) return { present: true, error: null };
+      if (job && job.code !== null && job.code !== undefined) return { present: false, error: job.error || "the pip run failed" };
+      if (Date.now() - started > budgetMs) return { present: false, error: "the install is still running — check ~/.tersio/headroom-install.log" };
+    }
+  } catch {
+    return { present: false, error: "the dashboard server refused the install request" };
+  }
+}
+
 export interface HealthReport {
   tersio: string;
   node: string;

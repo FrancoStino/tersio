@@ -24,7 +24,7 @@ import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULT
 import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { readHeadroomProxy, startHeadroomProxy, stopHeadroomProxy } from './headroom-route.ts';
@@ -341,9 +341,9 @@ function healthJson(): string {
   const detectedPiPath = piPath();
   const detectedOpencodePath = opencodePath();
   const agentDir = (id: 'omp' | 'pi' | 'opencode'): string | null => {
-    if (id === 'omp') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.omp');
-    if (id === 'pi') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.pi');
-    return path.join(process.env.HOME || process.env.USERPROFILE || '', '.config', 'opencode');
+    if (id === 'omp') return path.join(homeDir(), '.omp');
+    if (id === 'pi') return path.join(homeDir(), '.pi');
+    return path.join(homeDir(), '.config', 'opencode');
   };
   return JSON.stringify({
     tersio: PACKAGE_VERSION,
@@ -366,7 +366,7 @@ function healthJson(): string {
 }
 
 function tersioHomePath(): string {
-  return path.join(process.env.HOME || process.env.USERPROFILE || '', '.tersio');
+  return path.join(homeDir(), '.tersio');
 }
 
 interface DoctorRow { label: string; ok: boolean; detail: string; group: string }
@@ -392,7 +392,7 @@ function diagReport(): DoctorReport | null {
 
 // The old report sat loose in the data home; read it once, then keep it in state.json.
 function migratedDiag(): Partial<DoctorReport> | null {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const home = homeDir();
   const old = takeLegacy(path.join(home, '.tersio', 'diag.json'), (raw) => JSON.parse(raw) as Partial<DoctorReport>);
   if (old) patchState({ diag: old });
   return old;
@@ -896,7 +896,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     }
     // The gateway toggle: one proxy every agent points at, started and stopped by explicit action.
     if (req.url === '/api/headroom/route' && req.method === 'GET') {
-      const home = process.env.HOME || process.env.USERPROFILE || '';
+      const home = homeDir();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home) }));
       return;
@@ -904,7 +904,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     if (req.url === '/api/headroom/route' && req.method === 'POST') {
       let body: Record<string, unknown> = {};
       try { body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {}; } catch { body = {}; }
-      const home = process.env.HOME || process.env.USERPROFILE || '';
+      const home = homeDir();
       const action = body.action;
       if (action !== 'start-proxy' && action !== 'stop-proxy') {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -917,7 +917,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: result.ok, detail: result.detail, proxy: result.proxy }));
       return;
     }
-        if (req.url === '/api/headroom/install' && req.method === 'POST') {
+    if (req.url === '/api/headroom/install' && req.method === 'POST') {
       if (resolveHeadroomBinary()) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, present: true }));
