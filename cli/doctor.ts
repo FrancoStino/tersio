@@ -14,6 +14,7 @@ import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
+import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
 import { fetchJson, piAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
@@ -362,8 +363,22 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
   // Headroom is the user's own opt-in install, so the line stays informational: out of the tally either way.
   const headroomVersion = headroomVersionRaw?.match(/version\s+(\S+)/)?.[1] ?? headroomVersionRaw ?? '';
-  if (headroomBin !== null) console.log(`  —  Headroom: ${headroomVersion || 'version unavailable'} (optional; /headroom on enables the mode)`);
-  else console.log('  —  Headroom: not installed · optional: pip install "headroom-ai[all]", then /headroom on');
+  if (headroomBin !== null) {
+    // Its own doctor is the only source that says whether traffic actually flows.
+    const routing = readHeadroomDoctor({ binary: headroomBin });
+    const failing = routing.checks.filter((c) => c.status === 'fail');
+    const warned = routing.checks.filter((c) => c.status === 'warn');
+    const detail = routing.measured
+      ? failing.length > 0
+        ? ` · routing: ${failing[0].name} failing (${failing[0].summary})${failing[0].hint ? ` — ${failing[0].hint}` : ''}`
+        : warned.length > 0
+          ? ` · routing: ${warned.length} warning${warned.length === 1 ? '' : 's'} (${warned[0].summary})`
+          : ' · routing: ok'
+      : ` · routing: ${routing.failure || 'unmeasured'}`;
+    console.log(`  —  Headroom: ${headroomVersion || 'version unavailable'}${detail}`);
+  } else {
+    console.log('  —  Headroom: not installed · optional: pip install "headroom-ai[all]", then /headroom on');
+  }
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
   check('Ponytail', ponytailPkgText !== null, [PONYTAIL_VERSION, ponytailAge].filter(Boolean).join(' '));
   if (ponytailStale.length > 0) {

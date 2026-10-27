@@ -1,5 +1,5 @@
 // Tools page: which tools the agent called, how often they failed, and what they cost.
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Card,
   CellBar,
@@ -21,6 +21,7 @@ import { Icon } from "@/components/icon";
 import type { AgentStats, AgentToolRow, HealthReport, RtkVerbRow } from "@/lib/data";
 import { AGENT_RANGE_LABEL, fetchHealth } from "@/lib/data";
 import { PALETTE, fmt, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
+import { cn } from "cn";
 
 type CallMetric = "calls" | "errors";
 
@@ -417,9 +418,6 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
   const [health, setHealth] = useState<HealthReport | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
-  useEffect(() => {
-    fetchHealth().then(setHealth).catch(() => setHealth(null));
-  }, []);
   const headroomPresent = health?.headroom?.present ?? false;
   function installHeadroom(): void {
     setInstalling(true);
@@ -809,6 +807,30 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
             )}
           </p>
         )}
+        {/* Routing is what separates "installed and idle" from "installed and working". */}
+        {headroomPresent ? (
+          <div className="border-t border-line px-3.5 py-2">
+            {headroom.routing.measured ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="mono text-[10px] uppercase tracking-[0.12em] text-dim">routing</span>
+                <span className={cn("mono rounded border px-1.5 py-0.5 text-[10px]", headroom.routing.proxyUp ? "border-success/40 text-success" : "border-danger/40 text-danger")}>
+                  proxy {headroom.routing.proxyUp ? "up" : "down"}
+                </span>
+                {headroom.routing.failing.length > 0 ? (
+                  headroom.routing.failing.slice(0, 4).map((check) => (
+                    <span key={check.name} className="mono text-[10px] text-dim" title={check.hint ?? undefined}>
+                      {check.name} {check.status}: {check.summary}
+                    </span>
+                  ))
+                ) : (
+                  <span className="mono text-[10px] text-dim">every check passing</span>
+                )}
+              </div>
+            ) : (
+              <span className="mono text-[10px] text-dim">routing not measured — {headroom.routing.failure || "headroom doctor did not answer"}</span>
+            )}
+          </div>
+        ) : null}
       </Card>
     </Page>
   );

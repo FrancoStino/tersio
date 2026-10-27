@@ -27,6 +27,7 @@ import { detectHosts } from './hosts.ts';
 import { findPackageRoot, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
+import { readHeadroomProxy, startHeadroomProxy, stopHeadroomProxy } from './headroom-route.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
@@ -893,7 +894,30 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() }));
       return;
     }
-    if (req.url === '/api/headroom/install' && req.method === 'POST') {
+    // The gateway toggle: one proxy every agent points at, started and stopped by explicit action.
+    if (req.url === '/api/headroom/route' && req.method === 'GET') {
+      const home = process.env.HOME || process.env.USERPROFILE || '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home) }));
+      return;
+    }
+    if (req.url === '/api/headroom/route' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {}; } catch { body = {}; }
+      const home = process.env.HOME || process.env.USERPROFILE || '';
+      const action = body.action;
+      if (action !== 'start-proxy' && action !== 'stop-proxy') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+        return;
+      }
+      const result = action === 'start-proxy' ? await startHeadroomProxy(home) : stopHeadroomProxy(home);
+      recordActivity('agent', `Headroom gateway ${action === 'start-proxy' ? 'started' : 'stopped'}`, result.detail.slice(0, 200), result.ok);
+      res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: result.ok, detail: result.detail, proxy: result.proxy }));
+      return;
+    }
+        if (req.url === '/api/headroom/install' && req.method === 'POST') {
       if (resolveHeadroomBinary()) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, present: true }));

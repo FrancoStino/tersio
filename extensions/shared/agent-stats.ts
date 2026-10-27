@@ -7,7 +7,7 @@ import { homeDir } from './utils.ts';
 import { usageDbPath } from './usage-store.ts';
 import { readRtkGainByVerb, rtkGainFailure } from './rtk-gain.ts';
 import type { RtkCommandRow } from './rtk-gain.ts';
-import { readHeadroomSavings } from './headroom-gain.ts';
+import { readHeadroomDoctor, readHeadroomSavings } from './headroom-gain.ts';
 import type { HeadroomClientRow } from './headroom-gain.ts';
 import { readRtkAdoption } from './usage-ledger.ts';
 import type { RtkAdoption } from './usage-ledger.ts';
@@ -596,17 +596,33 @@ export interface AgentHeadroom {
   last7Tokens: number;
   last30Tokens: number;
   byClient: HeadroomClientRow[];
+  /** Headroom's own routing check: proxy reachable, agents routed. */
+  routing: {
+    measured: boolean;
+    failure: string;
+    proxyUp: boolean;
+    routedAgents: number;
+    failing: Array<{ name: string; status: string; summary: string; hint: string | null }>;
+  };
 }
 
 /** A read that never ran, so a page draws "not measured" rather than a row of zeros. */
 const EMPTY_HEADROOM: AgentHeadroom = {
   measured: false, failure: '', tokensSaved: 0, tokensBefore: 0, costUsd: 0, calls: 0, savingsPercent: 0,
   todayTokens: 0, last7Tokens: 0, last30Tokens: 0, byClient: [],
+  routing: { measured: false, failure: '', proxyUp: false, routedAgents: 0, failing: [] },
 };
 
 /** Headroom's savings for the ledger's own windows; it aggregates, so no cutoff of ours applies. */
 function readHeadroom(): AgentHeadroom {
   const gain = readHeadroomSavings();
+  // Headroom's doctor is the only source that says whether traffic actually flows; a proxy-down
+  // install otherwise reads as "installed and idle" with no way to tell the difference.
+  const doctor = readHeadroomDoctor();
+  const failing = doctor.checks
+    .filter((check) => check.status === 'fail' || check.status === 'warn')
+    .map((check) => ({ name: check.name, status: check.status, summary: check.summary, hint: check.hint }));
+  const proxy = doctor.checks.find((check) => check.name === 'proxy');
   return {
     measured: gain.measured,
     failure: gain.measured ? '' : gain.failure,
@@ -619,6 +635,13 @@ function readHeadroom(): AgentHeadroom {
     last7Tokens: gain.windows.last7Days.tokensSaved,
     last30Tokens: gain.windows.last30Days.tokensSaved,
     byClient: gain.byClient,
+    routing: {
+      measured: doctor.measured,
+      failure: doctor.failure,
+      proxyUp: proxy?.status === 'pass',
+      routedAgents: doctor.checks.filter((check) => check.status === 'pass' && check.name !== 'proxy' && check.name !== 'tls trust').length,
+      failing,
+    },
   };
 }
 

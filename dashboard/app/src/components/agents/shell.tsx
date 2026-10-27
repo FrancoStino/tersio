@@ -82,7 +82,7 @@ const MODE_GLYPHS = [
   { key: "pstack", glyph: "🥔", label: "pstack", level: (m: ModeState) => (m.pstackDefault ?? "off").toUpperCase() },
 ] as const;
 
-/** The combo preset this machine starts sessions with and the modes under it; a click opens Settings. */
+/** The combo preset this machine starts sessions with and the modes under it; a click opens the Quick start. */
 export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null; onOpen: () => void; loading?: boolean }) {
   const level = modes?.comboLevel ?? modes?.comboDefault ?? "off";
   const on = level !== "off";
@@ -135,7 +135,7 @@ export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null
     <button
       type="button"
       onClick={onOpen}
-      title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open Settings to change it.`}
+      title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open the Quick start to change it.`}
       className={cn(
         "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-track",
         on ? "border-ink/25 bg-panel" : "border-line bg-panel/60",
@@ -342,14 +342,14 @@ export function Topbar({
   modes,
   modesLoaded,
   onShare,
-  onOpenSettings,
+  onQuickStart,
 }: {
   range: AgentRange;
   onRange: (range: AgentRange) => void;
   modes: ModeState | null;
   modesLoaded: boolean;
   onShare: () => void;
-  onOpenSettings: () => void;
+  onQuickStart: () => void;
 }) {
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -374,7 +374,7 @@ export function Topbar({
         className="grid size-8 shrink-0 place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft sm:hidden"
       />
       {/* The rail's own header carries the expand/collapse control; the banner names the modes. */}
-      <ModeBanner modes={modes} onOpen={onOpenSettings} loading={!modesLoaded} />
+      <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
       {/* The right group never shrinks: it holds the three buttons a narrow viewport still needs,
           and the banner truncates instead. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -471,7 +471,7 @@ export function Shell({
           modes={modes}
           modesLoaded={modesLoaded}
           onShare={onShare}
-          onOpenSettings={onSettings}
+          onQuickStart={() => onSection("how-to")}
         />
         <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
       </SidebarInset>

@@ -484,7 +484,6 @@ export interface HeadroomClientRow {
   tokensSaved: number;
 }
 
-/** Headroom's durable compression savings, read through its own savings CLI. */
 export interface AgentHeadroom {
   measured: boolean;
   failure: string;
@@ -497,6 +496,14 @@ export interface AgentHeadroom {
   last7Tokens: number;
   last30Tokens: number;
   byClient: HeadroomClientRow[];
+  /** Headroom's own routing check: is the proxy up, are agents routed. */
+  routing: {
+    measured: boolean;
+    failure: string;
+    proxyUp: boolean;
+    routedAgents: number;
+    failing: Array<{ name: string; status: string; summary: string; hint: string | null }>;
+  };
 }
 
 export type AgentView =
@@ -634,6 +641,40 @@ export function useAgentRequestEntry(file: string | null, entryId: string | null
   }, [file, entryId]);
 
   return { entry, loading };
+}
+
+export interface HeadroomProxyReport {
+  running: boolean;
+  port: number;
+  pid: number | null;
+  anthropicUrl: string;
+  openaiUrl: string;
+  detail: string;
+}
+
+/** Reads the gateway's state: whether the proxy tersio started is live, and the URLs it serves. */
+export async function fetchHeadroomProxy(): Promise<HeadroomProxyReport | null> {
+  try {
+    const r = await fetch("/api/headroom/route");
+    if (!r.ok) return null;
+    const body = (await r.json()) as { proxy?: HeadroomProxyReport };
+    return body.proxy ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): Promise<{ ok: boolean; detail: string } | null> {
+  try {
+    const r = await fetch("/api/headroom/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    return (await r.json()) as { ok: boolean; detail: string };
+  } catch {
+    return null;
+  }
 }
 
 export interface HealthReport {

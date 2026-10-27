@@ -28,6 +28,8 @@ import {
   readRtkDefault,
   saveComboSetup,
 } from "../../extensions/shared/plugin-settings.ts";
+import { saveHostDefaults, storedProfileSync } from "../../cli/profile.ts";
+import type { HostDefaultField } from "../../cli/profile.ts";
 import { readUsageDb, syncUsageDb } from "../../extensions/shared/usage-store.ts";
 import { ruleBodyProblem } from "../../extensions/shared/utils.ts";
 import { sqliteExec } from "../../extensions/shared/sqlite.ts";
@@ -285,12 +287,38 @@ test("a pinned host scopes the printed defaults and the per-host write to that a
   expect(result.stdout).toMatch(/would write session defaults for pi/);
 });
 
+test("a host save writes only the chosen fields, and one equal to the shared fallback is dropped", async () => {
+  await withHome(async (home) => {
+    writeLock(home, { "@krtclcdy/tersio": { comboDefault: "lite", cavemanDefault: "lite", rtkDefault: true, ponytailDefault: "lite" } });
+    const profile = storedProfileSync("pi");
+    // The operator picked only a preset for pi: the four fields it owns land, the opt-ins stay inherited.
+    const comboOnly: HostDefaultField[] = ["comboDefault", "cavemanDefault", "rtkDefault", "ponytailDefault"];
+    profile.comboDefault = "max";
+    profile.cavemanDefault = "ultra";
+    profile.ponytailDefault = "ultra";
+    await saveHostDefaults("pi", comboOnly, profile, {});
+    const stored = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, any>;
+    // rtkDefault stays out: it equals the shared value, so it is inheritance, not an override.
+    expect(stored.hosts.pi).toEqual({ comboDefault: "max", cavemanDefault: "ultra", ponytailDefault: "ultra" });
+    expect(stored.hosts.pi.pstackDefault).toBeUndefined();
+    expect(stored.hosts.pi.headroomDefault).toBeUndefined();
+    // A later save whose field equals the shared value is inheritance, not an override: the key drops,
+    // while the agent's own earlier overrides stand until a request chooses them otherwise.
+    await saveHostDefaults("pi", ["rtkDefault"], { ...profile, rtkDefault: true }, {});
+    const after = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, any>;
+    expect(after.hosts.pi.rtkDefault).toBeUndefined();
+    expect(after.hosts.pi).toEqual({ comboDefault: "max", cavemanDefault: "ultra", ponytailDefault: "ultra" });
+  });
+});
+
 test("a bare pinned install never snapshots the shared defaults into a host section", () => {
   const result = run("install", "--dry-run", "--yes", "--verbose", "--host", "pi");
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toMatch(/Defaults for pi:/);
   // No choice was made, so pi keeps reading the shared store and later global changes still reach it.
   expect(result.stdout).not.toMatch(/would write session defaults for pi/);
+  // The Headroom prompt is interactive-only: a scripted run never asks and never installs.
+  expect(result.stdout).not.toMatch(/optional token-saver/);
 });
 
 test("installer rejects review as a Ponytail default", () => {
@@ -1100,6 +1128,17 @@ test("every manifest entry exists in the source tree", () => {
   }
 });
 
+test("every installed module pi scans exports a factory", async () => {
+  // pi loads each `extensions/**/index.ts` in the agent tree and refuses the host when one has no default factory.
+  // The manifest is the registry, so the list is runtime-selected: a new extension is covered without editing this test.
+  const scanned = treeFilesFor("pi").filter((file) => file.endsWith("/index.ts"));
+  expect(scanned.length).toBeGreaterThan(0);
+  for (const file of scanned) {
+    const mod = (await import(new URL(`../../extensions/${file}`, import.meta.url).href)) as { default?: unknown };
+    expect(typeof mod.default, `${file} must export a default factory`).toBe("function");
+  }
+});
+
 test("the package keeps the pi keywords, so the gallery can find it", () => {
   expect(pkg.keywords).toContain("pi");
   expect(pkg.keywords).toContain("pi-package");
@@ -1516,3 +1555,75 @@ test("an empty checksums.txt refuses to install", async () => {
     rmTree(dir);
   }
 });
+
+// The install prompts are Clack's, so only a real terminal proves the chain: agent menu → preset menu →
+// the optional Headroom question. Each step is an Enter on the highlighted row.
+const INSTALL_PTY_PY = [
+  "import os, pty, select, fcntl, termios, struct, time, sys",
+  "argv = sys.argv[1:]",
+  "pid, fd = pty.fork()",
+  "if pid == 0:",
+  '    os.environ["TERM"] = "xterm-256color"',
+  "    os.execvp(argv[0], argv)",
+  "fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 60, 160, 0, 0))",
+  "buf = b''",
+  "def pump(seconds):",
+  "    global buf",
+  "    end = time.time() + seconds",
+  "    while time.time() < end:",
+  "        r, _, _ = select.select([fd], [], [], 0.1)",
+  "        if not r: continue",
+  "        try: d = os.read(fd, 65536)",
+  "        except OSError: return False",
+  "        if not d: return False",
+  "        buf += d",
+  "    return True",
+  "pump(6)",
+  // Three prompts (agent, preset, Headroom) plus slack: send Enter on a cadence, since startup time
+  // varies with the registry check. The child can finish early, so a closed pty ends the loop.
+  "for _ in range(6):",
+  "    try:",
+  "        os.write(fd, b'\\r')",
+  "    except OSError:",
+  "        break",
+  "    if not pump(3): break",
+  "pump(6)",
+  "try: os.write(fd, b'\\x03')",
+  "except OSError: pass",
+  "sys.stdout.write(buf.decode('utf8', 'replace'))",
+].join("\n");
+
+// A registry and release feed that cannot answer, so no network is needed for the prompts.
+const DEAD_ENDPOINTS = {
+  TERSIO_UPDATE_URL: "http://127.0.0.1:1/latest",
+  TERSIO_RELEASES_URL: "http://127.0.0.1:1/releases/latest",
+};
+
+test.skipIf(process.platform === "win32")("a terminal install asks about Headroom and persists the enable", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-install-headroom-"));
+  try {
+    // A real (non-dry) install into a temp home: the plugin step is fast, and the prompts run first.
+    // A fake headroom on PATH makes the prompt the enable-only variant, which writes no binary.
+    const binDir = path.join(home, "bin");
+    fakeExecutable(binDir, "headroom", "exit 0", "exit /b 0");
+    const result = spawnSync("python3", ["-c", INSTALL_PTY_PY, process.execPath, installer, "install", "--host", "omp"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 40000,
+      env: {
+        ...cliEnv(home),
+        ...DEAD_ENDPOINTS,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+    });
+    expect(result.error, "python3 with pty is available").toBeUndefined();
+    const screen = result.stdout;
+    expect(screen, `Headroom prompt shown; screen:\n${screen}`).toMatch(/Headroom is already installed/);
+    // Enter on the confirm enables it; the enable lands in the store this install wrote.
+    const stored = JSON.parse(readFileSync(path.join(home, ".tersio", "settings.json"), "utf8")) as Record<string, unknown>;
+    const hosts = stored.hosts as Record<string, Record<string, unknown>> | undefined;
+    expect(hosts?.omp?.headroomDefault, `enabled for omp; store: ${JSON.stringify(stored)}`).toBe("on");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60000);

@@ -93,6 +93,86 @@ export function emptyHeadroomGain(failure: string): HeadroomGain {
   };
 }
 
+export interface HeadroomCheck {
+  name: string;
+  status: string;
+  summary: string;
+  hint: string | null;
+}
+
+export interface HeadroomDoctor {
+  measured: boolean;
+  failure: string;
+  exitCode: number | null;
+  version: string | null;
+  checks: HeadroomCheck[];
+}
+
+// The probe costs a subprocess plus localhost round-trips; the dashboard polls, so hold it briefly.
+const DOCTOR_MEMO_MS = 15000;
+let doctorMemo: { at: number; value: HeadroomDoctor } | null = null;
+
+/** Tests only: drops the doctor memo so a refetch re-runs the probe. */
+export function resetHeadroomDoctorMemo(): void {
+  doctorMemo = null;
+}
+
+export function parseHeadroomDoctor(raw: string): HeadroomDoctor {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const checks = Array.isArray(parsed.checks) ? parsed.checks : [];
+  return {
+    measured: true,
+    failure: '',
+    exitCode: typeof parsed.exit_code === 'number' ? parsed.exit_code : null,
+    version: typeof parsed.installed_version === 'string' ? parsed.installed_version : null,
+    checks: checks.map((row) => {
+      const r = (row ?? {}) as Record<string, unknown>;
+      return {
+        name: String(r.name ?? 'check'),
+        status: String(r.status ?? 'unknown'),
+        summary: String(r.summary ?? ''),
+        hint: typeof r.hint === 'string' ? r.hint : null,
+      };
+    }),
+  };
+}
+
+/**
+ * Headroom's own routing check: proxy reachable, agents routed, wrap marker present. It exits 2 when a
+ * check fails and still prints the JSON, so a non-zero exit is a reading, not a failure to read.
+ */
+export function readHeadroomDoctor(options: HeadroomGainOptions = {}): HeadroomDoctor {
+  const binary = options.binary !== undefined ? options.binary : resolveHeadroomBinary();
+  if (!binary) return { measured: false, failure: 'headroom binary not found in PATH', exitCode: null, version: null, checks: [] };
+  if (doctorMemo && Date.now() - doctorMemo.at < DOCTOR_MEMO_MS) return doctorMemo.value;
+  try {
+    const stdout = execFileSync(binary, ['doctor', '--json'], {
+      timeout: options.budgetMs ?? 8000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    const value = parseHeadroomDoctor(stdout);
+    doctorMemo = { at: Date.now(), value };
+    return value;
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string; killed?: boolean };
+    if (typeof err.stdout === 'string' && err.stdout.trim().startsWith('{')) {
+      const value = parseHeadroomDoctor(err.stdout);
+      doctorMemo = { at: Date.now(), value };
+      return value;
+    }
+    doctorMemo = null;
+    return {
+      measured: false,
+      failure: err.killed ? 'headroom doctor timed out' : (err.stderr?.trim() || err.message || 'headroom doctor failed'),
+      exitCode: null,
+      version: null,
+      checks: [],
+    };
+  }
+}
+
 // The dashboard polls per render, and a subprocess per poll is too much for a ledger that moves slowly.
 const MEMO_MS = 5000;
 let memo: { at: number; gain: HeadroomGain } | null = null;
