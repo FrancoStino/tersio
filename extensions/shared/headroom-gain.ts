@@ -3,7 +3,7 @@
 // Sync by contract: readAgentStats is sync, and the 5s memo keeps a poll from shelling out each render.
 
 import { execFileSync } from 'node:child_process';
-import { resolveHeadroomBinary } from './utils.ts';
+import { resolveHeadroomBinary, shimCommand } from './utils.ts';
 
 export interface HeadroomWindow {
   tokensSaved: number;
@@ -146,7 +146,9 @@ export function readHeadroomDoctor(options: HeadroomGainOptions = {}): HeadroomD
   if (!binary) return { measured: false, failure: 'headroom binary not found in PATH', exitCode: null, version: null, checks: [] };
   if (doctorMemo && Date.now() - doctorMemo.at < DOCTOR_MEMO_MS) return doctorMemo.value;
   try {
-    const stdout = execFileSync(binary, ['doctor', '--json'], {
+    // A Windows install can land as `headroom.cmd`, and cmd.exe only runs through the shim.
+    const shim = shimCommand(binary, ['doctor', '--json']);
+    const stdout = execFileSync(shim.cmd, shim.args, {
       timeout: options.budgetMs ?? 8000,
       maxBuffer: 4 * 1024 * 1024,
       windowsHide: true,
@@ -187,7 +189,9 @@ export function readHeadroomSavings(options: HeadroomGainOptions = {}): Headroom
   if (!binary) return emptyHeadroomGain('headroom binary not found in PATH');
   if (memo && Date.now() - memo.at < MEMO_MS) return memo.gain;
   try {
-    const stdout = execFileSync(binary, ['savings', '--json'], {
+    // A Windows install can land as `headroom.cmd`, and cmd.exe only runs through the shim.
+    const shim = shimCommand(binary, ['savings', '--json']);
+    const stdout = execFileSync(shim.cmd, shim.args, {
       timeout: options.budgetMs ?? 5000,
       maxBuffer: 4 * 1024 * 1024,
       windowsHide: true,

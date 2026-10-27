@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { emptyHeadroomGain, parseHeadroomSavings, readHeadroomSavings, resetHeadroomGainMemo } from "../../extensions/shared/headroom-gain.ts";
-import { fakeExecutable, isWindows } from "../helpers/env.ts";
+import { fakeExecutable } from "../helpers/env.ts";
 
 process.env.HOME = path.join(os.tmpdir(), "definitely-missing-headroom-gain-home");
 process.env.USERPROFILE = process.env.HOME;
@@ -23,12 +23,6 @@ const FIXTURE = JSON.stringify({
   by_model: [{ model: "claude-opus-4-8", cost_usd: 0.175 }],
   by_client: [{ client: "claude-code", calls: 4, tokens_saved: 60000 }, { client: "codex", calls: 2, tokens_saved: 18000 }],
 });
-
-function savingsScript(body: string): string {
-  return isWindows()
-    ? "@echo off\r\n" + body
-    : "#!/bin/sh\n" + body;
-}
 
 test("the parser folds the aggregate into windows and breakdowns", () => {
   const gain = parseHeadroomSavings(FIXTURE);
@@ -52,8 +46,9 @@ test("a missing field prices zero instead of NaN", () => {
 test("a fake headroom binary answers through its own CLI", () => {
   resetHeadroomGainMemo();
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-headroom-gain-"));
-  fakeExecutable(dir, process.platform === "win32" ? "headroom.exe" : "headroom", savingsScript(`echo '${FIXTURE}'`), `echo ${JSON.stringify(FIXTURE).replace(/"/g, '\\"')}`);
-  const gain = readHeadroomSavings({ binary: path.join(dir, process.platform === "win32" ? "headroom.exe" : "headroom") });
+  // cmd.exe prints quotes literally, so the Windows body is the raw JSON; no backslash escapes.
+  const bin = fakeExecutable(dir, "headroom", `echo '${FIXTURE}'`, `echo ${FIXTURE}`);
+  const gain = readHeadroomSavings({ binary: bin });
   expect(gain.measured).toBe(true);
   expect(gain.lifetime.calls).toBe(12);
   expect(gain.byClient[0].client).toBe("claude-code");
@@ -62,7 +57,7 @@ test("a fake headroom binary answers through its own CLI", () => {
 test("a failing or missing binary reads unmeasured, never zero-as-data", () => {
   resetHeadroomGainMemo();
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-headroom-gain-fail-"));
-  const bin = fakeExecutable(dir, process.platform === "win32" ? "headroom.exe" : "headroom", savingsScript("echo boom >&2\nexit 3\n"), "echo boom 1>&2\r\nexit /b 3\r\n");
+  const bin = fakeExecutable(dir, "headroom", "echo boom >&2\nexit 3\n", "echo boom 1>&2\r\nexit /b 3\r\n");
   const gain = readHeadroomSavings({ binary: bin });
   expect(gain.measured).toBe(false);
   expect(gain.failure).not.toBe("");
@@ -73,8 +68,7 @@ test("a failing or missing binary reads unmeasured, never zero-as-data", () => {
 test("the memo serves the same gain until a test resets it", () => {
   resetHeadroomGainMemo();
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-headroom-gain-memo-"));
-  const bin = path.join(dir, process.platform === "win32" ? "headroom.exe" : "headroom");
-  fakeExecutable(dir, process.platform === "win32" ? "headroom.exe" : "headroom", savingsScript(`echo '${FIXTURE}'`), `echo ${JSON.stringify(FIXTURE).replace(/"/g, '\\"')}`);
+  const bin = fakeExecutable(dir, "headroom", `echo '${FIXTURE}'`, `echo ${FIXTURE}`);
   const first = readHeadroomSavings({ binary: bin });
   // A different binary would answer differently, but the 5s memo holds the first read.
   const second = readHeadroomSavings({ binary: "/definitely-other-headroom" });
