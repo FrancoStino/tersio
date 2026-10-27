@@ -200,20 +200,32 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   await mirrorPonytailDefault(profile.ponytailDefault, options);
 }
 
-/** A per-host layer over the shared defaults: a host's own section wins, the flat keys stay the fallback. */
-export async function saveHostDefaults(host: HostId, profile: Profile, options: WriteOptions): Promise<void> {
+/** The mode fields a host section can carry. */
+export type HostDefaultField = 'comboDefault' | 'cavemanDefault' | 'rtkDefault' | 'ponytailDefault' | 'pstackDefault' | 'headroomDefault';
+
+/**
+ * A per-host layer over the shared defaults: a host's own section wins, the flat keys stay the fallback.
+ * Only the fields the request actually chose land in the section, and one equal to the shared fallback is
+ * dropped — so a later shared change still reaches the agent, and an emptied section rejoins the shared store.
+ */
+export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostDefaultField>, profile: Profile, options: WriteOptions): Promise<void> {
   const file = tersioSettingsFile();
   const before = parseStored(await readTextIfExists(file)) ?? {};
-  const section = {
-    comboDefault: profile.comboDefault,
-    cavemanDefault: profile.cavemanDefault,
-    rtkDefault: profile.rtkDefault,
-    ponytailDefault: profile.ponytailDefault,
-    pstackDefault: profile.pstackDefault,
-    headroomDefault: profile.headroomDefault,
-  };
-  const hosts = (before.hosts as Record<string, unknown> | undefined) ?? {};
-  const next = { ...before, hosts: { ...hosts, [host]: { ...((hosts[host] as Record<string, unknown> | undefined) ?? {}), ...section } } };
+  const flat = before as Record<string, unknown>;
+  const section: Record<string, string | boolean> = {};
+  for (const field of [...new Set(fields)]) {
+    const value = profile[field];
+    // Equality with the flat key is inheritance, not an override, so the section never freezes the shared value.
+    if (flat[field] === undefined || flat[field] !== value) section[field] = value as string | boolean;
+  }
+  const hosts = { ...((before.hosts as Record<string, Record<string, unknown>> | undefined) ?? {}) };
+  const merged: Record<string, string | boolean> = { ...((hosts[host] as Record<string, string | boolean> | undefined) ?? {}), ...section };
+  for (const key of Object.keys(merged)) {
+    if (merged[key] === flat[key]) delete merged[key];
+  }
+  if (Object.keys(merged).length > 0) hosts[host] = merged;
+  else delete hosts[host];
+  const next = { ...before, hosts };
   if (options.dryRun) {
     if (verbose && !options.quiet) console.log(`  [dry-run] would write session defaults for ${host} to ${file}`);
     return;

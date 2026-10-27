@@ -18,7 +18,7 @@ import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts
 import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
 import type { UpdatePrefs } from './dashboard-update.ts';
-import type { BackupSchedule } from './profile.ts';
+import type { BackupSchedule, HostDefaultField } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import type { ComboLevel } from '../extensions/shared/types.ts';
@@ -563,36 +563,43 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
   if (body.host !== undefined && hostScope === null) return { ok: false, error: 'unknown host scope' };
   const profile = await storedProfile(hostScope);
   const events: string[] = [];
+  // A host scope carries only the mode fields the request changed; non-mode fields stay global-only.
+  const changedFields: HostDefaultField[] = [];
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
     // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
     Object.assign(profile, applyComboPreset(profile, level));
     events.push(`Combo preset to ${level}`);
+    changedFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
     if (!CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
     profile.cavemanDefault = v;
     events.push(`Caveman to ${v}`);
+    if (!changedFields.includes('cavemanDefault')) changedFields.push('cavemanDefault');
   }
   if (body.ponytailDefault !== undefined) {
     const v = String(body.ponytailDefault);
     if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
     events.push(`Ponytail to ${v}`);
+    if (!changedFields.includes('ponytailDefault')) changedFields.push('ponytailDefault');
   }
   if (body.pstackDefault !== undefined) {
     const v = String(body.pstackDefault);
     if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
     profile.pstackDefault = v;
     events.push(`pstack to ${v}`);
+    changedFields.push('pstackDefault');
   }
   if (body.headroomDefault !== undefined) {
     const v = String(body.headroomDefault);
     if (!HEADROOM_DEFAULTS.has(v)) return { ok: false, error: 'unknown headroom level' };
     profile.headroomDefault = v;
     events.push(`Headroom to ${v}`);
+    changedFields.push('headroomDefault');
   }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
@@ -603,6 +610,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
     profile.rtkDefault = body.rtkDefault;
     events.push(`RTK to ${body.rtkDefault ? 'on' : 'off'}`);
+    changedFields.push('rtkDefault');
   }
   if (body.devTools !== undefined) {
     if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
@@ -619,8 +627,12 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     // A drag changes it often, so it is saved without an activity line.
     profile.sidebarWidth = clampSidebarWidth(body.sidebarWidth);
   }
-  if (hostScope) await saveHostDefaults(hostScope, profile, {});
-  else await writePluginSettings(profile, {});
+  // A host scope writes only the mode fields the request changed; non-mode fields are global-only and never host-scoped.
+  if (hostScope) {
+    if (changedFields.length > 0) await saveHostDefaults(hostScope, changedFields, profile, {});
+  } else {
+    await writePluginSettings(profile, {});
+  }
   for (const title of events) recordActivity('mode', title, hostScope ? `Applies to new ${hostScope} sessions.` : 'Applies to new sessions.');
   return {
     ok: true,

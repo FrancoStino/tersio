@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BUN_BIN_DIR, BUN_BIN, COMBO_PRESET_MODES, HOME, IS_WINDOWS, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
-  allowUnverified, applyUpdate, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
+  allowUnverified, applyUpdate, assumeYes, cavemanDefaultFlag, comboDefaultFlag, command, dryRun,
   ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag, profileFlagsGiven, rtkDefaultFlag, verbose, yes,
   dashboardExport, dashboardPort, currency,
   debug, ensurePonytailConfigValue,
@@ -17,21 +17,22 @@ import type { InstallOptions, WriteOptions } from './common.ts';
 import {
   askInteractiveChoice, askInteractiveConfirm, closeRL, execNetwork, tty, withInteractiveSpinner, withInteractiveTask, sayTagged } from './interactive.ts';
 import { printWelcome } from './banner.ts';
-import { checkForUpdate, runLatestUpdate } from './update.ts';
+import { checkForUpdate, askUpdateHost, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
 import { runDoctor } from './doctor.ts';
 import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
 import {
   RTK_RELEASE_API, fetchJson, findFile, httpsGet,
-  findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
+  findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File, shimCommand,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
+import type { HostDefaultField } from './profile.ts';
 import { formatCliStatus, saveHostDefaults, storedProfile, storedProfileSync, writePluginSettings } from './profile.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
+import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, reapObsoleteTreeDirs, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
 import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
@@ -241,14 +242,16 @@ async function stepRetireAgentCopies(extDir: string, options: InstallOptions): P
   const stale = RETIRED_OMP_AGENT_DIRS.filter((dir) => existsSync(path.join(extDir, dir)));
   if (stale.length === 0) {
     if (!options.quiet) console.log('  Retired agent copies — none');
-    return;
+  } else {
+    if (!options.quiet) console.log(`  Retired agent copies — remove ${stale.join(', ')}`);
+    if (options.dryRun) {
+      if (verbose) sayTagged(`  [dry-run] would remove ${stale.map((d) => path.join(extDir, d)).join(', ')}`);
+    } else {
+      await Promise.all(stale.map((dir) => fs.rm(path.join(extDir, dir), { recursive: true, force: true })));
+    }
   }
-  if (!options.quiet) console.log(`  Retired agent copies — remove ${stale.join(', ')}`);
-  if (options.dryRun) {
-    if (verbose) sayTagged(`  [dry-run] would remove ${stale.map((d) => path.join(extDir, d)).join(', ')}`);
-    return;
-  }
-  await Promise.all(stale.map((dir) => fs.rm(path.join(extDir, dir), { recursive: true, force: true })));
+  // A retired tree can also be one this build never writes, such as the updater's old extension dir.
+  await reapObsoleteTreeDirs(extDir, options);
 }
 
 // The binary is machine-wide; hosts without a hook only rebind. `tersio update` still refreshes it.
@@ -415,10 +418,6 @@ async function stepTersioCommands(extDir: string, options: WriteOptions): Promis
   await copySources(extDir, filesUnder('commands'), 'commands/index.ts', options);
 }
 
-async function stepUpdater(extDir: string, options: WriteOptions): Promise<void> {
-  await copySources(extDir, filesUnder('updater'), 'updater/index.ts', options);
-}
-
 // omp loads no OpenCode entry, but its package ships one: the repair writes it, so the install does too.
 async function stepPluginEntry(extDir: string, options: WriteOptions): Promise<void> {
   await copySources(extDir, rootFiles(), 'server.ts', options);
@@ -482,7 +481,6 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
   await stepPstack(dir, options);
   await stepHeadroom(dir, options);
   await copySources(dir, filesUnder('commands'), 'commands/index.ts', options);
-  await stepUpdater(dir, options);
   await stepPonytailBundle(dir, options);
   // The loader resolves <pluginDir>/server.ts, and the entry is that file: copy it in place.
   await copySources(dir, rootFiles(), 'server.ts', options);
@@ -504,7 +502,7 @@ async function stepOpencode(options: InstallOptions): Promise<void> {
 }
 
 
-async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = {}): Promise<{ profile: Profile; choseDefaults: boolean }> {
+async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = {}): Promise<{ profile: Profile; choseDefaults: boolean; chosenFields: HostDefaultField[] }> {
   // Seed from the stored defaults so flag-less runs keep them; a named host reads its own section first.
   const profile = await storedProfile(opts.host);
 
@@ -542,8 +540,60 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
   if (headroomDefaultFlag !== undefined) profile.headroomDefault = headroomDefaultFlag;
 
   if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults${opts.host ? ` for ${opts.host}` : ''}: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
-  // Only a run that actually chose (a preset pick or a per-mode flag) may write a host's own section; a bare pinned install must leave the shared store as that agent's source.
-  return { profile, choseDefaults: comboChosen || profileFlagsGiven };
+  // Only a run that actually chose (a preset pick or a per-mode flag) may write a host's own section, and only the fields it chose.
+  const chosenFields: HostDefaultField[] = [];
+  if (comboChosen) chosenFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
+  if (cavemanDefaultFlag !== undefined && !chosenFields.includes('cavemanDefault')) chosenFields.push('cavemanDefault');
+  if (rtkDefaultFlag !== undefined && !chosenFields.includes('rtkDefault')) chosenFields.push('rtkDefault');
+  if (ponytailDefaultFlag !== undefined && !chosenFields.includes('ponytailDefault')) chosenFields.push('ponytailDefault');
+  if (pstackDefaultFlag !== undefined) chosenFields.push('pstackDefault');
+  if (headroomDefaultFlag !== undefined) chosenFields.push('headroomDefault');
+  return { profile, choseDefaults: comboChosen || profileFlagsGiven, chosenFields };
+}
+
+/**
+ * The optional Headroom prompt, asked once per interactive install after the combo preset. It checks
+ * on demand — an existing binary skips the install and offers enable only — and prefers uv over pip.
+ * The answer never lands in the shared store: the enable rides the host section this install writes.
+ */
+async function maybeInstallHeadroom(profile: Profile): Promise<boolean> {
+  if (!tty() || dryRun || applyUpdate || assumeYes) return false;
+  if (resolveHeadroomBinary() !== null) {
+    const answer = await askInteractiveConfirm('Headroom is already installed — enable it for new sessions? (optional)');
+    if (answer.status !== 'confirmed' || !answer.value) return false;
+    console.log('  Headroom — enabled');
+    return true;
+  }
+  // The prompt names the tool that will actually run, so the optional step has no surprises. The hint
+  // is built from the same argv the executor uses — `python3 -m pip` on POSIX, `pip` on Windows.
+  const uv = resolveHostBinary('uv');
+  const via = uv ? 'uv' : 'pip';
+  const cmd = uv ? 'uv' : IS_WINDOWS ? 'pip' : 'python3';
+  const installArgs = uv
+    ? ['tool', 'install', 'headroom-ai[all]']
+    : IS_WINDOWS
+      ? ['install', '--user', 'headroom-ai[all]']
+      : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
+  const installCommand = [cmd, ...installArgs].join(' ');
+  const answer = await askInteractiveChoice('🍃 Headroom — optional token-saver (compresses tool output and history)', [
+    { value: 'install', label: `Install now (${via})`, hint: `runs: ${installCommand}` },
+    { value: 'skip', label: 'Skip (optional)', hint: 'enable later with /headroom on or the dashboard' },
+  ], 'skip');
+  if (answer.status !== 'selected' || answer.value !== 'install') return false;
+  console.log(`  Headroom — installing with ${via} (this can take a minute)…`);
+  try {
+    const shim = shimCommand(cmd, installArgs);
+    await execP(shim.cmd, shim.args, { timeout: 300_000 });
+  } catch {
+    sayTagged('  [warn] Headroom install failed — set it up later: pip install "headroom-ai[all]"');
+    return false;
+  }
+  if (resolveHeadroomBinary() === null) {
+    sayTagged('  [warn] Headroom installed, but its command is not reachable yet — enable it once it is on PATH');
+    return false;
+  }
+  console.log('  Headroom — installed and enabled');
+  return true;
 }
 
 let updatePromptDone = false;
@@ -567,9 +617,15 @@ async function runCommandMenu(): Promise<void> {
     console.log(`\n  [update] staying on ${PACKAGE_VERSION} — run ` + '`tersio update`' + ` anytime`);
   }
   updatePromptDone = true;
+  // The menu reads the check it just ran: a pending release names its version beside the update row,
+  // and the install row says up front that the optional Headroom step comes with it.
+  const updateLabel = typeof newer === 'string' ? `Update (${newer} available)` : 'Update';
+  const updateHint = typeof newer === 'string'
+    ? `CLI ${PACKAGE_VERSION} → ${newer}, then refresh add-ons (RTK, Caveman rule, Ponytail)`
+    : 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)';
   const choice = await askInteractiveChoice(`Tersio — what next?\n${formatCliStatus(storedProfileSync())}`, [
-    { value: 'install', label: 'Install plugin', hint: 'user scope + combo defaults' },
-    { value: 'update', label: 'Update', hint: 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)' },
+    { value: 'install', label: 'Install plugin (Headroom optional)', hint: 'user scope + combo defaults; the Headroom install is offered next' },
+    { value: 'update', label: updateLabel, hint: updateHint },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
     { value: 'uninstall', label: 'Uninstall plugin', hint: 'remove tersio' },
@@ -586,9 +642,14 @@ async function runCommandMenu(): Promise<void> {
       // Version check already ran above, so report it and offer the refresh here — no second "update" quiz.
       if (typeof newer === 'string') console.log(`  tersio ${newer} available (installed ${PACKAGE_VERSION})`);
       else console.log(`  tersio ${PACKAGE_VERSION} is the latest`);
-      const go = await askInteractiveConfirm('Update now (CLI + RTK, Caveman rule, Ponytail)?');
+      // The agent comes first, the same order the install flow uses; the confirm then names it.
+      const host = await askUpdateHost();
+      // A pinned `--host` skips the menu but still decides the target, so the label must read it too.
+      const target = host ?? parseHostArg(args) ?? null;
+      const label = target === null ? 'all agents' : detectHosts().find((entry) => entry.id === target)?.label ?? target;
+      const go = await askInteractiveConfirm(`Update now — CLI + RTK, Caveman rule, Ponytail (${label})?`);
       if (go.status === 'confirmed' && go.value) {
-        await runLatestUpdate();
+        await runLatestUpdate(target);
       } else if (go.status === 'cancelled') {
         closeRL();
         process.exit(130);
@@ -684,8 +745,8 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
   await stepPstack(extDir, options);
   await stepHeadroom(extDir, options);
   await stepTersioCommands(extDir, options);
-  await stepUpdater(extDir, options);
   await stepPonytailForPi(agentDir, options);
+  await reapObsoleteTreeDirs(extDir, options);
 }
 
 // A local dir, not an npm spec: pi only version-checks npm entries, so this avoids the update nag.
@@ -817,7 +878,14 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   }
 
   // Resolve session defaults: flags > interactive prompt > defaults; a named host reads its own section first.
-  const { profile, choseDefaults } = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
+  const { profile, choseDefaults, chosenFields } = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
+  // The optional Headroom prompt comes right after the combo preset. With a chosen host the enable rides
+  // that agent's own section; a bare install has no section to ride, so the shared default carries it.
+  const headroomEnabled = await maybeInstallHeadroom(profile);
+  if (headroomEnabled) {
+    if (hostExplicit && !chosenFields.includes('headroomDefault')) chosenFields.push('headroomDefault');
+    if (!hostExplicit) profile.headroomDefault = 'on';
+  }
 
   const userDir = OMP_AGENT_DIR;
   const userExtDir = path.join(userDir, 'extensions');
@@ -867,7 +935,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'opencode'));
     await capture('settings', async () => {
       await writePluginSettings(profile, installOptions);
-      if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
+      if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('OpenCode', profile.comboDefault));
@@ -880,7 +948,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pi'));
     await capture('settings', async () => {
       await writePluginSettings(profile, installOptions);
-      if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
+      if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('pi', profile.comboDefault));
@@ -908,14 +976,13 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('pstack', () => stepPstack(extDir, installOptions));
   await capture('headroom', () => stepHeadroom(extDir, installOptions));
   await capture('commands', () => stepTersioCommands(extDir, installOptions));
-  await capture('updater', () => stepUpdater(extDir, installOptions));
   // One package, one file set: the repair writes every tree file here, so the install does too.
   if (ownsTree) await capture('plugin entry', () => stepPluginEntry(extDir, installOptions));
   if (ownsTree) await capture('plugin manifest', () => syncPluginManifest(path.dirname(pluginExtDir), installOptions));
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
   if (selfPlugin) await capture('settings', async () => {
     await writePluginSettings(profile, installOptions);
-    if (hostExplicit && choseDefaults) await saveHostDefaults(targetHost, profile, installOptions);
+    if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
   });
 
   if (quiet) {

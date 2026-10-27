@@ -238,30 +238,45 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
   return { stale, status };
 }
 
-async function runLatestUpdate(): Promise<void> {
+/**
+ * The agent an update refreshes. `null` when no prompt is needed (scripted run or `--host` pinned);
+ * a terminal gets the same menu the install flow shows, and cancel exits like it does there.
+ */
+export async function askUpdateHost(): Promise<string | null> {
+  if (!tty() || assumeYes) return null;
+  try {
+    if (parseHostArg(args)) return null;
+  } catch {
+    // The caller's parse reports the bad flag; the menu never invents a host over it.
+    return null;
+  }
+  const installed = detectHosts();
+  // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
+  const initial = installed.find((host) => host.installed)?.id ?? 'omp';
+  const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
+  if (choice.status !== 'selected') {
+    closeRL();
+    process.exit(130);
+  }
+  return choice.value;
+}
+
+async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
   const forwardedArgs = ['--yes'];
   if (dryRun) forwardedArgs.push('--dry-run');
   if (verbose) forwardedArgs.push('--verbose');
-  let pinned: string | undefined;
+  let pinned: string | undefined = hostOverride ?? undefined;
   try {
-    pinned = parseHostArg(args);
+    pinned = pinned ?? parseHostArg(args);
   } catch (e) {
     console.error(`[fail] ${(e as Error).message}`);
     process.exitCode = 1;
     return;
   }
   // A bare `tersio update` asks which agent to refresh: `--host` pins it, and --yes keeps the default for scripts.
-  if (!pinned && tty() && !assumeYes) {
-    const installed = detectHosts();
-    // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
-    const initial = installed.find((host) => host.installed)?.id ?? 'omp';
-    const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
-    if (choice.status !== 'selected') {
-      closeRL();
-      process.exitCode = 130;
-      return;
-    }
-    pinned = choice.value;
+  if (!pinned) {
+    const chosen = await askUpdateHost();
+    if (chosen !== null) pinned = chosen;
   }
   if (pinned) forwardedArgs.push('--host', pinned);
 
