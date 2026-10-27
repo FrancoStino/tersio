@@ -590,7 +590,6 @@ const TITLES: Record<Pane, string> = {
 };
 
 const SETTINGS_SEARCH: Array<{ pane: Pane; label: string; terms: string }> = [
-  { pane: "general", label: "Combo preset", terms: "general default mode combo preset balanced max lite off new session resume start caveman rtk ponytail pstack poteto rigor" },
   { pane: "general", label: "Theme", terms: "general appearance theme light dark system color scheme mode" },
   { pane: "general", label: "Accent color", terms: "general appearance accent color tint buttons links highlights palette emerald violet slate cyan rose amber orange charts background" },
   { pane: "general", label: "Currency", terms: "currency display cost usd euro" },
@@ -628,178 +627,7 @@ function HighlightMatch({ text, query, fullWhenAlias = false }: { text: string; 
   return parts;
 }
 
-interface DefaultsPayload {
-  comboDefault: string;
-  /** `custom` when the three modes no longer match the named preset. */
-  comboLevel: string;
-  cavemanDefault: string;
-  rtkDefault: boolean;
-  ponytailDefault: string;
-  pstackDefault: string;
-  headroomDefault: string;
-}
 
-const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyph: string; hint: string; options: Array<{ id: string; label: string }> }> = [
-  {
-    field: "comboDefault",
-    label: "Combo preset",
-    glyph: "🧩",
-    hint: "Sets caveman, RTK and Ponytail together. pstack is separate.",
-    options: [
-      { id: "off", label: "Off" },
-      { id: "lite", label: "Lite" },
-      { id: "balanced", label: "Balanced (Recommended)" },
-      { id: "max", label: "Max" },
-      { id: "custom", label: "Custom" },
-    ],
-  },
-  {
-    field: "cavemanDefault",
-    label: "Caveman",
-    glyph: "🪨",
-    hint: "Terse-reply mode for a new or resumed session.",
-    options: [
-      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
-      { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
-      { id: "megacave-lite", label: "Megacave lite" }, { id: "megacave-full", label: "Megacave full" },
-      { id: "megacave-ultra", label: "Megacave ultra" },
-    ],
-  },
-  {
-    field: "rtkDefault",
-    label: "RTK",
-    glyph: "🗜️",
-    hint: "Rewrite eligible Bash calls through rtk.",
-    options: [{ id: "on", label: "On" }, { id: "off", label: "Off" }],
-  },
-  {
-    field: "ponytailDefault",
-    label: "Ponytail",
-    glyph: "🧠",
-    hint: "Lazy-code mode for a new or resumed session.",
-    options: [
-      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
-      { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
-    ],
-  },
-  {
-    field: "pstackDefault",
-    label: "pstack",
-    glyph: "🥔",
-    hint: "Rigor mode. Opt-in, so no preset turns it on or off.",
-    options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
-  },
-  {
-    field: "headroomDefault",
-    label: "Headroom",
-    glyph: "🍃",
-    hint: "Headroom compression for new sessions. Opt-in: install the headroom CLI yourself; no preset turns it on.",
-    options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
-  },
-];
-
-// Session-start defaults mirror `tersio settings`; each row saves on its own.
-function DefaultModes() {
-  const toast = useToast();
-  const [current, setCurrent] = useState<DefaultsPayload>({
-    comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off", headroomDefault: "off",
-  });
-  const [loaded, setLoaded] = useState(false);
-
-  const load = useCallback(() => {
-    fetch("/settings")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: Partial<DefaultsPayload> | null) => { if (d) setCurrent((c) => ({ ...c, ...d })); })
-      .catch(() => { /* keep what is on screen; the rows still save */ })
-      .finally(() => setLoaded(true));
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const save = (row: (typeof DEFAULT_ROWS_UI)[number], id: string): void => {
-    const value: string | boolean = row.field === "rtkDefault" ? id === "on" : id;
-    setCurrent((c) => ({ ...c, [row.field]: value }));
-    void fetch("/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [row.field]: value }),
-    })
-      .then((r) => r.json())
-      .then((d: { ok?: boolean; error?: string }) => {
-        if (d?.ok) {
-          // One row writes more than its own field: a preset rewrites the three modes it owns, and
-          // the combo row reads the level derived from them. Read the saved state back.
-          load();
-          toast(`${row.label} saved`, `${id} applies to new sessions`, "check");
-        } else {
-          toast("Could not save", d?.error ?? "Unknown level", "circle-alert");
-        }
-      })
-      .catch(() => toast("Could not save", "The dashboard server did not answer.", "circle-alert"));
-  };
-
-  return (
-    <div className="grid gap-6">
-      {DEFAULT_ROWS_UI.map((row) => {
-        const raw = current[row.field];
-        const isRtk = row.field === "rtkDefault";
-        const value = row.field === "comboDefault"
-          ? (current.comboLevel || current.comboDefault)
-          : isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // A live preset writes the three modes it owns, so those rows are inert. A custom mix is the
-        // operator's own, so every row stays live. pstack is opt-in, so a preset never locks it.
-        const presetOn = current.comboLevel !== "off" && current.comboLevel !== "custom";
-        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault");
-        if (isRtk) {
-          return (
-            <div key={row.field} className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="m-0 text-[13px] font-semibold">
-                  <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
-                </p>
-                <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
-              </div>
-              <Switch
-                size="sm"
-                checked={Boolean(raw)}
-                onCheckedChange={(on: boolean) => save(row, on ? "on" : "off")}
-                disabled={locked}
-                aria-label={`${row.label} default`}
-              />
-            </div>
-          );
-        }
-        return (
-          <div key={row.field} className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="m-0 text-[13px] font-semibold">
-                <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
-              </p>
-              <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
-            </div>
-            <Select value={value} onValueChange={(v) => save(row, v ?? "off")} disabled={locked}>
-              <SelectTrigger size="sm" className="w-[132px] shrink-0" aria-label={`${row.label} default`}>
-                {/* SelectValue needs children or it shows the raw value. */}
-                <SelectValue placeholder="Off">{row.options.find((o) => o.id === value)?.label ?? "Off"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {/* Custom is what the four modes say, never a level to pick. */}
-                  {row.options.map((o) => (
-                    <SelectItem key={o.id} value={o.id} disabled={o.id === "custom"}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // Native radio group; each chip previews its resolved hex.
 function AccentPicker({ accent, onPick }: { accent: AccentId; onPick: (id: AccentId) => void }) {
@@ -1219,10 +1047,6 @@ export function SettingsDialog({
                       </div>
                       <CurrencyPicker cur={cur} onPick={(code) => { onCurrency(code); toast(`Currency set to ${code}`, "Cost figures update across the dashboard.", "check"); }} id="setCur" />
                     </div>
-                  </div>
-                  <div className="grid gap-7 border-t border-line pt-7">
-                    <p className="m-0 text-[11px] uppercase tracking-[0.14em] text-dim">Modes</p>
-                    <DefaultModes />
                   </div>
                 </section>
               )}

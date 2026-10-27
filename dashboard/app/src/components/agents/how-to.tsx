@@ -1,13 +1,18 @@
 // Quick start: the pipeline as one canvas, drawn the way a workflow tool lays it out.
 // Everything here mirrors docs/ARCHITECTURE.md: the hosts, the block order, and the turn it produces.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Card, Page, PageHeader } from "@/components/charts";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Card, Page, PageHeader, Segmented } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
 import { Button } from "@/components/ui/button";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePending } from "@/hooks/use-pending";
 import { fetchHealth } from "@/lib/data";
+import type { HeadroomProxyReport } from "@/lib/data";
+import { fetchHeadroomProxy, postHeadroomProxy } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
 import { cn } from "cn";
@@ -92,7 +97,7 @@ function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean):
     const blocksBottom = 20 + BLOCKS.length * 76 + 64;
     return {
       w: 456,
-      h: Math.max(pairBottom, blocksBottom) + 34,
+      h: Math.max(pairBottom, blocksBottom) + 40,
       nodes,
       links,
       captions: [{ x: 230, y: Math.max(pairBottom, blocksBottom) + 20, text: "appended in this order, one block each" }],
@@ -124,7 +129,7 @@ function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean):
   links.push({ p: [[blockX + 115, 398], [blockX + 115, 412], [outputX + 120, 412], [outputX + 120, 211], [outputX, 211]], k: "ponytail", arrow: true });
   return {
     w: outputX + 240 + 20,
-    h: 480,
+    h: 560,
     nodes,
     links,
     captions: [{ x: blockX, y: 462, text: "appended in this order, one block each" }],
@@ -214,6 +219,300 @@ const PICKER: Record<"combo" | "caveman" | "rtk" | "ponytail" | "pstack" | "head
   headroom: { field: "headroomDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
 };
 
+/** The session-start defaults one scope carries; `comboLevel` exists only on the shared store. */
+interface DefaultsPayload {
+  comboDefault: string;
+  comboLevel: string;
+  cavemanDefault: string;
+  rtkDefault: boolean;
+  ponytailDefault: string;
+  pstackDefault: string;
+  headroomDefault: string;
+}
+
+const DEFAULT_ROWS_UI: Array<{ field: keyof DefaultsPayload; label: string; glyph: string; hint: string; options: Array<{ id: string; label: string }> }> = [
+  {
+    field: "comboDefault",
+    label: "Combo preset",
+    glyph: "🧩",
+    hint: "Sets caveman, RTK and Ponytail together. pstack is separate.",
+    options: [
+      { id: "off", label: "Off" },
+      { id: "lite", label: "Lite" },
+      { id: "balanced", label: "Balanced (Recommended)" },
+      { id: "max", label: "Max" },
+      { id: "custom", label: "Custom" },
+    ],
+  },
+  {
+    field: "cavemanDefault",
+    label: "Caveman",
+    glyph: "🪨",
+    hint: "Terse-reply mode for a new or resumed session.",
+    options: [
+      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
+      { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
+      { id: "megacave-lite", label: "Megacave lite" }, { id: "megacave-full", label: "Megacave full" },
+      { id: "megacave-ultra", label: "Megacave ultra" },
+    ],
+  },
+  {
+    field: "rtkDefault",
+    label: "RTK",
+    glyph: "🗜️",
+    hint: "Rewrite eligible Bash calls through rtk.",
+    options: [{ id: "on", label: "On" }, { id: "off", label: "Off" }],
+  },
+  {
+    field: "ponytailDefault",
+    label: "Ponytail",
+    glyph: "🧠",
+    hint: "Lazy-code mode for a new or resumed session.",
+    options: [
+      { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
+      { id: "full", label: "Full" }, { id: "ultra", label: "Ultra" },
+    ],
+  },
+  {
+    field: "pstackDefault",
+    label: "pstack",
+    glyph: "🥔",
+    hint: "Rigor mode. Opt-in, so no preset turns it on or off.",
+    options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }],
+  },
+];
+
+const OFF_DEFAULTS: DefaultsPayload = {
+  comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off", headroomDefault: "off",
+};
+
+/**
+ * The session-start defaults for one scope: the shared store every agent falls back to, or one
+ * agent's own section, which wins over it. Rows read the section first and mark what is inherited.
+ */
+function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode" | null; onSaved: () => void }) {
+  const toast = useToast();
+  const [current, setCurrent] = useState<DefaultsPayload>(OFF_DEFAULTS);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(() => {
+    fetch("/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: (Partial<DefaultsPayload> & { hosts?: Record<string, Partial<Record<string, string | boolean>>> }) | null) => {
+        if (!d) return;
+        const shared = d as Partial<Record<string, string | boolean>>;
+        const section: Partial<Record<string, string | boolean>> = host ? d.hosts?.[host] ?? {} : shared;
+        const pick = (key: keyof DefaultsPayload, fallback: string | boolean): string | boolean => section[key] ?? shared[key] ?? fallback;
+        setCurrent({
+          comboDefault: String(pick("comboDefault", "off")),
+          comboLevel: host ? "custom" : String(d.comboLevel ?? "off"),
+          cavemanDefault: String(pick("cavemanDefault", "off")),
+          rtkDefault: typeof pick("rtkDefault", false) === "boolean" ? Boolean(pick("rtkDefault", false)) : false,
+          ponytailDefault: String(pick("ponytailDefault", "off")),
+          pstackDefault: String(pick("pstackDefault", "off")),
+          headroomDefault: String(pick("headroomDefault", "off")),
+        });
+      })
+      .catch(() => { /* keep what is on screen; the rows still save */ })
+      .finally(() => setLoaded(true));
+  }, [host]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = (row: (typeof DEFAULT_ROWS_UI)[number], id: string): void => {
+    const value: string | boolean = row.field === "rtkDefault" ? id === "on" : id;
+    setCurrent((c) => ({ ...c, [row.field]: value }));
+    void fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [row.field]: value, ...(host ? { host } : {}) }),
+    })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; error?: string }) => {
+        if (d?.ok) {
+          // A preset rewrites the three modes it owns, and the combo row reads the derived level; read the saved state back.
+          load();
+          // The canvas nodes and the top banner read the same store, so they refresh with this save too.
+          onSaved();
+          toast(`${row.label} saved`, host ? `Applies to new ${host} sessions` : "Applies to new sessions on every agent", "check");
+        } else {
+          toast("Could not save", d?.error ?? "Unknown level", "circle-alert");
+        }
+      })
+      .catch(() => toast("Could not save", "The dashboard server did not answer.", "circle-alert"));
+  };
+
+  return (
+    <div className="grid gap-5">
+      {DEFAULT_ROWS_UI.map((row) => {
+        const raw = current[row.field];
+        const isRtk = row.field === "rtkDefault";
+        const value = row.field === "comboDefault"
+          ? (current.comboLevel && current.comboLevel !== "custom" ? current.comboLevel : current.comboDefault)
+          : isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
+        // The shared store locks the three modes a live preset owns; a host section is the operator's own mix, so every row stays live.
+        const presetOn = !host && current.comboLevel !== "off" && current.comboLevel !== "custom";
+        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault" && row.field !== "headroomDefault");
+        if (isRtk) {
+          return (
+            <div key={row.field} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="m-0 text-[13px] font-semibold">
+                  <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
+                </p>
+                <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
+              </div>
+              <Switch
+                size="sm"
+                checked={Boolean(raw)}
+                onCheckedChange={(on: boolean) => save(row, on ? "on" : "off")}
+                disabled={locked}
+                aria-label={`${row.label} default${host ? ` for ${host}` : ""}`}
+              />
+            </div>
+          );
+        }
+        return (
+          <div key={row.field} className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="m-0 text-[13px] font-semibold">
+                <span aria-hidden="true" className="mr-1.5">{row.glyph}</span>{row.label}
+              </p>
+              <p className="mt-0.5 mb-0 text-xs text-dim">{row.hint}</p>
+            </div>
+            <Select value={value} onValueChange={(v) => save(row, v ?? "off")} disabled={locked}>
+              <SelectTrigger size="sm" className="w-[132px] shrink-0" aria-label={`${row.label} default${host ? ` for ${host}` : ""}`}>
+                {/* SelectValue needs children or it shows the raw value. */}
+                <SelectValue placeholder="Off">{row.options.find((o) => o.id === value)?.label ?? "Off"}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {/* Custom is what the four modes say, never a level to pick. */}
+                  {row.options.map((o) => (
+                    <SelectItem key={o.id} value={o.id} disabled={o.id === "custom"}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+        );
+      })}
+      {host ? (
+        <p className="mono m-0 text-[10px] text-dim">
+          Rows left off inherit the shared default — only what you set here belongs to {host}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The agent list beside the canvas: one accordion item per scope, shared first. A missing agent keeps its
+ * row but never opens. The shared item carries the one gateway every agent points at, so nothing here
+ * rewrites an agent's own config.
+ */
+function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; onSaved: () => void }) {
+  const [proxy, setProxy] = useState<HeadroomProxyReport | null>(null);
+  const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyDetail, setProxyDetail] = useState<string | null>(null);
+  useEffect(() => {
+    void fetchHeadroomProxy().then(setProxy);
+  }, []);
+  const toggleProxy = (): void => {
+    setProxyBusy(true);
+    setProxyDetail(null);
+    void postHeadroomProxy(proxy?.running ? "stop-proxy" : "start-proxy")
+      .then((result) => {
+        setProxyDetail(result?.detail ?? "the dashboard server did not answer");
+        void fetchHeadroomProxy().then(setProxy);
+      })
+      .finally(() => setProxyBusy(false));
+  };
+  return (
+    <Accordion className="gap-2.5">
+      <AccordionItem value="shared" className="overflow-hidden rounded-xl border border-line bg-panel">
+        <AccordionTrigger className="px-4 py-3.5 transition-colors hover:no-underline [&_[data-slot=accordion-trigger-icon]]:text-dim">
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold">All agents — shared default</span>
+          <span className="mono mr-3 shrink-0 text-[9px] text-dim">fallback for every agent</span>
+        </AccordionTrigger>
+        <AccordionContent className="px-4 pb-6 pt-1">
+          {/* One soft zone per concern: the mode rows, then the gateway. The padding is the breathing room
+              an open row needs, so the controls never sit against the card's own edges. */}
+          <div className="rounded-lg bg-track/40 p-4">
+            <AgentModes host={null} onSaved={onSaved} />
+          </div>
+          {/* The gateway: one proxy, every agent, no agent config touched. */}
+          <div className="mt-3 rounded-lg bg-track/40 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mono text-[10px] uppercase tracking-[0.12em] text-dim">gateway</span>
+              <span
+                className={cn(
+                  "mono rounded border px-1.5 py-0.5 text-[10px]",
+                  proxy?.running ? "border-success/40 text-success" : "border-line text-dim",
+                )}
+              >
+                {proxy?.running ? `running on :${proxy.port}` : "stopped"}
+              </span>
+              <button
+                type="button"
+                disabled={proxyBusy}
+                onClick={toggleProxy}
+                className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+              >
+                {proxyBusy ? "working" : proxy?.running ? "stop proxy" : "start proxy"}
+              </button>
+            </div>
+            <dl className="mt-3.5 grid gap-2">
+              <div className="flex items-baseline gap-3">
+                <dt className="mono w-20 shrink-0 text-[9px] uppercase tracking-[0.1em] text-dim">anthropic</dt>
+                <dd className="mono m-0 truncate text-[10px] text-ink">ANTHROPIC_BASE_URL={proxy?.anthropicUrl ?? "http://127.0.0.1:8787"}</dd>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <dt className="mono w-20 shrink-0 text-[9px] uppercase tracking-[0.1em] text-dim">openai</dt>
+                <dd className="mono m-0 truncate text-[10px] text-ink">OPENAI_BASE_URL={proxy?.openaiUrl ?? "http://127.0.0.1:8787/v1"}</dd>
+              </div>
+            </dl>
+            <p className="m-0 mt-3.5 text-[11px] leading-relaxed text-dim">
+              Set either variable in an agent&apos;s environment and its traffic compresses. This is the one
+              wiring every agent shares, including pi.
+            </p>
+            {proxyDetail ? <p className="mono m-0 mt-2 text-[10px] text-dim">{proxyDetail}</p> : null}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+      {HOSTS.map((h) => {
+        const installed = hostState.installed[h.id] !== false;
+        return (
+          <AccordionItem key={h.id} value={h.id} className="overflow-hidden rounded-xl border border-line bg-panel">
+            <AccordionTrigger
+              disabled={!installed}
+              className={cn(
+                "px-4 py-3.5 transition-colors hover:no-underline [&_[data-slot=accordion-trigger-icon]]:text-dim",
+                !installed && "cursor-default opacity-60",
+              )}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold">
+                <AgentLogo host={h.id} className="size-4 shrink-0" /> {h.label}
+                <span className={cn("mono rounded border px-1 text-[9px]", installed ? "border-accent/40 text-accent" : "border-line text-dim")}>
+                  {installed ? "installed" : "not installed"}
+                </span>
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="px-4 pb-6 pt-1">
+              <div className="rounded-lg bg-track/40 p-4">
+                <AgentModes host={h.id} onSaved={onSaved} />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        );
+      })}
+    </Accordion>
+  );
+}
+
 /** What the folder says about a node. The per-agent preset nodes share the combo entry. */
 const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
@@ -228,32 +527,96 @@ const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   output: "One turn, start to finish: the prompt blocks go in, the model runs, and the reply comes back.",
 };
 
-const STEPS = [
-  {
-    title: "Install into an agent",
-    body: "One package writes the extension tree for the agent you pick. Every extension speaks the same API, so the tree is the only difference.",
-    command: "tersio install --host omp|pi|opencode",
-  },
-  {
-    title: "Pick a preset",
-    body: "Combo sets caveman, RTK, and Ponytail together. It leaves pstack and headroom where you had them, because both are opt-in.",
-    command: "/combo balanced",
-  },
-  {
-    title: "Turn a mode on its own",
-    body: "Each mode answers to its own command, and a switch reaches every sibling through the shared bridge without a reload.",
-    command: "/pstack on",
-  },
-  {
-    title: "Check what ran",
-    body: "This dashboard reads the one store every host feeds. Doctor checks the install, and upstream compares the ported bodies to their pins.",
-    command: "tersio doctor",
-  },
-] as const;
-
 interface HostState {
   installed: Record<string, boolean>;
   versions: Record<string, string | null>;
+}
+
+/** One definition of a node's live state, read by the canvas and the properties card alike. */
+function edgeLit(key: EdgeKey, modes: ModeState | null, hostState: HostState): Lit {
+  if (key === "hosts") {
+    const installed = Object.values(hostState.installed);
+    return installed.length ? installed.some(Boolean) : null;
+  }
+  if (key === "omp" || key === "pi" || key === "opencode") {
+    const installed = hostState.installed[key];
+    return installed === undefined ? null : installed;
+  }
+  if (!modes) return null;
+  if (key === "combo") return (modes.comboLevel || modes.comboDefault) !== "off";
+  if (key === "rtk") return modes.rtkDefault;
+  if (key === "caveman") return modes.cavemanDefault !== "off";
+  if (key === "ponytail") return modes.ponytailDefault !== "off";
+  if (key === "headroom") return modes.headroomDefault !== "off";
+  return modes.pstackDefault !== "off";
+}
+
+function nodeTitle(id: NodeId): string {
+  if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
+  if (id.startsWith("combo-")) {
+    const label = HOSTS.find((h) => `combo-${h.id}` === id)?.label ?? id.slice(6);
+    return `Combo · ${label}`;
+  }
+  const mode = MODES.find((m) => m.key === id);
+  if (mode) return mode.name;
+  return TURN.find((t) => t.id === id)?.title ?? id;
+}
+
+function nodeState(id: NodeId, modes: ModeState | null, hostState: HostState): { label: string; on: boolean | null } {
+  if (id.startsWith("host-")) {
+    const key = id.slice(5);
+    const on = edgeLit(key as EdgeKey, modes, hostState);
+    return { label: isOff(on) ? "not installed" : versionOf(hostState.versions[key]) ?? "installed", on };
+  }
+  if (id.startsWith("combo-")) {
+    const host = id.slice(6);
+    const own = modes?.hosts?.[host]?.comboDefault;
+    const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
+    return { label: level, on: level !== "off" };
+  }
+  if (id === "caveman" || id === "ponytail") {
+    const on = edgeLit(id, modes, hostState);
+    const level = id === "caveman" ? modes?.cavemanDefault : modes?.ponytailDefault;
+    return { label: isOff(on) ? "off" : level || "on", on };
+  }
+  if (id === "pstack" || id === "headroom" || id === "rtk") {
+    const on = edgeLit(id, modes, hostState);
+    return { label: isOff(on) ? "off" : "on", on };
+  }
+  return { label: "on", on: true };
+}
+
+function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostState): boolean {
+  if (id.startsWith("host-")) return isOff(edgeLit(id.slice(5) as EdgeKey, modes, hostState));
+  if (id.startsWith("combo-")) {
+    const host = id.slice(6);
+    const own = modes?.hosts?.[host]?.comboDefault;
+    const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
+    return level === "off";
+  }
+  if (id === "caveman" || id === "pstack" || id === "headroom" || id === "rtk" || id === "ponytail") {
+    return isOff(edgeLit(id, modes, hostState));
+  }
+  return false;
+}
+
+/** What the node's control reads right now, in the scope the node itself stands for. */
+function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "opencode", modes: ModeState | null): string | null {
+  if (!modes) return null;
+  if (id.startsWith("combo-")) {
+    // A host scope shows its own preset when it has one, else the value it inherits.
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.comboDefault;
+      if (typeof own === "string") return own;
+    }
+    return modes.comboLevel || modes.comboDefault;
+  }
+  if (id === "caveman") return modes.cavemanDefault;
+  if (id === "ponytail") return modes.ponytailDefault;
+  if (id === "pstack") return modes.pstackDefault;
+  if (id === "headroom") return modes.headroomDefault;
+  if (id === "rtk") return modes.rtkDefault ? "on" : "off";
+  return null;
 }
 
 function NodeButton({
@@ -338,101 +701,191 @@ function MenuAction({ onClick, disabled, danger, children }: {
   );
 }
 
-/** The folder menu hangs off the node in screen space, so it keeps its type size at any zoom. */
-const MENU_WIDTH = 292;
+/** One node's glyph, shared by the canvas button and the fold panel header. */
+function nodeGlyph(id: NodeId): string | null {
+  if (id.startsWith("combo-")) return "🧩";
+  return MODES.find((m) => m.key === id)?.glyph ?? null;
+}
 
 /**
- * The node menu as a file folder: a tab carries the mode's name, and the body unfolds from under it
- * in one 3D fold while the option sheets stagger in. A selection change remounts the folder, so the
- * fold replays; reduced-motion readers get the final state immediately.
+ * The properties fold: a screen-space overlay anchored beneath the clicked node, unfolding from the node's
+ * edge. When the space below runs out it flips above and folds from the bottom instead. It keeps its own
+ * type size at any zoom, because it never lives inside the canvas transform.
  */
-function NodeFolder({
-  title,
-  glyph,
-  stateLabel,
-  about,
+function NodePanel({
+  hostRef,
+  modes,
+  hostState,
+  node,
   busy,
-  x,
-  y,
+  confirming,
+  onConfirm,
+  onSet,
+  onHostAction,
   onClose,
-  children,
-  footer,
+  anchor,
+  bounds,
 }: {
-  title: string;
-  glyph: string | null;
-  stateLabel: string | null;
-  about: string;
-  busy: boolean;
-  x: number;
-  y: number;
+  hostRef: React.RefObject<HTMLDivElement | null>;
+  modes: ModeState | null;
+  hostState: HostState;
+  node: NonNullable<NodeId | null>;
+  busy: NodeId | null;
+  confirming: NodeId | null;
+  onConfirm: (node: NodeId | null) => void;
+  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode") => void;
+  onHostAction: (node: NodeId, action: HostAction) => void;
   onClose: () => void;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
+  anchor: { x: number; y: number; w: number; h: number };
+  bounds: { w: number; h: number };
 }) {
-  const root = useRef<HTMLDivElement>(null);
-  const sheet = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const WIDTH = 280;
+  const GAP = 10;
+  // Placement first: measure the rendered panel, pick below or above the node, clamp into the canvas.
+  const [place, setPlace] = useState<{ left: number; top: number; origin: "top" | "bottom" } | null>(null);
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const h = el.offsetHeight;
+    let left = Math.round(anchor.x + anchor.w / 2 - WIDTH / 2);
+    left = Math.max(8, Math.min(left, Math.max(8, bounds.w - WIDTH - 8)));
+    let top = Math.round(anchor.y + anchor.h + GAP);
+    let origin: "top" | "bottom" = "top";
+    if (top + h > bounds.h - 8) {
+      top = Math.round(anchor.y - h - GAP);
+      origin = "bottom";
+    }
+    if (top < 8) {
+      // Neither side fits whole: pin below the node's top edge and let the panel's own scroll take over.
+      top = 8;
+      origin = "top";
+    }
+    setPlace({ left, top, origin });
+  }, [anchor.x, anchor.y, anchor.w, anchor.h, bounds.w, bounds.h, node, modes]);
+
   useGSAP(() => {
-    if (!sheet.current) return;
-    const sheets = root.current?.querySelectorAll("[data-sheet]") ?? [];
+    if (!panel.current || !place) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      gsap.set(sheet.current, { rotateX: 0, opacity: 1 });
-      gsap.set(sheets, { y: 0, opacity: 1, scale: 1 });
+      gsap.set(panel.current, { rotateX: 0, y: 0, opacity: 1 });
+      gsap.set(panel.current.querySelectorAll("[data-sheet]"), { y: 0, opacity: 1 });
       return;
     }
+    // The fold: the panel swings out of the node's edge, and the rows rise in behind it.
+    const from = place.origin === "top" ? -7 : 7;
     const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
     tl.fromTo(
-      sheet.current,
-      { rotateX: -72, opacity: 0.35 },
-      { rotateX: 0, opacity: 1, duration: 0.5, ease: "back.out(1.5)", transformOrigin: "top center" },
-    ).fromTo(
-      sheets,
-      { y: 12, opacity: 0, scale: 0.96 },
-      { y: 0, opacity: 1, scale: 1, duration: 0.34, stagger: 0.045 },
-      "-=0.18",
+      panel.current,
+      { rotateX: from, y: place.origin === "top" ? -10 : 10, opacity: 0 },
+      { rotateX: 0, y: 0, opacity: 1, duration: 0.34, transformOrigin: `${place.origin} center` },
+    );
+    tl.fromTo(
+      panel.current.querySelectorAll("[data-sheet]"),
+      { y: 8, opacity: 0 },
+      { y: 0, opacity: 1, duration: 0.2, stagger: 0.03 },
+      "-=0.12",
     );
     return () => { tl.kill(); };
-  }, { scope: root });
+  }, { scope: panel, dependencies: [node, place?.top, place?.left] });
+
+  const state = nodeState(node, modes, hostState);
+  const glyph = nodeGlyph(node);
+  const about = ABOUT[node.startsWith("combo-") ? "combo" : node] ?? "";
+  const pickerKey = node.startsWith("combo-") ? "combo" : node;
+  const picker = pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
+  // A per-agent preset node IS the scope: the panel writes that agent's section and nothing else.
+  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "opencode") : "all";
+  const current = nodeValue(node, scope, modes);
+  // A host scope without its own section inherits the shared value, so the row says so.
+  const inherited = node.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
+  // `custom` is what the three modes say, so it matches no preset button and names no command.
+  const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
+  const hostId = node.startsWith("host-") ? node.slice("host-".length) : null;
+  const hostInstalled = hostId !== null && !isOff(edgeLit(hostId as EdgeKey, modes, hostState));
+  // No modes yet: a mode node's live state is unknowable, so the skeleton stands in instead of fake "off" rows.
+  const pendingRows = !node.startsWith("host-") && !node.startsWith("combo-") && modes === null;
 
   return (
-    <div
-      ref={root}
-      role="dialog"
-      aria-label={`${title} options`}
-      className="absolute z-20"
-      style={{ left: x, top: y, width: MENU_WIDTH }}
-    >
-      <div className="relative z-10 ml-3 inline-flex h-8 max-w-full items-center gap-2 rounded-t-lg border border-b-0 border-line bg-track px-3">
-        {glyph ? <span aria-hidden="true" className="text-[11px] leading-none">{glyph}</span> : null}
-        <span className="text-[12px] font-semibold leading-none">{title}</span>
-        {stateLabel ? (
-          <span className="mono rounded border border-line px-1 py-px text-[9px] leading-none text-dim">{stateLabel}</span>
-        ) : null}
-        {busy ? <span className="mono text-[9px] leading-none text-accent">working</span> : null}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close options"
-          className="ml-auto grid size-5 cursor-pointer place-items-center rounded text-dim hover:bg-panel hover:text-ink"
-        >
-          <Icon name="x" className="size-3" />
-        </button>
-      </div>
-      <div style={{ perspective: "900px" }}>
-        <div
-          ref={sheet}
-          className="grid gap-1 rounded-b-xl rounded-tr-xl border border-line bg-panel p-2.5 shadow-xl will-change-transform"
-        >
-          <p data-sheet className="m-0 text-[10px] leading-relaxed text-dim">{about}</p>
-          {children}
-          {footer}
+    <div ref={hostRef} data-node-panel>
+      <aside
+        ref={panel}
+        aria-label="Node properties"
+        style={{
+          left: place?.left ?? anchor.x,
+          top: place?.top ?? anchor.y + anchor.h,
+          width: WIDTH,
+          transformOrigin: place ? `${place.origin} center` : "top center",
+          visibility: place ? undefined : "hidden",
+        }}
+        className="absolute z-20 flex max-h-[calc(100%-16px)] min-h-0 flex-col rounded-xl border border-line bg-panel shadow-xl shadow-black/25"
+      >
+        <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5">
+          {glyph ? <span aria-hidden="true" className="text-[12px] leading-none">{glyph}</span> : null}
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{nodeTitle(node)}</span>
+          <span className="mono shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] leading-none text-dim">{state.label}</span>
+          {busy !== null ? <span className="mono shrink-0 text-[9px] leading-none text-accent">working</span> : null}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close properties"
+            className="grid size-5 shrink-0 cursor-pointer place-items-center rounded text-dim transition-colors hover:bg-track hover:text-ink"
+          >
+            <Icon name="x" className="size-3" />
+          </button>
+        </header>
+        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto p-3">
+          <p data-sheet className="m-0 pb-0.5 text-[11px] leading-relaxed text-dim">{about}</p>
+          {hostId ? (
+            <div data-sheet className="flex flex-wrap items-center gap-1.5">
+              {hostInstalled ? (
+                <MenuAction disabled={busy !== null} onClick={() => onHostAction(node, "update")}>Update</MenuAction>
+              ) : (
+                <MenuAction disabled={busy !== null} onClick={() => onHostAction(node, "install")}>Install</MenuAction>
+              )}
+              {hostInstalled ? (
+                confirming === node ? (
+                  <MenuAction danger disabled={busy !== null} onClick={() => onHostAction(node, "uninstall")}>Confirm uninstall</MenuAction>
+                ) : (
+                  <MenuAction disabled={busy !== null} onClick={() => onConfirm(node)}>Uninstall</MenuAction>
+                )
+              ) : null}
+            </div>
+          ) : null}
+          {pendingRows ? (
+            <div className="grid gap-1.5" aria-busy="true" aria-hidden="true">
+              <Skeleton className="h-8 w-full rounded-md" />
+              <Skeleton className="h-8 w-full rounded-md" />
+            </div>
+          ) : picker ? (
+            picker.options.map((option) => (
+              <OptionRow
+                key={option.id}
+                label={option.label}
+                active={current === option.id}
+                disabled={busy !== null}
+                hint={inherited && current === option.id ? "inherited" : undefined}
+                onClick={() => onSet(node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
+              />
+            ))
+          ) : null}
         </div>
-      </div>
+        {picker ? (
+          <footer data-sheet className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
+            {picked ? (
+              <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{node} {picked}</code>
+            ) : null}
+            <span className="mono ml-auto text-[9px] text-dim">
+              {scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
+            </span>
+          </footer>
+        ) : null}
+      </aside>
     </div>
   );
 }
 
-/** One option sheet inside the folder: a full-width row with a check chip, so no label ever wraps. */
-function OptionSheet({
+/** One option row in the properties panel: a full-width control with the active state carried by a check. */
+function OptionRow({
   label,
   active,
   disabled,
@@ -453,7 +906,7 @@ function OptionSheet({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex w-full cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-all duration-300 ease-out",
+        "group flex w-full cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150",
         active
           ? "border-accent/60 bg-accent-soft"
           : "border-transparent hover:border-line hover:bg-track/60",
@@ -463,7 +916,7 @@ function OptionSheet({
       <span
         aria-hidden="true"
         className={cn(
-          "grid size-4 shrink-0 place-items-center rounded-[4px] border transition-colors",
+          "grid size-4 shrink-0 place-items-center rounded border transition-colors",
           active ? "border-accent bg-accent text-panel" : "border-line text-transparent group-hover:border-dim",
         )}
       >
@@ -477,6 +930,7 @@ function OptionSheet({
   );
 }
 
+/** What the folder says about a node. The per-agent preset nodes share the combo entry. */
 function PipelineCanvas({
   modes,
   hostState,
@@ -494,14 +948,46 @@ function PipelineCanvas({
   const [containerW, setContainerW] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [selected, setSelected] = useState<NodeId | null>(null);
-  // The combo folder scopes its preset: the shared default, or one agent's own section. Opening a
-  // per-agent preset node starts on that agent's scope.
-  const [scope, setScope] = useState<"all" | "omp" | "pi" | "opencode">("all");
-  const [confirming, setConfirming] = useState<NodeId | null>(null);
   const [panning, setPanning] = useState(false);
   const [hovered, setHovered] = useState<NodeId | null>(null);
+  // `selected` is the node the panel is for; `shown` is the node actually on screen, so a closing fold
+  // can finish before the panel unmounts while a new selection replays the entrance instead.
+  const [selected, setSelected] = useState<NodeId | null>(null);
+  const [shown, setShown] = useState<NodeId | null>(null);
+  const [confirming, setConfirming] = useState<NodeId | null>(null);
+  const panelHost = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+
+  const toggleNode = (id: NodeId): void => {
+    setConfirming(null);
+    if (selected === id) { closePanel(); return; }
+    setSelected(id);
+    setShown(id);
+  };
+
+  const closePanel = (): void => {
+    const closing = selected;
+    setSelected(null);
+    if (!closing) return;
+    const panel = panelHost.current?.querySelector("aside");
+    if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setShown(null); return; }
+    // The fold away: the panel swings back into the node's edge before it leaves the layout.
+    const up = (panel as HTMLElement).style.transformOrigin.includes("bottom");
+    gsap.to(panel, {
+      rotateX: up ? 6 : -6, y: up ? 8 : -8, opacity: 0, duration: 0.16, ease: "power2.in",
+      transformOrigin: (panel as HTMLElement).style.transformOrigin,
+      onComplete: () => setShown((cur) => (cur === closing ? null : cur)),
+    });
+  };
+
+  useEffect(() => {
+    if (!selected) return;
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closePanel();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selected]);
 
   // The canvas draws at its own width and the card scales it; drag and the zoom controls reach the rest.
   useLayoutEffect(() => {
@@ -514,23 +1000,7 @@ function PipelineCanvas({
     return () => observer.disconnect();
   }, []);
 
-  const lit = (key: EdgeKey): Lit => {
-    if (key === "hosts") {
-      const installed = Object.values(hostState.installed);
-      return installed.length ? installed.some(Boolean) : null;
-    }
-    if (key === "omp" || key === "pi" || key === "opencode") {
-      const installed = hostState.installed[key];
-      return installed === undefined ? null : installed;
-    }
-    if (!modes) return null;
-    if (key === "combo") return (modes.comboLevel || modes.comboDefault) !== "off";
-    if (key === "rtk") return modes.rtkDefault;
-    if (key === "caveman") return modes.cavemanDefault !== "off";
-    if (key === "ponytail") return modes.ponytailDefault !== "off";
-    if (key === "headroom") return modes.headroomDefault !== "off";
-    return modes.pstackDefault !== "off";
-  };
+  const lit = (key: EdgeKey): Lit => edgeLit(key, modes, hostState);
   // An unknown host stays on the canvas: an exported file reads no host list.
   const shownHosts = HOSTS.filter((host) => hostState.installed[host.id] !== false);
   const compact = containerW > 0 && containerW < 620;
@@ -539,17 +1009,7 @@ function PipelineCanvas({
   const fit = containerW > 0 ? Math.min(1, containerW / layout.w) : 1;
   const scale = fit * zoom;
 
-  const isNodeOff = (id: NodeId): boolean => {
-    if (id.startsWith("host-")) return isOff(lit(id.slice(5) as EdgeKey));
-    if (id.startsWith("combo-")) {
-      const host = id.slice(6);
-      const own = modes?.hosts?.[host]?.comboDefault;
-      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
-      return level === "off";
-    }
-    if (id === "caveman" || id === "pstack" || id === "headroom" || id === "rtk" || id === "ponytail") return isOff(lit(id));
-    return false;
-  };
+  const isNodeOff = (id: NodeId): boolean => nodeOff(id, modes, hostState);
 
   /** The boxes a point sits on, so a link can name the nodes it joins without a second table. */
   const nodeAt = (p: Point): NodeId | null => {
@@ -630,357 +1090,199 @@ function PipelineCanvas({
     );
   };
 
-  const titleOf = (id: NodeId): string => {
-    if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
-    if (id.startsWith("combo-")) {
-      const label = HOSTS.find((h) => `combo-${h.id}` === id)?.label ?? id.slice(6);
-      return `Combo · ${label}`;
-    }
-    const mode = MODES.find((m) => m.key === id);
-    if (mode) return mode.name;
-    return TURN.find((t) => t.id === id)?.title ?? id;
-  };
-
-  const glyphOf = (id: NodeId): string | null => {
-    if (id.startsWith("combo-")) return "🧩";
-    return MODES.find((m) => m.key === id)?.glyph ?? null;
-  };
-
-  const stateOf = (id: NodeId): { label: string; on: boolean | null } => {
-    if (id.startsWith("host-")) {
-      const key = id.slice(5);
-      const on = lit(key as EdgeKey);
-      return { label: isOff(on) ? "not installed" : versionOf(hostState.versions[key]) ?? "installed", on };
-    }
-    if (id.startsWith("combo-")) {
-      const host = id.slice(6);
-      const own = modes?.hosts?.[host]?.comboDefault;
-      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
-      return { label: level, on: level !== "off" };
-    }
-    if (id === "caveman" || id === "ponytail") {
-      const on = lit(id);
-      const level = id === "caveman" ? modes?.cavemanDefault : modes?.ponytailDefault;
-      return { label: isOff(on) ? "off" : level || "on", on };
-    }
-    if (id === "pstack") {
-      const on = lit("pstack");
-      return { label: isOff(on) ? "off" : "on", on };
-    }
-    if (id === "headroom") {
-      const on = lit("headroom");
-      return { label: isOff(on) ? "off" : "on", on };
-    }
-    if (id === "rtk") {
-      const on = lit("rtk");
-      return { label: isOff(on) ? "off" : "on", on };
-    }
-    return { label: "on", on: true };
-  };
-
-  const selectedState = selected ? stateOf(selected) : null;
-  const MENU_WIDTH = 292;
-  const MENU_ESTIMATE = 240;
-  const viewportW = layout.w * fit;
-  const viewportH = layout.h * fit;
-  const selectedBox = selected ? layout.nodes.find(([id]) => id === selected)?.[1] ?? null : null;
-  const hostId = selected?.startsWith("host-") ? selected.slice("host-".length) : null;
-  const hostInstalled = hostId !== null && !isOff(lit(hostId as EdgeKey));
-  // The menu hangs off the node in screen space, so it keeps its type size at any zoom.
-  const menu = selectedBox
-    ? {
-      left: Math.min(Math.max(8, selectedBox.x * scale + pan.x), Math.max(8, viewportW - MENU_WIDTH - 8)),
-      top: (selectedBox.y + selectedBox.h) * scale + pan.y + MENU_ESTIMATE <= viewportH
-        ? (selectedBox.y + selectedBox.h) * scale + pan.y + 8
-        : Math.max(8, selectedBox.y * scale + pan.y - MENU_ESTIMATE - 8),
-    }
-    : null;
-  const pickerKey = selected == null ? null : selected.startsWith("combo-") ? "combo" : selected;
-  const picker = pickerKey !== null && pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
-  const currentValue = (id: NodeId): string | null => {
-    if (!modes) return null;
-    if (id.startsWith("combo-")) {
-      // A host scope shows its own preset when it has one, else the value it inherits.
-      if (scope !== "all") {
-        const own = modes.hosts?.[scope]?.comboDefault;
-        if (typeof own === "string") return own;
-      }
-      return modes.comboLevel || modes.comboDefault;
-    }
-    if (id === "caveman") return modes.cavemanDefault;
-    if (id === "ponytail") return modes.ponytailDefault;
-    if (id === "pstack") return modes.pstackDefault;
-    if (id === "headroom") return modes.headroomDefault;
-    if (id === "rtk") return modes.rtkDefault ? "on" : "off";
-    return null;
-  };
-  const current = selected ? currentValue(selected) : null;
-  // A host scope without its own section inherits the shared value, so the sheet says so.
-  const inherited = selected?.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
-  // `custom` is what the three modes say, so it matches no preset button and names no command.
-  const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
-
-  useEffect(() => {
-    // Opening a per-agent preset node starts on that agent's scope; the shared node starts on all.
-    setScope(selected?.startsWith("combo-") ? (selected.slice(6) as "omp" | "pi" | "opencode") : "all");
-  }, [selected]);
-
-  useEffect(() => {
-    if (!selected) return;
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setSelected(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [selected]);
-
   const zoomBy = (factor: number): void => {
     setZoom((z) => Math.min(2.4, Math.max(0.6, Number((z * factor).toFixed(2)))));
   };
 
+
+  // The fold panel anchors to the shown node in screen space and flips above when the space below runs out.
+  const shownBox = shown ? layout.nodes.find(([id]) => id === shown)?.[1] ?? null : null;
+  const panelAnchor = shownBox ? { x: shownBox.x * scale + pan.x, y: shownBox.y * scale + pan.y, w: shownBox.w * scale, h: shownBox.h * scale } : null;
+  const panelBounds = { w: containerW, h: Math.round(layout.h * fit) };
   return (
-    <div className="relative">
-      <div
-        ref={boxRef}
-        role="group"
-        aria-label="Pipeline canvas"
-        className={cn(
-          // A drag pans the canvas; it never selects a label or a file path on the way.
-          "relative touch-none overflow-hidden rounded-lg border border-line select-none",
-          "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
-        )}
-        style={{ height: layout.h * fit, cursor: panning ? "grabbing" : "grab" }}
-        onPointerDown={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest("button")) return;
-          setSelected(null);
-          if (event.pointerType !== "mouse") return;
-          drag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
-          setPanning(true);
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          const start = drag.current;
-          if (!start) return;
-          setPan({ x: start.px + (event.clientX - start.x), y: start.py + (event.clientY - start.y) });
-        }}
-        onPointerUp={() => { drag.current = null; setPanning(false); }}
-        onPointerCancel={() => { drag.current = null; setPanning(false); }}
-        onWheel={(event) => {
-          // A bare wheel belongs to the page; the canvas only takes it with the zoom modifier.
-          if (!event.ctrlKey && !event.metaKey) return;
-          event.preventDefault();
-          const rect = event.currentTarget.getBoundingClientRect();
-          const px = event.clientX - rect.left;
-          const py = event.clientY - rect.top;
-          const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-          const next = Math.min(2.4, Math.max(0.6, zoom * factor));
-          const ratio = next / zoom;
-          setPan((p) => ({ x: px - (px - p.x) * ratio, y: py - (py - p.y) * ratio }));
-          setZoom(next);
-        }}
-        onPointerLeave={() => { drag.current = null; setPanning(false); }}
-        onDragStart={(event) => event.preventDefault()}
-      >
+    <div className="relative min-w-0" style={{ perspective: "900px" }}>
         <div
-          className="absolute origin-top-left"
-          style={{ width: layout.w, height: layout.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
+          ref={boxRef}
+          role="group"
+          aria-label="Pipeline canvas"
+          className={cn(
+            // A drag pans the canvas; it never selects a label or a file path on the way.
+            "relative touch-none overflow-hidden rounded-lg border border-line select-none",
+            "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
+          )}
+          style={{ height: layout.h * fit, cursor: panning ? "grabbing" : "grab" }}
+          onPointerDown={(event) => {
+            const target = event.target as HTMLElement;
+            if (target.closest("button") || target.closest("[data-node-panel]")) return;
+            if (selected) closePanel();
+            if (event.pointerType !== "mouse") return;
+            drag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
+            setPanning(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const start = drag.current;
+            if (!start) return;
+            setPan({ x: start.px + (event.clientX - start.x), y: start.py + (event.clientY - start.y) });
+          }}
+          onPointerUp={() => { drag.current = null; setPanning(false); }}
+          onPointerCancel={() => { drag.current = null; setPanning(false); }}
+          onWheel={(event) => {
+            // A bare wheel belongs to the page; the canvas only takes it with the zoom modifier.
+            if (!event.ctrlKey && !event.metaKey) return;
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            const px = event.clientX - rect.left;
+            const py = event.clientY - rect.top;
+            const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+            const next = Math.min(2.4, Math.max(0.6, zoom * factor));
+            const ratio = next / zoom;
+            setPan((p) => ({ x: px - (px - p.x) * ratio, y: py - (py - p.y) * ratio }));
+            setZoom(next);
+          }}
+          onPointerLeave={() => { drag.current = null; setPanning(false); }}
+          onDragStart={(event) => event.preventDefault()}
         >
-          <svg
-            className="pointer-events-none absolute inset-0"
-            width={layout.w}
-            height={layout.h}
-            viewBox={`0 0 ${layout.w} ${layout.h}`}
-            aria-hidden="true"
+          <div
+            className="absolute origin-top-left"
+            style={{ width: layout.w, height: layout.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
           >
-            <defs>
-              <marker
-                id="howto-arrow"
-                viewBox="0 0 10 10"
-                refX="9"
-                refY="5"
-                markerWidth="8"
-                markerHeight="8"
-                markerUnits="userSpaceOnUse"
-                orient="auto-start-reverse"
-              >
-                <path d="M0 0 L10 5 L0 10 z" fill="var(--dim)" />
-              </marker>
-            </defs>
-            <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-              {layout.links.map((link) => {
-                const off = link.k ? isOff(lit(link.k)) : false;
-                // A focused node keeps its own routes readable and lets the rest recede.
-                const dim = focus !== null && !touches(link.p, focus);
-                return (
-                  <path
-                    key={ortho(link.p)}
-                    d={ortho(link.p)}
-                    className="howto-link"
-                    stroke="var(--line)"
-                    strokeWidth={1.5}
-                    strokeOpacity={dim ? 0.4 : off ? 0.45 : 1}
-                    markerEnd={link.arrow && !off && !dim ? "url(#howto-arrow)" : undefined}
-                  />
-                );
-              })}
-              {layout.links
-                .filter((link) => !(link.k && isOff(lit(link.k))))
-                .map((link) => (
-                  <path
-                    key={`flow-${ortho(link.p)}`}
-                    d={ortho(link.p)}
-                    className="flow-line howto-link"
-                    stroke="var(--accent)"
-                    strokeWidth={1.5}
-                    // A focused node keeps its own dashes bright; the rest stay readable, just quiet.
-                    strokeOpacity={focus === null || touches(link.p, focus) ? 0.75 : 0.3}
-                  />
-                ))}
-</g>
-            {layout.captions.map((caption) => (
-              <text
-                key={caption.text}
-                x={caption.x}
-                y={caption.y}
-                textAnchor={caption.anchor ?? "start"}
-                fontSize={10}
-                fill="var(--dim)"
-                className="mono"
-              >
-                {caption.text}
-              </text>
-            ))}
-          </svg>
+            <svg
+              className="pointer-events-none absolute inset-0"
+              width={layout.w}
+              height={layout.h}
+              viewBox={`0 0 ${layout.w} ${layout.h}`}
+              aria-hidden="true"
+            >
+              <defs>
+                <marker
+                  id="howto-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="8"
+                  markerHeight="8"
+                  markerUnits="userSpaceOnUse"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M0 0 L10 5 L0 10 z" fill="var(--dim)" />
+                </marker>
+              </defs>
+              <g fill="none" strokeLinejoin="round" strokeLinecap="round">
+                {layout.links.map((link) => {
+                  const off = link.k ? isOff(lit(link.k)) : false;
+                  // A focused node keeps its own routes readable and lets the rest recede.
+                  const dim = focus !== null && !touches(link.p, focus);
+                  return (
+                    <path
+                      key={ortho(link.p)}
+                      d={ortho(link.p)}
+                      className="howto-link"
+                      stroke="var(--line)"
+                      strokeWidth={1.5}
+                      strokeOpacity={dim ? 0.4 : off ? 0.45 : 1}
+                      markerEnd={link.arrow && !off && !dim ? "url(#howto-arrow)" : undefined}
+                    />
+                  );
+                })}
+                {layout.links
+                  .filter((link) => !(link.k && isOff(lit(link.k))))
+                  .map((link) => (
+                    <path
+                      key={`flow-${ortho(link.p)}`}
+                      d={ortho(link.p)}
+                      className="flow-line howto-link"
+                      stroke="var(--accent)"
+                      strokeWidth={1.5}
+                      // A focused node keeps its own dashes bright; the rest stay readable, just quiet.
+                      strokeOpacity={focus === null || touches(link.p, focus) ? 0.75 : 0.3}
+                    />
+                  ))}
+              </g>
+              {layout.captions.map((caption) => (
+                <text
+                  key={caption.text}
+                  x={caption.x}
+                  y={caption.y}
+                  textAnchor={caption.anchor ?? "start"}
+                  fontSize={10}
+                  fill="var(--dim)"
+                  className="mono"
+                >
+                  {caption.text}
+                </text>
+              ))}
+            </svg>
 
-          {layout.nodes.map(([id, box]) => {
-            const state = stateOf(id);
-            return (
-              <NodeButton
-                key={id}
-                box={box}
-                off={isNodeOff(id)}
-                selected={selected === id}
-                dashed={false}
-                label={`${titleOf(id)}, ${state.label}`.replace(/, $/, "")}
-                onSelect={() => { setSelected((open) => (open === id ? null : id)); setConfirming(null); }}
-                onHover={(on) => setHovered(on ? id : null)}
-              >
-                {body(id)}
-              </NodeButton>
-            );
-          })}
-        </div>
+            {layout.nodes.map(([id, box]) => {
+              const state = nodeState(id, modes, hostState);
+              return (
+                <NodeButton
+                  key={id}
+                  box={box}
+                  off={isNodeOff(id)}
+                  selected={selected === id}
+                  label={`${nodeTitle(id)}, ${state.label}`.replace(/, $/, "")}
+                  onSelect={() => toggleNode(id)}
+                  onHover={(on) => setHovered(on ? id : null)}
+                >
+                  {body(id)}
+                </NodeButton>
+              );
+            })}
+          </div>
 
-        <div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
-          <button
-            type="button"
-            onClick={() => zoomBy(1 / 1.2)}
-            aria-label="Zoom out"
-            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
-          >
-            <Icon name="zoom-out" className="size-3.5" />
-          </button>
-          <span className="mono w-9 text-center text-[10px] text-dim">{Math.round(zoom * 100)}%</span>
-          <button
-            type="button"
-            onClick={() => zoomBy(1.2)}
-            aria-label="Zoom in"
-            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
-          >
-            <Icon name="zoom-in" className="size-3.5" />
-          </button>
-          {zoomed ? (
+          <div className="absolute top-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
             <button
               type="button"
-              onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-              aria-label="Reset the view"
-              className="mono grid h-6 cursor-pointer place-items-center rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
+              onClick={() => zoomBy(1 / 1.2)}
+              aria-label="Zoom out"
+              className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
             >
-              reset
+              <Icon name="zoom-out" className="size-3.5" />
             </button>
-          ) : null}
+            <span className="mono w-9 text-center text-[10px] text-dim">{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              onClick={() => zoomBy(1.2)}
+              aria-label="Zoom in"
+              className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
+            >
+              <Icon name="zoom-in" className="size-3.5" />
+            </button>
+            {zoomed ? (
+              <button
+                type="button"
+                onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                aria-label="Reset the view"
+                className="mono grid h-6 cursor-pointer place-items-center rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
+              >
+                reset
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
-
-      {selected && selectedState && menu ? (
-        <NodeFolder
-          key={selected}
-          x={menu.left}
-          y={menu.top}
-          title={titleOf(selected)}
-          glyph={glyphOf(selected)}
-          stateLabel={selectedState.label}
-          about={ABOUT[selected] ?? ""}
-          busy={busy === selected}
-          onClose={() => setSelected(null)}
-          footer={
-            picker ? (
-              <div data-sheet className="mt-0.5 flex flex-wrap items-center gap-1.5 border-t border-line pt-1.5">
-                {picked ? (
-                  <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{selected} {picked}</code>
-                ) : null}
-                <span className="mono ml-auto text-[9px] text-dim">
-                  {selected?.startsWith("combo-") && scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
-                </span>
-              </div>
-            ) : undefined
-          }
-        >
-          {hostId ? (
-            <div data-sheet className="flex flex-wrap items-center gap-1.5">
-              {hostInstalled ? (
-                <MenuAction disabled={busy !== null} onClick={() => onHostAction(selected, "update")}>Update</MenuAction>
-              ) : (
-                <MenuAction disabled={busy !== null} onClick={() => onHostAction(selected, "install")}>Install</MenuAction>
-              )}
-              {hostInstalled ? (
-                confirming === selected ? (
-                  <MenuAction danger disabled={busy !== null} onClick={() => onHostAction(selected, "uninstall")}>Confirm uninstall</MenuAction>
-                ) : (
-                  <MenuAction disabled={busy !== null} onClick={() => setConfirming(selected)}>Uninstall</MenuAction>
-                )
-              ) : null}
-            </div>
-          ) : null}
-          {selected?.startsWith("combo-") && picker ? (
-            <div data-sheet className="flex items-center gap-1">
-              {(["all", "omp", "pi", "opencode"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-pressed={scope === s}
-                  onClick={() => setScope(s)}
-                  className={cn(
-                    "mono flex-1 cursor-pointer rounded-md border px-1 py-1 text-[9px] transition-colors",
-                    scope === s ? "border-accent bg-accent-soft text-ink" : "border-line text-dim hover:border-accent/50 hover:text-ink",
-                  )}
-                >
-                  {s === "all" ? "all agents" : s}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {picker ? (
-            picker.options.map((option) => (
-              <OptionSheet
-                key={option.id}
-                label={option.label}
-                active={current === option.id}
-                disabled={busy !== null}
-                hint={inherited && current === option.id ? "inherited" : undefined}
-                onClick={() => onSet(selected, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, selected.startsWith("combo-") && scope !== "all" ? scope : undefined)}
-              />
-            ))
-          ) : null}
-        </NodeFolder>
-      ) : null}
-      <p className="mono m-0 mt-2 text-[10px] text-dim">
-        Click a node for its options. Drag to pan, and use the controls to zoom.
-      </p>
+    {/* The fold panel lives in screen space beside the node, so its type stays crisp at any zoom. */}
+    {shown && panelAnchor ? (
+      <NodePanel
+        hostRef={panelHost}
+        modes={modes}
+        hostState={hostState}
+        node={shown}
+        busy={busy}
+        confirming={confirming}
+        onConfirm={setConfirming}
+        onSet={onSet}
+        onHostAction={onHostAction}
+        onClose={closePanel}
+        anchor={panelAnchor}
+        bounds={panelBounds}
+      />
+    ) : null}
     </div>
   );
 }
+
 
 /** The canvas's shape while the host list is still out: agent column, mode column, output. */
 function PipelineSkeleton() {
@@ -1001,6 +1303,7 @@ function PipelineSkeleton() {
   );
 }
 
+
 /** An exported file has no server, so a failed read leaves the hosts unknown and every node lit. */
 function readHosts(): Promise<Array<{ id: string; installed: boolean }> | null> {
   return fetch("/api/hosts")
@@ -1017,6 +1320,8 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   const missingHosts = HOSTS.filter((host) => hostState.installed[host.id] === false);
   const [hostsLoaded, setHostsLoaded] = useState(false);
   const pipelinePending = usePending(!hostsLoaded);
+  // The pipeline card carries both views: the interactive canvas, and the agent list beside it.
+  const [pipelineView, setPipelineView] = useState<"canvas" | "agents">("canvas");
 
   useEffect(() => {
     void readHosts()
@@ -1116,59 +1421,53 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
       <Card
         title="The pipeline"
         icon="workflow"
-        description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled — click a node to switch it."
+        description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled. Click a node to switch it."
         actions={
-          missingHosts.length > 0 ? (
-            <div className="relative">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen((open) => !open)}>
-                <Icon name="plus" className="size-3.5" />
-                Add agent
-              </Button>
-              {addOpen ? (
-                <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-xl border border-line bg-panel p-2 shadow-xl">
-                  <p className="mono m-0 px-1 pb-1 text-[9px] text-dim">Installs the Tersio tree for this agent</p>
-                  {missingHosts.map((host) => (
-                    <div key={host.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-track/60">
-                      <AgentLogo host={host.id} className="size-3.5 shrink-0" />
-                      <span className="truncate text-[11px]">{host.label}</span>
-                      <button
-                        type="button"
-                        disabled={busy !== null}
-                        onClick={() => { setAddOpen(false); hostAction(`host-${host.id}`, "install"); }}
-                        className="mono ml-auto cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
-                      >
-                        Install
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            <Segmented
+              label="Pipeline view"
+              value={pipelineView}
+              options={[
+                { value: "canvas", label: "Canvas", title: "The interactive pipeline" },
+                { value: "agents", label: "Modes", title: "Every agent and the mode defaults it can turn on" },
+              ]}
+              onChange={setPipelineView}
+            />
+            {missingHosts.length > 0 ? (
+              <div className="relative">
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen((open) => !open)}>
+                  <Icon name="plus" className="size-3.5" />
+                  Add agent
+                </Button>
+                {addOpen ? (
+                  <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-xl border border-line bg-panel p-2 shadow-xl">
+                    <p className="mono m-0 px-1 pb-1 text-[9px] text-dim">Installs the Tersio tree for this agent</p>
+                    {missingHosts.map((host) => (
+                      <div key={host.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-track/60">
+                        <AgentLogo host={host.id} className="size-3.5 shrink-0" />
+                        <span className="truncate text-[11px]">{host.label}</span>
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => { setAddOpen(false); hostAction(`host-${host.id}`, "install"); }}
+                          className="mono ml-auto cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+                        >
+                          Install
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         }
       >
-        {pipelinePending ? <PipelineSkeleton /> : (
+        {pipelinePending ? <PipelineSkeleton /> : pipelineView === "canvas" ? (
           <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
+        ) : (
+          <AgentsAccordion hostState={hostState} onSaved={onModesChanged} />
         )}
-      </Card>
-
-      <Card title="Start here" icon="list-ordered" description="Four steps from a fresh machine to a session that reports itself.">
-        <ol className="m-0 grid list-none gap-2 p-0 md:grid-cols-2">
-          {STEPS.map((step, i) => (
-            <li key={step.title} className="grid gap-1 rounded-xl border border-line px-3 py-2.5">
-              <span className="flex items-center gap-2">
-                <span className="mono grid size-5 shrink-0 place-items-center rounded-full border border-line text-[10px] text-dim">
-                  {i + 1}
-                </span>
-                <span className="text-[13px] font-semibold">{step.title}</span>
-              </span>
-              <span className="text-[11px] leading-relaxed text-dim">{step.body}</span>
-              <code className="mono mt-0.5 block truncate rounded bg-track/40 px-2 py-1 text-[10px] text-ink">
-                {step.command}
-              </code>
-            </li>
-          ))}
-        </ol>
       </Card>
     </Page>
   );
