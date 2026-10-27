@@ -494,7 +494,10 @@ export function PipelineCanvas({
   // The fold panel anchors to the shown node in screen space and flips above when the space below runs out.
   const shownBox = shown ? layout.nodes.find(([id]) => id === shown)?.[1] ?? null : null;
   const panelAnchor = shownBox ? { x: shownBox.x * scale + pan.x, y: shownBox.y * scale + pan.y, w: shownBox.w * scale, h: shownBox.h * scale } : null;
-  const panelBounds = { w: containerW, h: Math.round(layout.h * fit) };
+  // While a node is open the canvas keeps a working height, so the fold unfolds with room instead of
+  // collapsing into a sliver; at rest the strip stays as short as the row needs.
+  const canvasH = Math.max(layout.h * fit, shown !== null ? 460 : 0);
+  const panelBounds = { w: containerW, h: Math.round(canvasH) };
   return (
     <div className="relative min-w-0" style={{ perspective: "900px" }}>
         <div
@@ -506,7 +509,7 @@ export function PipelineCanvas({
             "relative touch-none overflow-hidden rounded-lg border border-line select-none",
             "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
           )}
-          style={{ height: layout.h * fit, cursor: panning ? "grabbing" : "grab" }}
+          style={{ height: canvasH, cursor: panning ? "grabbing" : "grab" }}
           onPointerDown={(event) => {
             const target = event.target as HTMLElement;
             if (target.closest("button") || target.closest("[data-node-panel]")) return;
