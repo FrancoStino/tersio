@@ -682,7 +682,7 @@ export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): P
 }
 
 /** Routes one installed agent through the gateway, or undoes it. The server auto-starts the proxy. */
-export async function postHeadroomRoute(host: "omp" | "pi" | "opencode", action: "route-host" | "unroute-host"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
+export async function postHeadroomRoute(host: "omp" | "pi" | "pig" | "opencode", action: "route-host" | "unroute-host"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
   try {
     const r = await fetch("/api/headroom/route", {
       method: "POST",
@@ -732,6 +732,9 @@ export interface HealthReport {
   piPath: string | null;
   /** Config root, e.g. ~/.pi */
   piDir: string | null;
+  pig: string | null;
+  pigPath: string | null;
+  pigDir: string | null;
   opencode: string | null;
   opencodePath: string | null;
   /** Config root, e.g. ~/.config/opencode */

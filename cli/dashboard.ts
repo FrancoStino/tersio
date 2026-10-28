@@ -282,6 +282,10 @@ function piPath(): string | null {
   return binOnPath('pi');
 }
 
+function pigPath(): string | null {
+  return binOnPath('pig');
+}
+
 function opencodePath(): string | null {
   return binOnPath('opencode');
 }
@@ -339,10 +343,12 @@ function healthJson(): string {
   const headroomPresent = headroomBin !== null;
   const detectedOmpPath = ompPath();
   const detectedPiPath = piPath();
+  const detectedPigPath = pigPath();
   const detectedOpencodePath = opencodePath();
-  const agentDir = (id: 'omp' | 'pi' | 'opencode'): string | null => {
+  const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
     if (id === 'omp') return path.join(homeDir(), '.omp');
     if (id === 'pi') return path.join(homeDir(), '.pi');
+    if (id === 'pig') return path.join(homeDir(), '.pig');
     return path.join(homeDir(), '.config', 'opencode');
   };
   return JSON.stringify({
@@ -355,6 +361,9 @@ function healthJson(): string {
     pi: agentVersion(detectedPiPath),
     piPath: detectedPiPath,
     piDir: agentDir('pi'),
+    pig: agentVersion(detectedPigPath),
+    pigPath: detectedPigPath,
+    pigDir: agentDir('pig'),
     opencode: agentVersion(detectedOpencodePath),
     opencodePath: detectedOpencodePath,
     opencodeDir: agentDir('opencode'),

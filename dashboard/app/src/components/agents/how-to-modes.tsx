@@ -16,7 +16,7 @@ import type { DefaultsPayload, HostState } from "./pipeline-model";
  * The session-start defaults for one agent's own section, which wins over the shared store it
  * inherits from. Rows read the section first and mark what is inherited.
  */
-function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode"; onSaved: () => void }) {
+function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "pig" | "opencode"; onSaved: () => void }) {
   const toast = useToast();
   const [current, setCurrent] = useState<DefaultsPayload>(OFF_DEFAULTS);
   const [loaded, setLoaded] = useState(false);
@@ -151,7 +151,7 @@ export function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; 
       })
       .finally(() => setProxyBusy(false));
   };
-  const toggleRoute = (host: "omp" | "pi" | "opencode"): void => {
+  const toggleRoute = (host: "omp" | "pi" | "pig" | "opencode"): void => {
     setRouteBusy(host);
     setProxyDetail(null);
     const routed = (proxy?.routed ?? []).includes(host);
@@ -224,7 +224,7 @@ export function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; 
                     <button
                       type="button"
                       disabled={routeBusy !== null}
-                      onClick={() => toggleRoute(h.id as "omp" | "pi" | "opencode")}
+                      onClick={() => toggleRoute(h.id as "omp" | "pi" | "pig" | "opencode")}
                       className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
                     >
                       {routeBusy === h.id ? "working" : routed ? "unroute" : "route"}

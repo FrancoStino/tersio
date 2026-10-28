@@ -7,7 +7,7 @@ export type Point = readonly [number, number];
 export const MODE_KEYS = ["caveman", "pstack", "rtk", "ponytail"] as const;
 export type ModeKey = (typeof MODE_KEYS)[number];
 
-export type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "headroom" | ModeKey | `${ModeKey}-${string}`;
+export type EdgeKey = "hosts" | "omp" | "pi" | "pig" | "opencode" | "combo" | "headroom" | ModeKey | `${ModeKey}-${string}`;
 
 export type HostAction = "install" | "uninstall" | "update";
 
@@ -156,14 +156,15 @@ export function ortho(points: ReadonlyArray<Point>, radius = 8): string {
 export function versionOf(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const tail = raw.split("/").pop() ?? raw;
-  const version = tail.replace(/^(omp|pi|opencode)\s+/i, "").trim();
+  const version = tail.replace(/^(omp|pi|pig|opencode)\s+/i, "").trim();
   return version || null;
 }
 
-/** The three hosts, in the order the installer writes them. */
+/** The hosts, in the order the installer writes them. */
 export const HOSTS = [
   { id: "omp", label: "Oh My Pi" },
   { id: "pi", label: "pi" },
+  { id: "pig", label: "PiG" },
   { id: "opencode", label: "OpenCode" },
 ] as const;
 
@@ -279,6 +280,7 @@ export const OFF_DEFAULTS: DefaultsPayload = {
 export const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
+  "host-pig": "PiG loads the same tree from its own agent directory, the way pi does.",
   "host-opencode": "OpenCode loads the tree as one plugin, registered in opencode.json.",
   combo: "One preset per agent: scope it to all agents, or give one agent its own. A host's own section wins over the shared default.",
   caveman: "Voice. Terse replies; code, commands, paths, and errors stay exact.",
@@ -377,7 +379,7 @@ export function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostStat
 }
 
 /** What the node's control reads right now, in the scope the node itself stands for. */
-export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "opencode", modes: ModeState | null): string | null {
+export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "pig" | "opencode", modes: ModeState | null): string | null {
   const lane = laneBlockOf(id);
   if (lane) {
     if (!modes) return null;

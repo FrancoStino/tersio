@@ -45,7 +45,7 @@ export function readPluginSettings(): Record<string, unknown> {
 }
 
 /** Which agent a session runs on; the settings readers scope the per-host layer with it. */
-export type HostScope = 'omp' | 'pi' | 'opencode';
+export type HostScope = 'omp' | 'pi' | 'pig' | 'opencode';
 
 /** The `hosts.<id>` section of the store, or nothing: the flat keys stay the shared fallback. */
 function hostDefaults(host?: HostScope | null): Record<string, unknown> {

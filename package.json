@@ -28,14 +28,14 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/caveman/index.ts",
-      "./extensions/pstack/index.ts",
-      "./extensions/headroom/index.ts",
+      "./extensions/caveman/caveman.ts",
+      "./extensions/pstack/pstack.ts",
+      "./extensions/headroom/headroom.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
-      "./extensions/timing/index.ts",
-      "./extensions/combo/index.ts",
-      "./extensions/commands/index.ts"
+      "./extensions/timing/timing.ts",
+      "./extensions/combo/combo.ts",
+      "./extensions/commands/commands.ts"
     ],
     "skills": [
       "./extensions/ponytail/skills"

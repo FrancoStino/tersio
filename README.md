@@ -55,10 +55,11 @@ irm https://github.com/KurutoDenzeru/tersio/releases/latest/download/install.ps1
 Then run the CLI. Bare `tersio` opens a menu and asks which agent to install into:
 
 ```bash
-tersio                      # menu — picks Oh My Pi, pi, or OpenCode
+tersio                      # menu — picks Oh My Pi, pi, OpenCode, or Pi-in-go
 tersio install --host pi    # pi, non-interactive
 tersio install --host omp   # Oh My Pi, non-interactive
 tersio install --host opencode  # OpenCode, non-interactive
+tersio install --host pig   # Pi-in-go (PiG), non-interactive
 ```
 
 Or let each host install the package itself:
@@ -67,6 +68,7 @@ Or let each host install the package itself:
 omp plugin install @krtclcdy/tersio
 pi install npm:@krtclcdy/tersio
 opencode plugin add @krtclcdy/tersio
+pig install npm:@krtclcdy/tersio
 ```
 
 Pick one install method per host, not both. Using both registers every command twice.
@@ -83,7 +85,7 @@ npm exec --yes --prefer-online --package=@krtclcdy/tersio@latest -- tersio insta
 
 | Need | Detail |
 |---|---|
-| Host | [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), or [OpenCode](https://opencode.ai) — `tersio install --host <omp\|pi\|opencode>` |
+| Host | [OMP](https://github.com/can1357/oh-my-pi), [pi](https://github.com/earendil-works/pi), [OpenCode](https://opencode.ai), or [PiG](https://pi-in-go.dev) — `tersio install --host <omp\|pi\|opencode\|pig>` |
 | Node.js | 20.12+ with npm. The CLI runs under Node |
 | Bun | Optional. Preferred when on PATH, npm otherwise; also supplies SQLite in process |
 | SQLite | Bun, Node 22.5+ `node:sqlite`, or the `sqlite3` binary on PATH |

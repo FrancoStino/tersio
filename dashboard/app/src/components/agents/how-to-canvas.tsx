@@ -131,7 +131,7 @@ function NodePanel({
   busy: NodeId | null;
   confirming: NodeId | null;
   onConfirm: (node: NodeId | null) => void;
-  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode") => void;
+  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "pig" | "opencode") => void;
   onHostAction: (node: NodeId, action: HostAction) => void;
   onClose: () => void;
   anchor: { x: number; y: number; w: number; h: number };
@@ -202,7 +202,7 @@ function NodePanel({
   const pickerKey = node.startsWith("combo-") ? "combo" : (lane ? lane.block : node);
   const picker = pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
   // A per-agent node IS the scope: the panel writes that agent's section and nothing else.
-  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "opencode") : (lane ? (lane.host as "omp" | "pi" | "opencode") : "all");
+  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "pig" | "opencode") : (lane ? (lane.host as "omp" | "pi" | "pig" | "opencode") : "all");
   const current = nodeValue(node, scope, modes);
   // A host scope without its own section inherits the shared value, so the row says so.
   const inherited = node.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
@@ -404,7 +404,7 @@ export function PipelineCanvas({
 }: {
   modes: ModeState | null;
   hostState: HostState;
-  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode") => void;
+  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "pig" | "opencode") => void;
   onHostAction: (node: NodeId, action: HostAction) => void;
   busy: NodeId | null;
 }) {

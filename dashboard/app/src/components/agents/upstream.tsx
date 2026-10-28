@@ -86,7 +86,7 @@ interface HistoryPoint {
 /** The glyph each port carries everywhere else in the project. */
 const GLYPH: Record<string, string> = { Caveman: "🪨", RTK: "🗜️", Ponytail: "🧠", pstack: "🥔", Headroom: "🍃" };
 
-const AGENT_NAME: Record<string, string> = { omp: "Oh My Pi", pi: "pi", opencode: "OpenCode" };
+const AGENT_NAME: Record<string, string> = { omp: "Oh My Pi", pi: "pi", pig: "PiG", opencode: "OpenCode" };
 
 /** The name a row shows: the installed agents first, then the ones still to come. */
 function agentLabel(host: string): string {

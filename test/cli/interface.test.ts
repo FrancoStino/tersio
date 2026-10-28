@@ -230,6 +230,14 @@ function seedPiPackage(home: string, version = "2.23.0"): void {
   writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ packages: [`npm:@krtclcdy/tersio@${version}`] }), "utf8");
 }
 
+function seedPigPackage(home: string, version = "2.23.0"): void {
+  const agent = path.join(home, ".pig", "agent");
+  const pkg = path.join(agent, "npm", "node_modules", "@krtclcdy", "tersio");
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version }), "utf8");
+  writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ packages: [`npm:@krtclcdy/tersio@${version}`] }), "utf8");
+}
+
 function run(home: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [cli, ...args], {
     cwd: root,
@@ -263,6 +271,20 @@ test("detectHosts reports the pi install under its own agent dir", () => {
   }
 });
 
+test("detectHosts reports the pig install under its own agent dir", () => {
+  const home = tempHome();
+  try {
+    seedPigPackage(home, "9.9.9");
+    const agentDir = path.join(home, ".pig", "agent");
+    const pig = detectHosts(undefined, agentDir).find((h) => h.id === "pig") as HostEntry;
+    expect(pig.installed).toBe(true);
+    expect(pig.version).toBe("9.9.9");
+    expect(pig.installCmd).toBe("pig install npm:@krtclcdy/tersio");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("install --host pi writes the pi tree and no OMP files", () => {
   const home = tempHome();
   try {
@@ -278,6 +300,24 @@ test("install --host pi writes the pi tree and no OMP files", () => {
     expect(result.stdout).toMatch(/\[dry-run\] would write session defaults to .*\.tersio[\\/]settings\.json/);
     expect(result.stdout, "OMP extension tree must stay untouched").not.toMatch(/\.omp[\\/]agent[\\/]extensions/);
     expect(result.stdout).toMatch(/Done — restart pi/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("install --host pig writes the pig tree and no OMP files", () => {
+  const home = tempHome();
+  try {
+    const result = run(home, ["install", "--host", "pig", "--dry-run", "--verbose"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pig[\\/]agent[\\/]extensions[\\/]caveman[\\/]index\.ts/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pig[\\/]agent[\\/]extensions[\\/]pstack[\\/]rule\.md/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pig[\\/]agent[\\/]extensions[\\/]rtk[\\/]session\.ts/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pig[\\/]agent[\\/]extensions[\\/]rtk[\\/]package\.json/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write .*\.pig[\\/]agent[\\/]extensions[\\/]shared[\\/]session-state\.ts/);
+    expect(result.stdout).toMatch(/\[dry-run\] would write session defaults to .*\.tersio[\\/]settings\.json/);
+    expect(result.stdout, "OMP extension tree must stay untouched").not.toMatch(/\.omp[\\/]agent[\\/]extensions/);
+    expect(result.stdout).toMatch(/Done — restart PiG/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -400,6 +440,26 @@ test("uninstall --host pi clears the pi tree, the package, and the shared defaul
     // Ponytail now lives in a local package dir we wrote, not in pi's skills dir.
     expect(result.stdout).toMatch(/\[dry-run\] would run: pi remove npm:@dietrichgebert\/ponytail/);
     expect(result.stdout).toMatch(/\.pi[\\/]agent[\\/]ponytail \(local Ponytail package\)/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("uninstall --host pig clears the pig tree, the package, and the shared defaults", () => {
+  const home = tempHome();
+  try {
+    seedPigPackage(home);
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({ comboDefault: "balanced" }), "utf8");
+    const result = run(home, ["uninstall", "--host", "pig", "--dry-run"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/\[dry-run\] would run: pig remove npm:@krtclcdy\/tersio/);
+    expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.pig[\\/]agent[\\/]extensions[\\/]caveman\b/);
+    expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.pig[\\/]agent[\\/]extensions[\\/]pstack\b/);
+    expect(result.stdout).toMatch(/\[dry-run\] would remove .*\.tersio[\\/]settings\.json/);
+    expect(result.stdout, "OMP targets stay out of a pig uninstall").not.toMatch(/\.omp[\\/]agent[\\/]extensions/);
+    expect(result.stdout).toMatch(/\[dry-run\] would run: pig remove npm:@dietrichgebert\/ponytail/);
+    expect(result.stdout).toMatch(/\.pig[\\/]agent[\\/]ponytail \(local Ponytail package\)/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

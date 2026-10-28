@@ -206,6 +206,23 @@ export function piAgentDir(): string {
   return isPiProcess() && override ? override : path.join(homeDir(), '.pi', 'agent');
 }
 
+export function isPigProcess(): boolean {
+  return process.env.AI_AGENT === 'pig' || process.env.PIG_CODING_AGENT === 'true';
+}
+
+export function pigAgentDir(): string {
+  if (process.env.PIG_USE_PI_DIRS === '1') return piAgentDir();
+  const override = process.env.PIG_CODING_AGENT_DIR;
+  if (override) return override;
+  const pigHome = process.env.PIG_HOME;
+  if (pigHome) return path.join(pigHome, 'agent');
+  return path.join(homeDir(), '.pig', 'agent');
+}
+
+export function isPiLikeProcess(): boolean {
+  return isPiProcess() || isPigProcess();
+}
+
 export function httpsGet(url: string, opts: HttpOptions = {}): Promise<string> {
   const { promise, resolve, reject } = withResolvers<string>();
   const maxRedirects = opts.maxRedirects ?? 5;

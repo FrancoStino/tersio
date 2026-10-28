@@ -8,14 +8,14 @@ import {
   BUN_BIN_DIR, OMP_BIN,
   execP, parseJsonObject, relTime, shimCommand,
 } from './common.ts';
-import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, piTersioSource } from './hosts.ts';
+import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, pigPonytailPackageDir, piTersioSource, pigTersioSource } from './hosts.ts';
 import type { DetectedHost } from './hosts.ts';
 import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
-import { fetchJson, piAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { fetchJson, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
@@ -75,6 +75,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // Only hosts with their own copy are compared: omp's copy is the reference. Paths hang off the package root.
   const ponytailLoads: Record<string, { dir: string; files: readonly string[] }> = {
     pi: { dir: piPonytailPackageDir(piAgentDir()), files: PI_PONYTAIL_FILES },
+    pig: { dir: pigPonytailPackageDir(pigAgentDir()), files: PI_PONYTAIL_FILES },
     opencode: { dir: path.join(hostExtensionsDir('opencode'), 'ponytail-bundle'), files: PONYTAIL_BUNDLE_FILES },
   };
   // One hook cannot stand for the set: 5.1 and 5.2 ship the same instructions file and differ inside a skill.

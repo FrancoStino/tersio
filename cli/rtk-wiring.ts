@@ -3,7 +3,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { shimCommand } from '../extensions/shared/utils.ts';
+import { piAgentDir, pigAgentDir, shimCommand } from '../extensions/shared/utils.ts';
 export interface WiringOptions {
   dryRun?: boolean;
   quiet?: boolean;
@@ -71,6 +71,25 @@ export async function wireRtkOpencode(rtkBin: string, options: WiringOptions = {
 
 export async function wireRtkPi(rtkBin: string, options: WiringOptions = {}): Promise<boolean> {
   return runWire(rtkBin, { host: 'pi', mechanism: 'bash tool_call', initArgs: ['init', '-g', '--agent', 'pi'], hint: 'rtk init -g --agent pi' }, options);
+}
+
+export async function wireRtkPig(rtkBin: string, options: WiringOptions = {}): Promise<boolean> {
+  const ok = await runWire(rtkBin, { host: 'pi', mechanism: 'bash tool_call', initArgs: ['init', '-g', '--agent', 'pi'], hint: 'rtk init -g --agent pi' }, options);
+  if (!ok) return false;
+  if (!options.dryRun) {
+    const piHook = path.join(piAgentDir(), 'extensions', 'rtk.ts');
+    const pigExtDir = path.join(pigAgentDir(), 'extensions');
+    const pigHook = path.join(pigExtDir, 'rtk.ts');
+    try {
+      if (existsSync(piHook)) {
+        await fs.mkdir(pigExtDir, { recursive: true });
+        await fs.copyFile(piHook, pigHook);
+      }
+    } catch (e) {
+      console.log(`  [warn] could not copy rtk hook to pig: ${(e as Error).message}`);
+    }
+  }
+  return true;
 }
 
 // The rtk.ts path rtk init writes (OMP_AGENT_DIR inlined; see header note).

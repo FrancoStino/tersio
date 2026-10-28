@@ -18,6 +18,7 @@ import { HOSTS, readHosts, versionOf } from "./pipeline-model";
 import type { HostAction, HostState, NodeId } from "./pipeline-model";
 
 
+
 export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; onModesChanged: () => void }) {
   const toast = useToast();
   const [hostState, setHostState] = useState<HostState>({ installed: {}, versions: {} });
@@ -47,7 +48,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     });
   }, []);
 
-  const save = (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "opencode"): void => {
+  const save = (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "pig" | "opencode"): void => {
     setBusy(node);
     void fetch("/settings", {
       method: "POST",
@@ -100,7 +101,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
               });
               void fetchHealth().then((report) => {
                 if (!report) return;
-                const version = versionOf(report[host as "omp" | "pi" | "opencode"]);
+                const version = versionOf(report[host as "omp" | "pi" | "pig" | "opencode"]);
                 if (version) setHostState((s) => ({ ...s, versions: { ...s.versions, [host]: version } }));
               });
               if (job?.code === 0) {
@@ -124,7 +125,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     <Page>
       <PageHeader
         title="Quick start"
-        description="One package, three agents, five modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
+        description="One package, four agents, five modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
       />
 
       <Card
