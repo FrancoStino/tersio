@@ -30,25 +30,25 @@ import {
   readRtkDefault,
   saveComboSetup,
 } from '../shared/plugin-settings.ts';
-import { isPiProcess, piAgentDir } from '../shared/utils.ts';
+import { isPiLikeProcess, pigAgentDir, piAgentDir } from '../shared/utils.ts';
 import type { ComboState, ExtensionApi, ExtensionCtx, SystemPromptEvent } from '../shared/types.ts';
 
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-/** Whether pi declares an upstream Ponytail; read per call so a mid-session settings.json change lands. */
+/** Whether pi or pig declares an upstream Ponytail; read per call so a mid-session settings.json change lands. */
 function piHasUpstreamPonytail(): boolean {
-  const agentDir = piAgentDir();
-  const localEntry = path.join(agentDir, 'ponytail', 'pi-extension', 'index.js');
-  if (existsSync(localEntry)) return true;
-  try {
-    const raw = readFileSync(path.join(agentDir, 'settings.json'), 'utf8');
-    const settings = JSON.parse(raw) as { packages?: unknown };
-    const list = Array.isArray(settings.packages) ? settings.packages : [];
-    // An npm spec names the package; the installer's local copy is a bare `.../ponytail` dir.
-    return list.some((p) => typeof p === 'string' && /ponytail/.test(p));
-  } catch {
-    return false;
+  for (const agentDir of [piAgentDir(), pigAgentDir()]) {
+    const localEntry = path.join(agentDir, 'ponytail', 'pi-extension', 'index.js');
+    if (existsSync(localEntry)) return true;
+    try {
+      const raw = readFileSync(path.join(agentDir, 'settings.json'), 'utf8');
+      const settings = JSON.parse(raw) as { packages?: unknown };
+      const list = Array.isArray(settings.packages) ? settings.packages : [];
+      // An npm spec names the package; the installer's local copy is a bare `.../ponytail` dir.
+      if (list.some((p) => typeof p === 'string' && /ponytail/.test(p))) return true;
+    } catch { /* continue checking next agent dir */ }
   }
+  return false;
 }
 
 // Each level's own rule, quoted from the installed Ponytail so a host that cannot resolve the package still gets the right register: `lite` builds what was asked and offers the smaller option, and only `ultra` questions the request.
@@ -180,7 +180,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
   });
 
   // Upstream owns /ponytail on pi; this tree registers it only where nothing else does.
-  if (!(isPiProcess() && piHasUpstreamPonytail())) pi.registerCommand?.('ponytail', {
+  if (!(isPiLikeProcess() && piHasUpstreamPonytail())) pi.registerCommand?.('ponytail', {
     description: 'Switch Ponytail intensity (off|lite|full|ultra). Usage: /ponytail [level|status]',
     handler: async (args, ctx) => {
       listen(ctx);
@@ -254,7 +254,7 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     // Shared state, with no marker check: the marker is a sentence copied out of the host binary, so matching on it would drop Ponytail after a host reworded the line.
     const mode = getSharedComboState().ponytail;
     // On pi, an installed upstream pi-extension is the sole injector, so Tersio only falls back with none.
-    if (isPiProcess() && piHasUpstreamPonytail()) return;
+    if (isPiLikeProcess() && piHasUpstreamPonytail()) return;
     // Match the level's own header: a shared phrase makes every level block the rest, so a `/combo` switch does nothing.
     if (mode === 'off' || systemPromptIncludes(event.systemPrompt, `PONYTAIL MODE ACTIVE — level: ${mode}`)) return;
     const instruction = await loadPonytailInstructions(mode);
