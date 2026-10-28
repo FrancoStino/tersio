@@ -388,3 +388,15 @@ The entries below are editing and verification discipline. No test, lint rule, o
 **What happened:** `pi` exited with `Failed to load extension ".../extensions/updater/index.ts": Extension does not export a valid factory function`. The updater is a library, not an extension: it exports `runAddonUpdate` and `adaptCavemanFull` and no default factory. `commands/index.ts` imports it, so it sat in the extension tree, where pi auto-discovers every `index.ts`. OMP never hit this because it loads the explicit `omp.extensions` list, which never named the updater.
 **Root cause:** The updater was written into `extensions/updater/index.ts` and copied by `stepUpdater`, so the file's location claimed extension status while its exports did not. pi's directory scan and OMP's manifest are two different discovery rules, and only one of them reads a location as a claim.
 **Prevention rule:** A file in `<agent-dir>/extensions` is an extension on pi, whatever else it is. Libraries go in `shared/`, which is copied but never scanned. `package.json` now declares the updater feature through `commands/index.ts`, the extension that serves it, and `updater/` is in `OBSOLETE_DIRS` so a repair removes the stale tree.
+
+## 2026-10-28 — A connector was declared fixed from a screenshot instead of its coordinates
+
+**What happened:** The quick start's chain connectors visibly stopped short of the next block. I raised the stroke weight and opacity twice, and measured the gap between block boxes each time, while the real defect was the path formula: it added the blocks' width to an origin of `226` while the blocks sit at `262`, so every connector started 36px inside the previous block and ended 36px before the next.
+**Root cause:** Verification compared node positions and line styling, never the path's own endpoints against the node rectangles. The picture was the only evidence, and a picture of a misplaced line suggests weight, not arithmetic.
+**Prevention rule:** A rendered connector is verified by parsing each path's endpoints and matching them to the node rectangles that own them, not by looking at the image. `test/cli/headroom-route.test.ts` and the canvas probes now assert the numbers; when a probe matches nodes, it matches the ids the renderer emits, not a guessed label format.
+
+## 2026-10-28 — An extension shipped without a matching removal entry
+
+**What happened:** After a pi uninstall, `pi` exited with `Failed to load extension ".../extensions/headroom/index.ts": Cannot find module '../shared/session-state.ts'`. The removal deleted `shared/` but left `headroom/` and `timing/`; the OMP list was missing `pstack`, `headroom`, and `timing` too.
+**Root cause:** The install steps and the removal lists were separate literals. Adding an extension updated the writer and not the remover, so a removal could delete a dependency while keeping its importers.
+**Prevention rule:** Both hosts' removal lists derive from one `SHIPPED_TREE_DIRS` constant, and `test/cli/uninstall-parity.test.ts` scans the shipped `extensions/` directory and fails when any tree lacks a removal entry.
