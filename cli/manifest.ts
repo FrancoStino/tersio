@@ -29,6 +29,7 @@ export const TREE_PSTACK_FILES: readonly string[] = pstackTreeFiles();
 /** Every file in the tree, as paths relative to the extensions directory. */
 export const TREE_FILES: readonly string[] = [
   'shared/host.ts',
+  'shared/models-yml.ts',
   'shared/session-state.ts',
   'shared/status.ts',
   'shared/types.ts',

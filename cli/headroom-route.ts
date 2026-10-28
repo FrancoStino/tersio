@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { providerBlockRange } from '../extensions/shared/models-yml.ts';
 import { resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 
 export interface HeadroomProxyState {
@@ -59,7 +60,7 @@ export async function startHeadroomProxy(home: string, port = 8787): Promise<{ o
   const current = readHeadroomProxy(home, port);
   if (current.running) return { ok: true, detail: current.detail, proxy: current };
   try {
-    const child = spawn(bin, ['proxy', '--port', String(port)], { detached: true, stdio: 'ignore' });
+    const child = spawn(bin, ['proxy', '--port', String(port), '--mode', 'token'], { detached: true, stdio: 'ignore' });
     child.unref();
     mkdirSync(path.dirname(proxyStateFile(home)), { recursive: true });
     writeFileSync(proxyStateFile(home), `${JSON.stringify({ pid: child.pid, port, startedAt: Date.now() }, null, 2)}\n`, 'utf8');
@@ -173,17 +174,7 @@ export function ompProvidersFromYml(home: string): Array<{ provider: string; bas
   return providers;
 }
 
-/** The line range of one provider's block: from its `  name:` line up to the next sibling or root key. */
-function providerBlockRange(lines: string[], provider: string): { start: number; end: number } | null {
-  const escaped = provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const start = lines.findIndex((line) => new RegExp(`^  ${escaped}:\\s*$`).test(line));
-  if (start < 0) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^ {0,2}\S/.test(lines[i])) { end = i; break; }
-  }
-  return { start, end };
-}
+/** The line range of one provider's block comes from the shared models.yml surgery (also used by the session-start heal). */
 
 /** Sets, inserts, or removes a provider's baseUrl line, leaving every other byte of models.yml alone. */
 function setProviderBaseUrl(home: string, provider: string, value: string | null): boolean {
@@ -216,7 +207,9 @@ function gatewayBasePort(): number {
 }
 
 function spawnGateway(bin: string, port: number, target: string): number | null {
-  const child = spawn(bin, ['proxy', '--port', String(port), '--openai-api-url', target], { detached: true, stdio: 'ignore' });
+  // Token mode is headroom's savings-target profile; the agent-savings env is client-side config and
+  // stalls the proxy itself, so the flag carries the mode instead.
+  const child = spawn(bin, ['proxy', '--port', String(port), '--mode', 'token', '--openai-api-url', target], { detached: true, stdio: 'ignore' });
   child.unref();
   return child.pid ?? null;
 }

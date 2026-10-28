@@ -1,11 +1,14 @@
 // /headroom session mode: tracks the user's Headroom (headroomlabs-ai) install. Opt-in, so no preset turns it on.
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, normalizeInputCommand, normalizeMode, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
 import { injectPromptText, onHostEvent, sessionChangeEvents, setExtensionLabel } from '../shared/host.ts';
 import { announceStatus } from '../shared/status.ts';
 import { readHeadroomDefault } from '../shared/plugin-settings.ts';
+import { providerBaseUrl, setProviderBaseUrlInLines } from '../shared/models-yml.ts';
 import { hostIdOf } from '../shared/host.ts';
-import { resolveHeadroomBinary } from '../shared/utils.ts';
+import { homeDir, resolveHeadroomBinary } from '../shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
 const DEFAULT_MODE = 'off';
@@ -18,6 +21,41 @@ export function headroomInstruction(): string {
 
 function resolveMode(entries: SessionEntry[] | null | undefined, fallback: string = DEFAULT_MODE): string {
   return lastCustomValue(entries, 'headroom-mode', (data) => normalizeMode('headroom', data?.mode)) ?? fallback;
+}
+
+/**
+ * omp regenerates its models.yml and silently wipes tersio's gateway rewrite, so routed traffic drifts
+ * back to the raw upstream while the state file still claims otherwise. On session start, re-apply the
+ * recorded rewrites while the gateway is alive and the file still shows the original baseUrl — a
+ * provider the user moved elsewhere stays untouched. Returns what it healed, or null.
+ */
+export function healOmpRoute(home: string): string | null {
+  try {
+    const state = JSON.parse(readFileSync(path.join(home, '.tersio', 'headroom-routes.json'), 'utf8')) as {
+      ymlRewrites?: Array<{ provider: string; original: string; gateway: string }>;
+    };
+    const rewrites = state.ymlRewrites ?? [];
+    if (rewrites.length === 0) return null;
+    const proxy = JSON.parse(readFileSync(path.join(home, '.tersio', 'headroom-proxy.json'), 'utf8')) as { pid?: number | null };
+    if (!proxy.pid) return null;
+    try { process.kill(proxy.pid, 0); } catch { return null; }
+    const file = path.join(home, '.omp', 'agent', 'models.yml');
+    if (!existsSync(file)) return null;
+    let lines = readFileSync(file, 'utf8').split('\n');
+    const healed: string[] = [];
+    for (const rewrite of rewrites) {
+      if (providerBaseUrl(lines, rewrite.provider) !== rewrite.original) continue;
+      const next = setProviderBaseUrlInLines(lines, rewrite.provider, rewrite.gateway);
+      if (!next) continue;
+      lines = next;
+      healed.push(rewrite.provider);
+    }
+    if (healed.length === 0) return null;
+    writeFileSync(file, lines.join('\n'), 'utf8');
+    return `re-routed ${healed.join(', ')} through the gateway — omp had rewritten its models.yml`;
+  } catch {
+    return null;
+  }
 }
 
 // The shared off phrase; every mode honours it, so one word clears the session.
@@ -90,6 +128,9 @@ export default function headroomSessionExtension(pi: ExtensionApi): void {
   // Start, resume, and branch all land here, so every session type shows it.
   pi.on('session_start', async (_event, ctx) => {
     restoreMode(ctx);
+    // The route is a machine-level fact, so the heal runs regardless of this session's mode.
+    const healed = healOmpRoute(homeDir());
+    if (healed) ctx?.ui?.notify?.(`🍃 headroom: ${healed}`, 'info');
   });
 
   // The host adapter names the switch events it emits, so this stays free of any one host's naming.

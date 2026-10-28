@@ -107,7 +107,7 @@ test.skipIf(process.platform === "win32")("routing omp points the provider at it
     expect(body).toContain("id: auto/beam-free");
     expect(body).toContain("baseUrl: https://api.example.com/v2");
     const spawns = readFileSync(argvLog, "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]);
-    expect(spawns[0]).toEqual(["proxy", "--port", "18800", "--openai-api-url", "http://127.0.0.1:3425/v1"]);
+    expect(spawns[0]).toEqual(["proxy", "--port", "18800", "--mode", "token", "--openai-api-url", "http://127.0.0.1:3425/v1"]);
     expect(routedHosts(home)).toContain("omp");
   });
   expect(stopHeadroomProxy(home).ok).toBe(true);
