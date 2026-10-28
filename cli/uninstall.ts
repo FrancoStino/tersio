@@ -24,16 +24,14 @@ interface UninstallOptions {
 
 // The pi tree mirrors the OMP one. Ponytail and rtk stay: a package and a shared binary are not ours to delete.
 
-const PI_TREE_DIRS = [
-  // What an install writes now.
-  'caveman',
-  'pstack',
-  'rtk',
-  'combo',
-  'commands',
-  'shared',
-  'server.ts',
-  // Legacy: a tree an older build wrote, or a foreign name that was never shipped here.
+/**
+ * Every extension dir an install writes, shared by both hosts. A removal that misses one leaves an
+ * extension importing a shared file the same removal deleted, and the agent refuses to start.
+ */
+export const SHIPPED_TREE_DIRS = ['caveman', 'combo', 'commands', 'headroom', 'pstack', 'rtk', 'shared', 'timing'] as const;
+
+/** A tree an older build wrote, or a foreign name that was never shipped here. */
+const LEGACY_TREE_DIRS = [
   'updater',
   'caveman-session',
   'rtk-session',
@@ -42,8 +40,16 @@ const PI_TREE_DIRS = [
   'combo-toggle',
   'tersio-commands',
   'lib',
-  'opencode',
   'aaa-combo-boot',
+] as const;
+
+export const PI_TREE_DIRS = [
+  ...SHIPPED_TREE_DIRS,
+  // pi loads server.ts from the tree root; OMP never writes it there.
+  'server.ts',
+  ...LEGACY_TREE_DIRS,
+  // Foreign to the pi loader; never shipped here on purpose.
+  'opencode',
 ];
 
 // One `pi remove`, for both packages the installer adds there.
@@ -249,22 +255,9 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   const ponytailPkgDir = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail');
 
   const targets = [
-    // What an install writes now.
-    'caveman',
-    'rtk',
-    'combo',
-    'commands',
-    'shared',
-    // Legacy: a tree an older build wrote into the agent tree, or a foreign name never shipped here.
-    'updater',
-    'caveman-session',
-    'rtk-session',
-    'rtk-filter',
-    'ai-addons-updater',
-    'combo-toggle',
-    'tersio-commands',
-    'lib',
-    'aaa-combo-boot',
+    // What an install writes now: the same shipped set the pi removal covers.
+    ...SHIPPED_TREE_DIRS,
+    ...LEGACY_TREE_DIRS,
     // Foreign to the OMP loader; never shipped here on purpose.
     'opencode',
   ].map((dir) => path.join(extDir, dir));
