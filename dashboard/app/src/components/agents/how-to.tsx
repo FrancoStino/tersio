@@ -5,7 +5,10 @@ import { Card, Page, PageHeader, Segmented } from "@/components/charts";
 import { AgentLogo } from "@/components/agent-logos";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
+import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { usePending } from "@/hooks/use-pending";
+import { isFileExport } from "@/lib/data";
 import { fetchHealth } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
@@ -23,7 +26,9 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   const [addOpen, setAddOpen] = useState(false);
   const missingHosts = HOSTS.filter((host) => hostState.installed[host.id] === false);
   const [hostsLoaded, setHostsLoaded] = useState(false);
-  const pipelinePending = usePending(!hostsLoaded);
+  // An exported file has no server: /settings never answers, so the documented every-node-lit reading holds
+  // there instead of a permanent skeleton.
+  const pipelinePending = usePending(!hostsLoaded || (!isFileExport() && modes === null));
   // The pipeline card carries both views: the interactive canvas, and the agent list beside it.
   const [pipelineView, setPipelineView] = useState<"canvas" | "agents">("canvas");
 
@@ -128,16 +133,22 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
         description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled. Click a node to switch it."
         actions={
           <div className="flex items-center gap-2">
-            <Segmented
-              label="Pipeline view"
-              value={pipelineView}
-              options={[
-                { value: "canvas", label: "Canvas", title: "The interactive pipeline" },
-                { value: "agents", label: "Modes", title: "Every agent and the mode defaults it can turn on" },
-              ]}
-              onChange={setPipelineView}
-            />
-            {missingHosts.length > 0 ? (
+            {pipelinePending ? (
+              <Skeleton className="h-7 w-40 rounded-lg" aria-hidden="true" />
+            ) : (
+              <Segmented
+                label="Pipeline view"
+                value={pipelineView}
+                options={[
+                  { value: "canvas", label: "Canvas", title: "The interactive pipeline" },
+                  { value: "agents", label: "Modes", title: "Every agent and the mode defaults it can turn on" },
+                ]}
+                onChange={setPipelineView}
+              />
+            )}
+            {pipelinePending ? (
+              <Skeleton className="h-8 w-28 rounded-lg" aria-hidden="true" />
+            ) : missingHosts.length > 0 ? (
               <div className="relative">
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen((open) => !open)}>
                   <Icon name="plus" className="size-3.5" />
@@ -154,9 +165,10 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
                           type="button"
                           disabled={busy !== null}
                           onClick={() => { setAddOpen(false); hostAction(`host-${host.id}`, "install"); }}
-                          className="mono ml-auto cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+                          className="mono ml-auto flex items-center gap-1.5 cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
                         >
-                          Install
+                          {busy === `host-${host.id}` ? <Spinner className="size-3 shrink-0 text-accent" /> : null}
+                          {busy === `host-${host.id}` ? "working" : "Install"}
                         </button>
                       </div>
                     ))}

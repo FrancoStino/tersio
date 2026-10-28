@@ -22,6 +22,7 @@ import type { AgentStats, AgentToolRow, HealthReport, RtkVerbRow } from "@/lib/d
 import { AGENT_RANGE_LABEL, fetchHealth, installHeadroom } from "@/lib/data";
 import { PALETTE, fmt, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
 import { cn } from "cn";
+import { Spinner } from "@/components/ui/spinner";
 
 type CallMetric = "calls" | "errors";
 
@@ -734,7 +735,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
         actions={
           !headroomPresent && !headroom.measured ? (
             <Button size="sm" className="mono h-8 gap-1.5 rounded-xl" disabled={installing} onClick={startInstall}>
-              <Icon name={installing ? "rotate-ccw" : "download"} className="size-3.5" />
+              {installing ? <Spinner className="size-3.5" /> : <Icon name="download" className="size-3.5" />}
               <span>{installing ? "Installing Headroom" : installError ? "Retry install" : "Install Headroom"}</span>
             </Button>
           ) : undefined

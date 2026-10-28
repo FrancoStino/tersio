@@ -6,17 +6,17 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "../toaster";
 import { cn } from "cn";
-import { fetchHeadroomProxy, postHeadroomProxy } from "@/lib/data";
+import { fetchHeadroomProxy, postHeadroomProxy, postHeadroomRoute } from "@/lib/data";
 import type { HeadroomProxyReport } from "@/lib/data";
 import { DEFAULT_ROWS_UI, HOSTS, OFF_DEFAULTS } from "./pipeline-model";
 import type { DefaultsPayload, HostState } from "./pipeline-model";
 
 
 /**
- * The session-start defaults for one scope: the shared store every agent falls back to, or one
- * agent's own section, which wins over it. Rows read the section first and mark what is inherited.
+ * The session-start defaults for one agent's own section, which wins over the shared store it
+ * inherits from. Rows read the section first and mark what is inherited.
  */
-function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode" | null; onSaved: () => void }) {
+function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode"; onSaved: () => void }) {
   const toast = useToast();
   const [current, setCurrent] = useState<DefaultsPayload>(OFF_DEFAULTS);
   const [loaded, setLoaded] = useState(false);
@@ -26,12 +26,11 @@ function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode" | null;
       .then((r) => (r.ok ? r.json() : null))
       .then((d: (Partial<DefaultsPayload> & { hosts?: Record<string, Partial<Record<string, string | boolean>>> }) | null) => {
         if (!d) return;
-        const shared = d as Partial<Record<string, string | boolean>>;
-        const section: Partial<Record<string, string | boolean>> = host ? d.hosts?.[host] ?? {} : shared;
-        const pick = (key: keyof DefaultsPayload, fallback: string | boolean): string | boolean => section[key] ?? shared[key] ?? fallback;
+        const section: Partial<Record<string, string | boolean>> = d.hosts?.[host] ?? {};
+        const pick = (key: keyof DefaultsPayload, fallback: string | boolean): string | boolean => section[key] ?? (d as Partial<Record<string, string | boolean>>)[key] ?? fallback;
         setCurrent({
           comboDefault: String(pick("comboDefault", "off")),
-          comboLevel: host ? "custom" : String(d.comboLevel ?? "off"),
+          comboLevel: "custom",
           cavemanDefault: String(pick("cavemanDefault", "off")),
           rtkDefault: typeof pick("rtkDefault", false) === "boolean" ? Boolean(pick("rtkDefault", false)) : false,
           ponytailDefault: String(pick("ponytailDefault", "off")),
@@ -74,12 +73,8 @@ function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode" | null;
       {DEFAULT_ROWS_UI.map((row) => {
         const raw = current[row.field];
         const isRtk = row.field === "rtkDefault";
-        const value = row.field === "comboDefault"
-          ? (current.comboLevel && current.comboLevel !== "custom" ? current.comboLevel : current.comboDefault)
-          : isRtk ? (raw ? "on" : "off") : String(raw ?? "off");
-        // The shared store locks the three modes a live preset owns; a host section is the operator's own mix, so every row stays live.
-        const presetOn = !host && current.comboLevel !== "off" && current.comboLevel !== "custom";
-        const locked = !loaded || (presetOn && row.field !== "comboDefault" && row.field !== "pstackDefault" && row.field !== "headroomDefault");
+        const value = String(raw ?? "off");
+        const locked = !loaded;
         if (isRtk) {
           return (
             <div key={row.field} className="flex items-center justify-between gap-3">
@@ -126,24 +121,23 @@ function AgentModes({ host, onSaved }: { host: "omp" | "pi" | "opencode" | null;
           </div>
         );
       })}
-      {host ? (
-        <p className="mono m-0 text-[10px] text-dim">
-          Rows left off inherit the shared default — only what you set here belongs to {host}.
-        </p>
-      ) : null}
+      <p className="mono m-0 text-[10px] text-dim">
+        Rows left off inherit the shared default — only what you set here belongs to {host}.
+      </p>
     </div>
   );
 }
 
 /**
- * The agent list beside the canvas: one accordion item per scope, shared first. A missing agent keeps its
- * row but never opens. The shared item carries the one gateway every agent points at, so nothing here
- * rewrites an agent's own config.
+ * The agent list beside the canvas: one accordion item per agent's own defaults, plus the shared
+ * gateway. A missing agent keeps its row but never opens. The gateway is the one proxy every agent
+ * points at, so nothing here rewrites an agent's own provider config by hand.
  */
 export function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; onSaved: () => void }) {
   const [proxy, setProxy] = useState<HeadroomProxyReport | null>(null);
   const [proxyBusy, setProxyBusy] = useState(false);
   const [proxyDetail, setProxyDetail] = useState<string | null>(null);
+  const [routeBusy, setRouteBusy] = useState<string | null>(null);
   useEffect(() => {
     void fetchHeadroomProxy().then(setProxy);
   }, []);
@@ -157,21 +151,27 @@ export function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; 
       })
       .finally(() => setProxyBusy(false));
   };
+  const toggleRoute = (host: "omp" | "pi" | "opencode"): void => {
+    setRouteBusy(host);
+    setProxyDetail(null);
+    const routed = (proxy?.routed ?? []).includes(host);
+    void postHeadroomRoute(host, routed ? "unroute-host" : "route-host")
+      .then((result) => {
+        setProxyDetail(result?.detail ?? "the dashboard server did not answer");
+        void fetchHeadroomProxy().then(setProxy);
+      })
+      .finally(() => setRouteBusy(null));
+  };
   return (
     <Accordion className="gap-2.5">
       <AccordionItem value="shared" className="overflow-hidden rounded-xl border border-line bg-panel">
         <AccordionTrigger className="px-4 py-3.5 transition-colors hover:no-underline [&_[data-slot=accordion-trigger-icon]]:text-dim">
-          <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold">All agents — shared default</span>
-          <span className="mono mr-3 shrink-0 text-[9px] text-dim">fallback for every agent</span>
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-semibold">Headroom gateway</span>
+          <span className="mono mr-3 shrink-0 text-[9px] text-dim">one proxy, every agent</span>
         </AccordionTrigger>
         <AccordionContent className="px-4 pb-6 pt-1">
-          {/* One soft zone per concern: the mode rows, then the gateway. The padding is the breathing room
-              an open row needs, so the controls never sit against the card's own edges. */}
-          <div className="rounded-lg bg-track/40 p-4">
-            <AgentModes host={null} onSaved={onSaved} />
-          </div>
           {/* The gateway: one proxy, every agent, no agent config touched. */}
-          <div className="mt-3 rounded-lg bg-track/40 p-4">
+          <div className="rounded-lg bg-track/40 p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mono text-[10px] uppercase tracking-[0.12em] text-dim">gateway</span>
               <span
@@ -202,9 +202,37 @@ export function AgentsAccordion({ hostState, onSaved }: { hostState: HostState; 
               </div>
             </dl>
             <p className="m-0 mt-3.5 text-[11px] leading-relaxed text-dim">
-              Set either variable in an agent&apos;s environment and its traffic compresses. This is the one
-              wiring every agent shares, including pi.
+              Route an agent below and Tersio points its providers at the gateway — a custom upstream
+              becomes the gateway's own forwarding target. Stopping the proxy unroutes
+              everyone first. Measured savings land on the Tools page once calls flow.
             </p>
+            <div className="mt-3 grid gap-1.5">
+              {HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => {
+                const routed = (proxy?.routed ?? []).includes(h.id);
+                return (
+                  <div key={h.id} className="flex items-center gap-2 rounded-md bg-panel/60 px-2 py-1.5">
+                    <AgentLogo host={h.id} className="size-3.5 shrink-0" />
+                    <span className="truncate text-[11px] text-ink">{h.label}</span>
+                    <span
+                      className={cn(
+                        "mono rounded border px-1.5 py-0.5 text-[9px]",
+                        routed ? "border-success/40 text-success" : "border-line text-dim",
+                      )}
+                    >
+                      {routed ? "routed" : "unrouted"}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={routeBusy !== null}
+                      onClick={() => toggleRoute(h.id as "omp" | "pi" | "opencode")}
+                      className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+                    >
+                      {routeBusy === h.id ? "working" : routed ? "unroute" : "route"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
             {proxyDetail ? <p className="mono m-0 mt-2 text-[10px] text-dim">{proxyDetail}</p> : null}
           </div>
         </AccordionContent>

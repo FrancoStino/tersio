@@ -2,9 +2,12 @@
 // and the fold panel read. No JSX here, so the host surfaces stay in the component modules.
 import type { ModeState } from "./shell";
 
-
 export type Point = readonly [number, number];
-export type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "headroom" | "rtk" | "ponytail";
+
+export const MODE_KEYS = ["caveman", "pstack", "rtk", "ponytail"] as const;
+export type ModeKey = (typeof MODE_KEYS)[number];
+
+export type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "headroom" | ModeKey | `${ModeKey}-${string}`;
 
 export type HostAction = "install" | "uninstall" | "update";
 
@@ -20,12 +23,6 @@ export interface Box {
   h: number;
 }
 
-interface Link {
-  p: ReadonlyArray<Point>;
-  k?: EdgeKey;
-  arrow?: boolean;
-}
-
 export type NodeId =
   | "output"
   | "caveman"
@@ -34,7 +31,26 @@ export type NodeId =
   | "rtk"
   | "ponytail"
   | `host-${string}`
-  | `combo-${string}`;
+  | `combo-${string}`
+  | `${ModeKey}-${string}`;
+
+/** A lane block id (`caveman-omp`) names one agent's own copy of a mode block; null for every other id. */
+export function laneBlockOf(id: NodeId): { block: ModeKey; host: string } | null {
+  const cut = id.lastIndexOf("-");
+  if (cut <= 0) return null;
+  const block = id.slice(0, cut);
+  const host = id.slice(cut + 1);
+  return (MODE_KEYS as ReadonlyArray<string>).includes(block) && host !== "" ? { block: block as ModeKey, host } : null;
+}
+
+const FIELD_OF: Record<ModeKey, "cavemanDefault" | "pstackDefault" | "rtkDefault" | "ponytailDefault"> = {
+  caveman: "cavemanDefault", pstack: "pstackDefault", rtk: "rtkDefault", "ponytail": "ponytailDefault",
+};
+
+interface Link {
+  p: ReadonlyArray<Point>;
+  k?: EdgeKey;
+}
 
 interface Caption {
   x: number;
@@ -51,75 +67,74 @@ interface Layout {
   captions: readonly Caption[];
 }
 
+const BLOCK_COLUMN_H = 4 * 76 + 8;
+
 /**
- * One design space, drawn per agent: the hosts stack as host-plus-preset pairs on the left, the mode
- * blocks run as one row in injection order, and the output closes the row. The row reads left to right
- * the way the blocks append, so the canvas spends its width instead of its height. Adding an agent
- * lengthens the left stack, never the width, so the card pans and zooms instead of squeezing the nodes.
+ * One design space, one lane per agent: the host and its preset feed that agent's own row of mode
+ * blocks, and every lane closes in its own output. The blocks dim by that agent's saved defaults, so
+ * two agents with different sections draw two different flows instead of one shared pipe. Adding an
+ * agent adds a lane, so the card pans and zooms instead of squeezing the nodes. Gaps stay generous:
+ * the pair link, the block arrows, and the row wrap all need visible room to read as flow.
  */
 export function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean): Layout {
   const nodes: Array<readonly [NodeId, Box]> = [];
   const links: Link[] = [];
-  const BLOCKS: ReadonlyArray<NodeId> = ["caveman", "pstack", "headroom", "rtk", "ponytail"];
   if (compact) {
-    // Narrow card: agent and its preset stack as pairs on the left, blocks and output on the right.
+    // Narrow card: each lane stacks its pair on the left and its blocks in a column on the right.
+    // Lane pitch clears the lane's last block plus a gap, so lanes never overlap.
+    const lanePitch = BLOCK_COLUMN_H + 86;
     hosts.forEach((host, i) => {
-      const top = 20 + i * 126;
+      const laneY = 88 + i * lanePitch;
       nodes.push(
-        [`host-${host.id}` as NodeId, { x: 16, y: top, w: 190, h: 56 }],
-        [`combo-${host.id}` as NodeId, { x: 16, y: top + 62, w: 190, h: 56 }],
+        [`host-${host.id}` as NodeId, { x: 16, y: laneY, w: 190, h: 54 }],
+        [`combo-${host.id}` as NodeId, { x: 16, y: laneY + 70, w: 190, h: 54 }],
       );
-      links.push({ p: [[111, top + 56], [111, top + 62]], k: host.id as EdgeKey, arrow: true });
-      links.push({ p: [[206, top + 90], [218, top + 90], [218, 51]] , k: host.id as EdgeKey });
+      links.push({ p: [[115, laneY + 54], [115, laneY + 70]], k: host.id as EdgeKey });
+      links.push({ p: [[206, laneY + 97], [222, laneY + 97], [222, laneY + 31], [238, laneY + 31]], k: `caveman-${host.id}` as EdgeKey });
+      MODE_KEYS.forEach((block, j) => {
+        nodes.push([`${block}-${host.id}` as NodeId, { x: 238, y: laneY + j * 76, w: 210, h: 62 }]);
+        if (j > 0) links.push({ p: [[343, laneY + (j - 1) * 76 + 62], [343, laneY + j * 76]], k: `${block}-${host.id}` as EdgeKey });
+      });
     });
-    BLOCKS.forEach((block, j) => {
-      nodes.push([block, { x: 230, y: 20 + j * 76, w: 210, h: 62 }]);
-      if (j > 0) links.push({ p: [[335, 20 + (j - 1) * 76 + 62], [335, 20 + j * 76]], k: block as EdgeKey, arrow: true });
-    });
-    links.push({ p: [[218, 51], [230, 51]], k: "caveman", arrow: true });
-    nodes.push(["output", { x: 230, y: 20 + BLOCKS.length * 76 + 8, w: 210, h: 56 }]);
-    const pairBottom = hosts.length ? 20 + hosts.length * 126 + 30 : 0;
-    const blocksBottom = 20 + BLOCKS.length * 76 + 64;
+    // The one proxy sits above every lane; a quiet drop line ties it to the lanes' entry row.
+    nodes.push(["headroom", { x: 123, y: 14, w: 210, h: 54 }]);
+    if (hosts.length > 0) links.push({ p: [[228, 68], [228, 80], [343, 80], [343, 88]] });
+    const laneBottom = (i: number): number => 88 + i * lanePitch + BLOCK_COLUMN_H + 8;
     return {
       w: 456,
-      h: Math.max(pairBottom, blocksBottom) + 40,
+      h: hosts.length ? laneBottom(hosts.length - 1) + 52 : 96,
       nodes,
       links,
-      captions: [{ x: 230, y: Math.max(pairBottom, blocksBottom) + 20, text: "appended in this order, one block each" }],
+      captions: [],
     };
   }
-  // Wide card: one host-plus-preset pair per agent on the left, then the shared block row, then output.
+  // Wide card: one lane per agent — the host and its preset feed that agent's own row of mode blocks.
+  // Gaps stay generous: the pair link, the block arrows, and the trunk all need visible room to read
+  // as flow. Headroom is not a step in any flow: the one proxy sits above every lane.
   hosts.forEach((host, i) => {
-    const top = 24 + i * 124;
+    const y = 118 + i * 158;
     nodes.push(
-      [`host-${host.id}` as NodeId, { x: 20, y: top, w: 190, h: 54 }],
-      [`combo-${host.id}` as NodeId, { x: 20, y: top + 60, w: 190, h: 54 }],
+      [`host-${host.id}` as NodeId, { x: 20, y, w: 190, h: 54 }],
+      [`combo-${host.id}` as NodeId, { x: 20, y: y + 78, w: 190, h: 54 }],
     );
-    links.push({ p: [[115, top + 54], [115, top + 60]], k: host.id as EdgeKey, arrow: true });
+    links.push({ p: [[115, y + 54], [115, y + 78]], k: host.id as EdgeKey });
+    // The preset feeds this lane's first block, and the blocks chain left to right in injection order.
+    links.push({ p: [[210, y + 105], [226, y + 105], [226, y + 66], [262, y + 66]], k: `caveman-${host.id}` as EdgeKey });
+    MODE_KEYS.forEach((block, j) => {
+      nodes.push([`${block}-${host.id}` as NodeId, { x: 262 + j * 210, y: y + 37, w: 180, h: 58 }]);
+      if (j > 0) links.push({ p: [[262 + (j - 1) * 210 + 180, y + 66], [262 + j * 210, y + 66]], k: `${block}-${host.id}` as EdgeKey });
+    });
   });
-  const trunkX = 234;
-  const rowX = 250;
-  const rowY = 24;
-  hosts.forEach((host, i) => {
-    const comboY = 24 + i * 124 + 60 + 27;
-    // Every preset feeds one trunk, and the trunk enters the block row once.
-    links.push({ p: [[210, comboY], [trunkX, comboY], [trunkX, rowY + 29]], k: host.id as EdgeKey });
-  });
-  if (hosts.length > 0) links.push({ p: [[trunkX, rowY + 29], [rowX, rowY + 29]], k: "caveman", arrow: true });
-  BLOCKS.forEach((block, j) => {
-    nodes.push([block, { x: rowX + j * 214, y: rowY, w: 190, h: 58 }]);
-    if (j > 0) links.push({ p: [[rowX + (j - 1) * 214 + 190, rowY + 29], [rowX + j * 214, rowY + 29]], k: block as EdgeKey, arrow: true });
-  });
-  const outputX = rowX + BLOCKS.length * 214 + 14;
-  nodes.push(["output", { x: outputX, y: rowY, w: 200, h: 58 }]);
-  links.push({ p: [[rowX + (BLOCKS.length - 1) * 214 + 190, rowY + 29], [outputX, rowY + 29]], k: "ponytail", arrow: true });
-  const stackBottom = hosts.length > 0 ? 24 + hosts.length * 124 - 4 : rowY + 58;
+  const rowEnd = 262 + MODE_KEYS.length * 210 - 30;
+  nodes.push(["headroom", { x: rowEnd / 2 - 95, y: 12, w: 190, h: 54 }]);
+  if (hosts.length > 0) links.push({ p: [[rowEnd / 2, 66], [rowEnd / 2, 118 + 37]] });
+  const lastLaneBottom = hosts.length ? 118 + (hosts.length - 1) * 158 + 132 : 118;
   return {
-    w: outputX + 200 + 20,
-    h: Math.max(stackBottom, rowY + 58) + 62,
+    w: rowEnd + 20,
+    h: lastLaneBottom + 66,
     nodes,
     links,
-    captions: [{ x: rowX, y: Math.max(stackBottom, rowY + 58) + 26, text: "appended in this order, one block each" }],
+    captions: [],
   };
 }
 
@@ -129,23 +144,10 @@ export function ortho(points: ReadonlyArray<Point>, radius = 8): string {
   let d = `M${first[0]} ${first[1]}`;
   for (let i = 0; i < rest.length; i += 1) {
     const [x, y] = rest[i];
-    if (i === rest.length - 1) {
-      d += ` L${x} ${y}`;
-      break;
-    }
-    const [px, py] = points[i];
-    const [nx, ny] = rest[i + 1];
-    const inX = Math.sign(x - px);
-    const inY = Math.sign(y - py);
-    const outX = Math.sign(nx - x);
-    const outY = Math.sign(ny - y);
-    // A straight run has no corner to round.
-    if ((inX !== 0 && outX !== 0) || (inY !== 0 && outY !== 0)) {
-      d += ` L${x} ${y}`;
-      continue;
-    }
-    d += ` L${x - inX * radius} ${y - inY * radius}`;
-    d += ` Q${x} ${y} ${x + outX * radius} ${y + outY * radius}`;
+    const [prevX, prevY] = rest[i - 1] ?? first;
+    const cornerX = Math.abs(x - prevX) > radius ? (x > prevX ? x - radius : x + radius) : x;
+    const cornerY = Math.abs(y - prevY) > radius ? (y > prevY ? y - radius : y + radius) : y;
+    d += ` L${prevX === x ? prevX : cornerX} ${prevY === y ? prevY : cornerY} L${x} ${y}`;
   }
   return d;
 }
@@ -169,11 +171,11 @@ export const MODES = [
   { key: "caveman", glyph: "🪨", name: "caveman", role: "voice", note: "terse replies, filler gone" },
   { key: "pstack", glyph: "🥔", name: "pstack", role: "approach", note: "playbook, checks, design" },
   { key: "headroom", glyph: "🍃", name: "headroom", role: "compression", note: "compresses traffic below the shell" },
-  { key: "rtk", glyph: "🗜️", name: "rtk", role: "tooling", note: "rewrites and condenses shell" },
+  { key: "rtk", glyph: "🗜️", name: "rtk", role: "tooling", note: "rewrites and condenses shell calls" },
   { key: "ponytail", glyph: "🧠", name: "ponytail", role: "size", note: "smallest complete change" },
 ] as const;
 
-const TURN = [
+export const TURN = [
   { id: "output", icon: "arrow-right", title: "Output", note: "the turn's result" },
 ] as const;
 
@@ -195,7 +197,7 @@ export const PICKER: Record<"combo" | "caveman" | "rtk" | "ponytail" | "pstack" 
     ],
   },
   rtk: { field: "rtkDefault", options: [{ id: "off", label: "Off" }, { id: "on", label: "On" }] },
-  ponytail: {
+  "ponytail": {
     field: "ponytailDefault",
     options: [
       { id: "off", label: "Off" }, { id: "lite", label: "Lite" },
@@ -273,7 +275,7 @@ export const OFF_DEFAULTS: DefaultsPayload = {
   comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off", headroomDefault: "off",
 };
 
-/** What the folder says about a node. The per-agent preset nodes share the combo entry. */
+/** What the fold says about a node. The per-agent preset nodes share the combo entry. */
 export const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
@@ -283,8 +285,7 @@ export const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   pstack: "Approach. Picks the playbook, the checks, and the design.",
   headroom: "Compression below the shell layer. Your own Headroom install compresses tool outputs and history; Tersio tracks it and reads its savings.",
   rtk: "Tooling. Rewrites a shell command and condenses its output before the model sees it.",
-  ponytail: "Size. Caps the diff at the smallest complete change.",
-  output: "One turn, start to finish: the prompt blocks go in, the model runs, and the reply comes back.",
+  "ponytail": "Size. Caps the diff at the smallest complete change.",
 };
 
 export interface HostState {
@@ -292,8 +293,10 @@ export interface HostState {
   versions: Record<string, string | null>;
 }
 
-/** One definition of a node's live state, read by the canvas and the properties card alike. */
+/** One definition of a node's live state, read by the canvas and the fold panel alike. */
 export function edgeLit(key: EdgeKey, modes: ModeState | null, hostState: HostState): Lit {
+  const lane = laneBlockOf(key as NodeId);
+  if (lane) return nodeState(`${lane.block}-${lane.host}` as NodeId, modes, hostState).on;
   if (key === "hosts") {
     const installed = Object.values(hostState.installed);
     return installed.length ? installed.some(Boolean) : null;
@@ -312,17 +315,28 @@ export function edgeLit(key: EdgeKey, modes: ModeState | null, hostState: HostSt
 }
 
 export function nodeTitle(id: NodeId): string {
+  const lane = laneBlockOf(id);
+  if (lane) return `${MODES.find((mm) => mm.key === lane.block)?.name ?? lane.block} · ${HOSTS.find((h) => h.id === lane.host)?.label ?? lane.host}`;
   if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
   if (id.startsWith("combo-")) {
     const label = HOSTS.find((h) => `combo-${h.id}` === id)?.label ?? id.slice(6);
     return `Combo · ${label}`;
   }
-  const mode = MODES.find((m) => m.key === id);
+  const mode = MODES.find((mm) => mm.key === id);
   if (mode) return mode.name;
   return TURN.find((t) => t.id === id)?.title ?? id;
 }
 
 export function nodeState(id: NodeId, modes: ModeState | null, hostState: HostState): { label: string; on: boolean | null } {
+  const lane = laneBlockOf(id);
+  if (lane) {
+    if (!modes) return { label: "off", on: false };
+    const section = (modes.hosts?.[lane.host] ?? {}) as Partial<Record<string, string | boolean>>;
+    const shared = modes as unknown as Partial<Record<string, string | boolean>>;
+    const raw = section[FIELD_OF[lane.block]] ?? shared[FIELD_OF[lane.block]];
+    const level = lane.block === "rtk" ? (raw === true ? "on" : "off") : String(raw ?? "off");
+    return { label: level, on: level !== "off" };
+  }
   if (id.startsWith("host-")) {
     const key = id.slice(5);
     const on = edgeLit(key as EdgeKey, modes, hostState);
@@ -347,6 +361,8 @@ export function nodeState(id: NodeId, modes: ModeState | null, hostState: HostSt
 }
 
 export function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostState): boolean {
+  const lane = laneBlockOf(id);
+  if (lane) return isOff(nodeState(id, modes, hostState).on);
   if (id.startsWith("host-")) return isOff(edgeLit(id.slice(5) as EdgeKey, modes, hostState));
   if (id.startsWith("combo-")) {
     const host = id.slice(6);
@@ -362,9 +378,15 @@ export function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostStat
 
 /** What the node's control reads right now, in the scope the node itself stands for. */
 export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "opencode", modes: ModeState | null): string | null {
+  const lane = laneBlockOf(id);
+  if (lane) {
+    if (!modes) return null;
+    const section = (modes.hosts?.[lane.host] ?? {}) as Partial<Record<string, string | boolean>>;
+    const raw = section[FIELD_OF[lane.block]] ?? (modes as unknown as Partial<Record<string, string | boolean>>)[FIELD_OF[lane.block]];
+    return lane.block === "rtk" ? (raw === true ? "on" : "off") : String(raw ?? "off");
+  }
   if (!modes) return null;
   if (id.startsWith("combo-")) {
-    // A host scope shows its own preset when it has one, else the value it inherits.
     if (scope !== "all") {
       const own = modes.hosts?.[scope]?.comboDefault;
       if (typeof own === "string") return own;
@@ -377,6 +399,13 @@ export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "opencode", 
   if (id === "headroom") return modes.headroomDefault;
   if (id === "rtk") return modes.rtkDefault ? "on" : "off";
   return null;
+}
+
+export function nodeGlyph(id: NodeId): string | null {
+  if (id.startsWith("combo-")) return "🧩";
+  const lane = laneBlockOf(id);
+  if (lane) return MODES.find((mm) => mm.key === lane.block)?.glyph ?? null;
+  return MODES.find((mm) => mm.key === id)?.glyph ?? null;
 }
 
 /** An exported file has no server, so a failed read leaves the hosts unknown and every node lit. */

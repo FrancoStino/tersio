@@ -3,12 +3,15 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import type { ModeState } from "./shell";
+import { fetchHeadroomProxy, postHeadroomProxy } from "@/lib/data";
+import type { HeadroomProxyReport } from "@/lib/data";
 import { cn } from "cn";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import {
-  ABOUT, edgeLit, HOSTS, MODES, isOff, nodeOff, nodeState, nodeTitle, nodeValue, ortho,
+  ABOUT, edgeLit, laneBlockOf, HOSTS, MODES, isOff, nodeOff, nodeState, nodeTitle, nodeValue, ortho,
   pipelineLayout, PICKER, versionOf,
 } from "./pipeline-model";
 import type { Box, EdgeKey, HostAction, HostState, Lit, NodeId, Point } from "./pipeline-model";
@@ -137,6 +140,15 @@ function NodePanel({
   const panel = useRef<HTMLElement>(null);
   const WIDTH = 280;
   const GAP = 10;
+  // Which action this panel started, so the busy spinner lives on the button that began it.
+  const [running, setRunning] = useState<HostAction | null>(null);
+  useEffect(() => {
+    if (busy !== node) setRunning(null);
+  }, [busy, node]);
+  const start = (action: HostAction): void => {
+    setRunning(action);
+    onHostAction(node, action);
+  };
   // Placement first: measure the rendered panel, pick below or above the node, clamp into the canvas.
   const [place, setPlace] = useState<{ left: number; top: number; origin: "top" | "bottom" } | null>(null);
   useLayoutEffect(() => {
@@ -185,11 +197,12 @@ function NodePanel({
 
   const state = nodeState(node, modes, hostState);
   const glyph = nodeGlyph(node);
-  const about = ABOUT[node.startsWith("combo-") ? "combo" : node] ?? "";
-  const pickerKey = node.startsWith("combo-") ? "combo" : node;
+  const lane = laneBlockOf(node);
+  const about = lane ? (ABOUT[lane.block] ?? "") : (ABOUT[node.startsWith("combo-") ? "combo" : node] ?? "");
+  const pickerKey = node.startsWith("combo-") ? "combo" : (lane ? lane.block : node);
   const picker = pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
-  // A per-agent preset node IS the scope: the panel writes that agent's section and nothing else.
-  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "opencode") : "all";
+  // A per-agent node IS the scope: the panel writes that agent's section and nothing else.
+  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "opencode") : (lane ? (lane.host as "omp" | "pi" | "opencode") : "all");
   const current = nodeValue(node, scope, modes);
   // A host scope without its own section inherits the shared value, so the row says so.
   const inherited = node.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
@@ -199,6 +212,24 @@ function NodePanel({
   const hostInstalled = hostId !== null && !isOff(edgeLit(hostId as EdgeKey, modes, hostState));
   // No modes yet: a mode node's live state is unknowable, so the skeleton stands in instead of fake "off" rows.
   const pendingRows = !node.startsWith("host-") && !node.startsWith("combo-") && modes === null;
+  // The headroom node doubles as the gateway control, so the canvas carries the same start/stop as Modes.
+  const [proxy, setProxy] = useState<HeadroomProxyReport | null>(null);
+  const [proxyBusy, setProxyBusy] = useState(false);
+  useEffect(() => {
+    if (node !== "headroom") return;
+    void fetchHeadroomProxy().then(setProxy);
+  }, [node]);
+  const toggleProxy = (): void => {
+    setProxyBusy(true);
+    void postHeadroomProxy(proxy?.running ? "stop-proxy" : "start-proxy")
+      .then((result) => {
+        setProxyDetail(result?.detail ?? "the dashboard server did not answer");
+        setProxy({ ...(proxy ?? { running: false, port: 8787, pid: null, anthropicUrl: "", openaiUrl: "", detail: "", routed: [] }), ...(result ?? {}), ...(result?.routed ? { routed: result.routed } : {}) } as HeadroomProxyReport);
+        void fetchHeadroomProxy().then(setProxy);
+      })
+      .finally(() => setProxyBusy(false));
+  };
+  const [proxyDetail, setProxyDetail] = useState<string | null>(null);
 
   return (
     <div ref={hostRef} data-node-panel>
@@ -218,7 +249,11 @@ function NodePanel({
           {glyph ? <span aria-hidden="true" className="text-[12px] leading-none">{glyph}</span> : null}
           <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{nodeTitle(node)}</span>
           <span className="mono shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] leading-none text-dim">{state.label}</span>
-          {busy !== null ? <span className="mono shrink-0 text-[9px] leading-none text-accent">working</span> : null}
+          {busy !== null ? (
+            <span className="mono flex shrink-0 items-center gap-1 text-[9px] leading-none text-accent">
+              <Spinner className="size-3" /> working
+            </span>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -233,17 +268,50 @@ function NodePanel({
           {hostId ? (
             <div data-sheet className="flex flex-wrap items-center gap-1.5">
               {hostInstalled ? (
-                <MenuAction disabled={busy !== null} onClick={() => onHostAction(node, "update")}>Update</MenuAction>
+                <MenuAction disabled={busy !== null} onClick={() => start("update")}>
+                  {busy === node && running === "update" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Update"}
+                </MenuAction>
               ) : (
-                <MenuAction disabled={busy !== null} onClick={() => onHostAction(node, "install")}>Install</MenuAction>
+                <MenuAction disabled={busy !== null} onClick={() => start("install")}>
+                  {busy === node && running === "install" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Install"}
+                </MenuAction>
               )}
               {hostInstalled ? (
                 confirming === node ? (
-                  <MenuAction danger disabled={busy !== null} onClick={() => onHostAction(node, "uninstall")}>Confirm uninstall</MenuAction>
+                  <MenuAction danger disabled={busy !== null} onClick={() => start("uninstall")}>
+                    {busy === node && running === "uninstall" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Confirm uninstall"}
+                  </MenuAction>
                 ) : (
                   <MenuAction disabled={busy !== null} onClick={() => onConfirm(node)}>Uninstall</MenuAction>
                 )
               ) : null}
+            </div>
+          ) : null}
+          {node === "headroom" ? (
+            <div data-sheet className="grid gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "mono rounded border px-1.5 py-0.5 text-[10px]",
+                    proxy?.running ? "border-success/40 text-success" : "border-line text-dim",
+                  )}
+                >
+                  {proxy?.running ? `running on :${proxy.port}` : "proxy stopped"}
+                </span>
+                <button
+                  type="button"
+                  disabled={proxyBusy}
+                  onClick={toggleProxy}
+                  className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
+                >
+                  {proxyBusy ? "working" : proxy?.running ? "stop proxy" : "start proxy"}
+                </button>
+              </div>
+              <p className="m-0 text-[10px] leading-relaxed text-dim">
+                The proxy is the wiring: agents flow through it once their base URL points here. Route
+                them from the Modes view, or set the base URL in their environment.
+              </p>
+              {proxyDetail ? <p className="mono m-0 text-[10px] text-accent">{proxyDetail}</p> : null}
             </div>
           ) : null}
           {pendingRows ? (
@@ -259,7 +327,7 @@ function NodePanel({
                 active={current === option.id}
                 disabled={busy !== null}
                 hint={inherited && current === option.id ? "inherited" : undefined}
-                onClick={() => onSet(node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
+                onClick={() => onSet(lane ? (lane.block as NodeId) : node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
               />
             ))
           ) : null}
@@ -267,7 +335,7 @@ function NodePanel({
         {picker ? (
           <footer data-sheet className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
             {picked ? (
-              <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{node} {picked}</code>
+              <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{pickerKey} {picked}</code>
             ) : null}
             <span className="mono ml-auto text-[9px] text-dim">
               {scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
@@ -381,8 +449,20 @@ export function PipelineCanvas({
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === "Escape") closePanel();
     };
+    // A click outside both the canvas and the open fold closes it: the page around the card is part
+    // of the gesture, not a dead zone.
+    const closeOnOutside = (event: PointerEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-node-panel]") || boxRef.current?.contains(target)) return;
+      closePanel();
+    };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutside);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutside);
+    };
   }, [selected]);
 
   // The canvas draws at its own width and the card scales it; drag and the zoom controls reach the rest.
@@ -453,9 +533,10 @@ export function PipelineCanvas({
         </>
       );
     }
-    const mode = MODES.find((m) => m.key === id);
+    const lane = laneBlockOf(id);
+    const mode = MODES.find((m) => m.key === (lane ? lane.block : id));
     if (mode) {
-      const off = isOff(lit(mode.key));
+      const off = isNodeOff(id);
       return (
         <>
           <span className="flex items-center gap-1.5">
@@ -485,6 +566,9 @@ export function PipelineCanvas({
       </>
     );
   };
+
+  // When the card is wider than the drawn pipeline, the cluster centers instead of hugging the left edge.
+  const centerX = Math.max(0, (containerW - layout.w * scale) / 2);
 
   const zoomBy = (factor: number): void => {
     setZoom((z) => Math.min(2.4, Math.max(0.6, Number((z * factor).toFixed(2)))));
@@ -544,7 +628,7 @@ export function PipelineCanvas({
         >
           <div
             className="absolute origin-top-left"
-            style={{ width: layout.w, height: layout.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
+            style={{ width: layout.w, height: layout.h, transform: `translate(${pan.x + centerX}px, ${pan.y}px) scale(${scale})` }}
           >
             <svg
               className="pointer-events-none absolute inset-0"
@@ -553,20 +637,6 @@ export function PipelineCanvas({
               viewBox={`0 0 ${layout.w} ${layout.h}`}
               aria-hidden="true"
             >
-              <defs>
-                <marker
-                  id="howto-arrow"
-                  viewBox="0 0 10 10"
-                  refX="9"
-                  refY="5"
-                  markerWidth="8"
-                  markerHeight="8"
-                  markerUnits="userSpaceOnUse"
-                  orient="auto-start-reverse"
-                >
-                  <path d="M0 0 L10 5 L0 10 z" fill="var(--dim)" />
-                </marker>
-              </defs>
               <g fill="none" strokeLinejoin="round" strokeLinecap="round">
                 {layout.links.map((link) => {
                   const off = link.k ? isOff(lit(link.k)) : false;
@@ -577,26 +647,28 @@ export function PipelineCanvas({
                       key={ortho(link.p)}
                       d={ortho(link.p)}
                       className="howto-link"
-                      stroke="var(--line)"
-                      strokeWidth={1.5}
-                      strokeOpacity={dim ? 0.4 : off ? 0.45 : 1}
-                      markerEnd={link.arrow && !off && !dim ? "url(#howto-arrow)" : undefined}
+                      stroke="var(--dim)"
+                      strokeWidth={2.5}
+                      strokeOpacity={dim ? 0.35 : off ? 0.6 : 1}
                     />
                   );
                 })}
-                {layout.links
-                  .filter((link) => !(link.k && isOff(lit(link.k))))
-                  .map((link) => (
+                {layout.links.map((link) => {
+                  const off = link.k ? isOff(lit(link.k)) : false;
+                  const dim = focus !== null && !touches(link.p, focus);
+                  // Every connector is a network cable; traffic (the moving dash) only runs where the mode is on.
+                  return (
                     <path
                       key={`flow-${ortho(link.p)}`}
                       d={ortho(link.p)}
                       className="flow-line howto-link"
                       stroke="var(--accent)"
                       strokeWidth={1.5}
-                      // A focused node keeps its own dashes bright; the rest stay readable, just quiet.
-                      strokeOpacity={focus === null || touches(link.p, focus) ? 0.75 : 0.3}
+                      data-active={!off && !dim}
+                      strokeOpacity={off ? 0.5 : focus === null || touches(link.p, focus) ? 0.8 : 0.3}
                     />
-                  ))}
+                  );
+                })}
               </g>
               {layout.captions.map((caption) => (
                 <text
