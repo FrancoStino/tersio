@@ -27,7 +27,7 @@ import { detectHosts } from './hosts.ts';
 import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
-import { readHeadroomProxy, startHeadroomProxy, stopHeadroomProxy } from './headroom-route.ts';
+import { readHeadroomProxy, routeHost, routedHosts, startHeadroomProxy, stopHeadroomProxy, unrouteAll, unrouteHost } from './headroom-route.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
@@ -554,9 +554,16 @@ function setDiagSchedule(schedule: DiagSchedule): DoctorReport {
 
 // One field per call, validated against the same sets the CLI uses. A body with a `host` writes that
 // agent's own section, so one agent's preset never becomes every agent's.
-async function saveDefaults(body: Record<string, unknown>): Promise<
+// Writes serialize: every call re-reads the profile inside the queue, so two overlapping requests
+// (a sidebar drag racing a toggle) can never write whole profiles from stale snapshots.
+let profileWriteQueue: Promise<unknown> = Promise.resolve();
+
+function saveDefaults(body: Record<string, unknown>): Promise<
   { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
 > {
+  const run = async (): Promise<
+    { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
+  > => {
   const HOST_SCOPES = ['omp', 'pi', 'opencode'] as const;
   const hostScope = typeof body.host === 'string' && (HOST_SCOPES as readonly string[]).includes(body.host)
     ? body.host as (typeof HOST_SCOPES)[number]
@@ -650,8 +657,12 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       sidebarWidth: profile.sidebarWidth,
     },
   };
-}
+  }
 
+  const result = profileWriteQueue.then(run, run);
+  profileWriteQueue = result.catch(() => null);
+  return result;
+}
 function readDiagSchedule(): DiagSchedule {
   return diagReport()?.schedule ?? 'manual';
 }
@@ -898,7 +909,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     if (req.url === '/api/headroom/route' && req.method === 'GET') {
       const home = homeDir();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home) }));
+      res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home), routed: routedHosts(home) }));
       return;
     }
     if (req.url === '/api/headroom/route' && req.method === 'POST') {
@@ -906,15 +917,42 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       try { body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {}; } catch { body = {}; }
       const home = homeDir();
       const action = body.action;
-      if (action !== 'start-proxy' && action !== 'stop-proxy') {
+      const HOSTS = ['omp', 'pi', 'opencode'] as const;
+      const hostScope = typeof body.host === 'string' && (HOSTS as readonly string[]).includes(body.host)
+        ? body.host as (typeof HOSTS)[number]
+        : null;
+      if (action !== 'start-proxy' && action !== 'stop-proxy' && action !== 'route-host' && action !== 'unroute-host') {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
         return;
       }
-      const result = action === 'start-proxy' ? await startHeadroomProxy(home) : stopHeadroomProxy(home);
-      recordActivity('agent', `Headroom gateway ${action === 'start-proxy' ? 'started' : 'stopped'}`, result.detail.slice(0, 200), result.ok);
+      if ((action === 'route-host' || action === 'unroute-host') && !hostScope) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'route actions need a host' }));
+        return;
+      }
+      let result: { ok: boolean; detail: string };
+      if (action === 'start-proxy') {
+        result = await startHeadroomProxy(home);
+      } else if (action === 'stop-proxy') {
+        // Stopping unroutes every host first: a routed agent against a dead proxy cannot reach a model.
+        const unrouted = unrouteAll(home);
+        result = stopHeadroomProxy(home);
+        if (unrouted.length > 0) result.detail += ` — unrouted ${unrouted.join(', ')}`;
+      } else {
+        // Routing an agent starts the proxy for it: the wiring is only real when the process is live.
+        // omp manages its own gateway instances (one per upstream), so it routes without the pre-start.
+        if (hostScope !== 'omp' && !(await readHeadroomProxy(home)).running) await startHeadroomProxy(home);
+        result = action === 'route-host'
+          ? await routeHost(home, hostScope as 'omp' | 'pi', {
+              openai: (await readHeadroomProxy(home)).openaiUrl,
+              anthropic: (await readHeadroomProxy(home)).anthropicUrl,
+            })
+          : unrouteHost(home, hostScope as 'omp' | 'pi');
+      }
+      recordActivity('agent', `Headroom gateway ${action.replace('-host', '')}`, result.detail.slice(0, 200), result.ok);
       res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: result.ok, detail: result.detail, proxy: result.proxy }));
+      res.end(JSON.stringify({ ok: result.ok, detail: result.detail, proxy: readHeadroomProxy(home), routed: routedHosts(home) }));
       return;
     }
     if (req.url === '/api/headroom/install' && req.method === 'POST') {

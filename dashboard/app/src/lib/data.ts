@@ -650,6 +650,8 @@ export interface HeadroomProxyReport {
   anthropicUrl: string;
   openaiUrl: string;
   detail: string;
+  /** The hosts whose providers currently point at the gateway. */
+  routed: string[];
 }
 
 /** Reads the gateway's state: whether the proxy tersio started is live, and the URLs it serves. */
@@ -657,21 +659,38 @@ export async function fetchHeadroomProxy(): Promise<HeadroomProxyReport | null> 
   try {
     const r = await fetch("/api/headroom/route");
     if (!r.ok) return null;
-    const body = (await r.json()) as { proxy?: HeadroomProxyReport };
-    return body.proxy ?? null;
+    const body = (await r.json()) as { proxy?: Omit<HeadroomProxyReport, "routed">; routed?: string[] };
+    // The server reports the routed hosts beside the proxy state, not inside it.
+    return body.proxy ? { ...body.proxy, routed: body.routed ?? [] } : null;
   } catch {
     return null;
   }
 }
 
-export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): Promise<{ ok: boolean; detail: string } | null> {
+export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
   try {
     const r = await fetch("/api/headroom/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),
     });
-    return (await r.json()) as { ok: boolean; detail: string };
+    const body = (await r.json()) as { ok: boolean; detail: string; routed?: string[] };
+    return { ok: body?.ok ?? false, detail: body?.detail ?? "", routed: body?.routed ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+/** Routes one installed agent through the gateway, or undoes it. The server auto-starts the proxy. */
+export async function postHeadroomRoute(host: "omp" | "pi" | "opencode", action: "route-host" | "unroute-host"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
+  try {
+    const r = await fetch("/api/headroom/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, host }),
+    });
+    const body = (await r.json()) as { ok: boolean; detail: string; routed?: string[] };
+    return { ok: body?.ok ?? false, detail: body?.detail ?? "", routed: body?.routed ?? [] };
   } catch {
     return null;
   }
