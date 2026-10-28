@@ -1713,6 +1713,16 @@ test("every session event announces the status, and an unchanged state stays sil
   }
 });
 
+test("a /new session switch restores the configured defaults", async () => {
+  writeSettings({ comboDefault: "balanced", comboSetupComplete: true });
+  resetSharedComboState();
+  const entries: SessionEntry[] = [];
+  const pi = statusInstantiate(comboToggleExtension, entries);
+  const fresh = statusContext(entries);
+  await statusFire(pi, "session_switch", fresh);
+  expect(statuses(fresh.notifications)).toEqual(["🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF"]);
+});
+
 test("a subagent session announces the inherited status", async () => {
   resetSharedComboState();
   const entries: SessionEntry[] = [];

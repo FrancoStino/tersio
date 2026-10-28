@@ -234,10 +234,11 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     announceStatus(ctx);
   });
 
-  // Resume, branch, and compaction re-announce; dedupe keeps repeats silent.
+  // Resume, branch, and compaction re-announce. A `/new` emits a switch and no start, so a fresh UI session restores the defaults here too.
   for (const event of sessionChangeEvents(pi)) {
     onHostEvent(pi, event, async (_event, ctx) => {
       track(ctx);
+      if (ctx?.hasUI && !hasModeState(sessionEntries(ctx))) restoreConfiguredDefaults();
       announceStatus(ctx);
     });
   }

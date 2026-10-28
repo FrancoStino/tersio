@@ -7,6 +7,7 @@
 ### Fixed
  - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.
  - The update check no longer reports the bundled Ponytail as missing. It looked for the separate package an older install carried, so every update claimed to reinstall it and listed it as a change even when nothing changed.
+ - A new session started with `/new` on Oh My Pi showed `COMBO OFF` instead of the configured defaults. OMP emits a session switch there, not a session start, and only the start restored the defaults. A switch to a session without mode state now restores them too.
 
 ## v2.25.14
 
