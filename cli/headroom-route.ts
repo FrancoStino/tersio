@@ -92,12 +92,17 @@ export function stopHeadroomProxy(home: string, port = 8787): { ok: boolean; det
 }
 
 
-/** The first-party APIs the gateway actually forwards to; a custom provider routed here would break. */
+/** The first-party APIs the shared gateway forwards to on its own; a custom upstream needs its own instance. */
 const FIRST_PARTY = /api\.anthropic\.com|api\.openai\.com/;
 
 export interface ProviderRoute {
   provider: string;
   original: string | null;
+  /** A custom provider's own gateway instance: the gateway forwards to the original baseUrl. */
+  port?: number;
+  pid?: number | null;
+  /** The baseUrl the provider now points at. */
+  gateway?: string;
 }
 
 export interface RoutingState {
@@ -297,20 +302,45 @@ export async function routeHost(home: string, host: 'omp' | 'pi', urls: { openai
   if (names.length === 0) return { ok: false, detail: 'the agent has no providers configured — set the base URL in its environment instead' };
   const state = readRoutingState(home);
   if (state.hosts[host]) return { ok: true, detail: 'already routed through the gateway' };
-  const originals: ProviderRoute[] = [];
-  const customs: string[] = [];
-  for (const name of names) {
-    const current = providers[name]?.baseUrl ?? null;
-    if (current && !FIRST_PARTY.test(current)) { customs.push(name); continue; }
-    originals.push({ provider: name, original: current });
-    providers[name] = { ...providers[name], baseUrl: urls.openai };
+  const bin = resolveHeadroomBinary();
+  const originals: ProviderRoute[] = Object.keys(providers).map((name) => ({ provider: name, original: providers[name]?.baseUrl ?? null }));
+  // A custom upstream gets its own gateway instance that forwards to the provider's own baseUrl —
+  // the same per-provider instance the omp models.yml route starts — so a local proxy like magpie
+  // routes exactly the way a first-party API does.
+  const customs = originals.filter((entry) => entry.original !== null && !FIRST_PARTY.test(entry.original));
+  if (customs.length > 0 && !bin) return { ok: false, detail: 'headroom binary not found in PATH — install it, then route' };
+  const taken = new Set<number>([gatewayBasePort()]);
+  for (const instance of state.ymlInstances ?? []) taken.add(instance.port);
+  for (const routes of Object.values(state.hosts)) for (const entry of routes) if (entry.port) taken.add(entry.port);
+  const failed: string[] = [];
+  for (const entry of customs) {
+    let port = gatewayBasePort() + 1;
+    while (taken.has(port)) port += 1;
+    taken.add(port);
+    const pid = spawnGateway(bin!, port, withV1(entry.original!));
+    const ready = pid !== null && await waitForProxy(port, 25_000);
+    if (!ready) {
+      if (pid !== null) { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } }
+      failed.push(entry.provider);
+      continue;
+    }
+    entry.port = port;
+    entry.pid = pid;
+    entry.gateway = `http://127.0.0.1:${port}/v1`;
   }
-  if (originals.length === 0) return { ok: false, detail: `every provider is custom (${customs.join(', ')}) — the gateway forwards to the first-party API, so routing would break them` };
+  const routed = originals.filter((entry) => !failed.includes(entry.provider));
+  if (routed.length === 0) {
+    return { ok: false, detail: `no gateway instance would start for ${customs.join(', ')} — check headroom --version, then route again` };
+  }
+  for (const entry of routed) {
+    providers[entry.provider] = { ...providers[entry.provider], baseUrl: entry.gateway ?? urls.openai };
+  }
   parsed.providers = providers;
   writeFileSync(file, JSON.stringify(parsed, null, 2), 'utf8');
-  state.hosts[host] = originals;
+  state.hosts[host] = routed;
   writeRoutingState(home, state);
-  return { ok: true, detail: `routed ${originals.length} provider(s) through the gateway${customs.length ? ` — skipped custom: ${customs.join(', ')}` : ''}` };
+  const skipped = failed.length > 0 ? ` — skipped ${failed.join(', ')}: their gateway instance never came up` : '';
+  return { ok: true, detail: `routed ${routed.map((entry) => entry.provider).join(', ')} through the gateway${skipped}` };
 }
 
 /** Restores a host's original provider baseUrls and forgets the route. */
@@ -324,6 +354,7 @@ export function unrouteHost(home: string, host: 'omp' | 'pi'): { ok: boolean; de
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf8')) as { providers?: Record<string, { baseUrl?: string }> };
       for (const entry of originals) {
+        if (entry.pid) { try { process.kill(entry.pid, 'SIGTERM'); } catch { /* already gone */ } }
         if (!parsed.providers?.[entry.provider]) continue;
         if (entry.original === null) delete parsed.providers[entry.provider].baseUrl;
         else parsed.providers[entry.provider].baseUrl = entry.original;

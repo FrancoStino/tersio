@@ -78,6 +78,41 @@ function withFakePath(home: string, run: () => Promise<void>): Promise<void> {
   return run().finally(() => { process.env.PATH = previous; });
 }
 
+/** A pi models.json shaped like the real one: one custom local provider, one first-party. */
+function writePiModels(home: string): string {
+  const dir = path.join(home, ".pi", "agent");
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "models.json");
+  writeFileSync(file, JSON.stringify({
+    providers: {
+      magpie: { api: "openai-completions", baseUrl: "http://127.0.0.1:3425/v1" },
+      openai: { api: "openai-completions", baseUrl: "https://api.openai.com/v1" },
+    },
+  }, null, 2), "utf8");
+  return file;
+}
+
+test("routing pi gives every custom provider its own gateway instance that forwards to it", async () => {
+  const home = tempHome();
+  const file = writePiModels(home);
+  fakeHeadroom(path.join(home, "bin"));
+  await withFakePath(home, async () => {
+    const result = await routeHost(home, "pi", { openai: "http://127.0.0.1:18800/v1", anthropic: "http://127.0.0.1:18800" });
+    expect(result.ok, result.detail).toBe(true);
+    expect(result.detail).toContain("routed magpie, openai");
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+    // The custom provider points at its own instance (base + 1; the shared gateway holds the base port),
+    // and the first-party provider points at the shared gateway.
+    expect(parsed.providers.magpie.baseUrl).toBe("http://127.0.0.1:18801/v1");
+    expect(parsed.providers.openai.baseUrl).toBe("http://127.0.0.1:18800/v1");
+    expect(routedHosts(home)).toContain("pi");
+  });
+  expect(unrouteHost(home, "pi").ok).toBe(true);
+  const restored = JSON.parse(readFileSync(file, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+  expect(restored.providers.magpie.baseUrl).toBe("http://127.0.0.1:3425/v1");
+  expect(restored.providers.openai.baseUrl).toBe("https://api.openai.com/v1");
+}, 60_000);
+
 test("ompProvidersFromYml reads each provider's own baseUrl and ignores a model-level one", () => {
   const home = tempHome();
   writeModels(home);
@@ -143,25 +178,43 @@ test("routing omp refuses when no models.yml exists and when no provider declare
   expect(noUpstream.detail).toContain("no provider in models.yml declares a baseUrl");
 });
 
-test("a models.json host still routes first-party providers and refuses all-custom sets", async () => {
+test("a models.json host routes first-party providers through the gateway and customs through their own instances", async () => {
   const home = tempHome();
   const dir = path.join(home, ".pi", "agent");
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "models.json");
   writeFileSync(file, JSON.stringify({ providers: { anthropic: { baseUrl: "https://api.anthropic.com" }, mine: { baseUrl: "https://custom.example/v1" } } }), "utf8");
-  const routed = await routeHost(home, "pi", { openai: "http://127.0.0.1:8787/v1", anthropic: "http://127.0.0.1:8787" });
-  expect(routed.ok, routed.detail).toBe(true);
-  expect(routed.detail).toContain("skipped custom: mine");
-  const body = JSON.parse(readFileSync(file, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
-  expect(body.providers.anthropic.baseUrl).toBe("http://127.0.0.1:8787/v1");
-  expect(body.providers.mine.baseUrl).toBe("https://custom.example/v1");
+  fakeHeadroom(path.join(home, "bin"));
+  await withFakePath(home, async () => {
+    const routed = await routeHost(home, "pi", { openai: "http://127.0.0.1:8787/v1", anthropic: "http://127.0.0.1:8787" });
+    expect(routed.ok, routed.detail).toBe(true);
+    const body = JSON.parse(readFileSync(file, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+    // The first-party provider points at the shared gateway; the custom one at its own instance,
+    // which forwards to the custom upstream (the file's base port is 18800, so instances start at 18801).
+    expect(body.providers.anthropic.baseUrl).toBe("http://127.0.0.1:8787/v1");
+    expect(body.providers.mine.baseUrl).toBe("http://127.0.0.1:18801/v1");
+    expect(routedHosts(home)).toContain("pi");
+  });
+  expect(unrouteHost(home, "pi").ok).toBe(true);
+  const restored = JSON.parse(readFileSync(file, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+  expect(restored.providers.anthropic.baseUrl).toBe("https://api.anthropic.com");
+  expect(restored.providers.mine.baseUrl).toBe("https://custom.example/v1");
 
+  // An all-custom set routes too: every provider gets its own forwarding instance.
   const customHome = tempHome();
   const customDir = path.join(customHome, ".pi", "agent");
   mkdirSync(customDir, { recursive: true });
-  writeFileSync(path.join(customDir, "models.json"), JSON.stringify({ providers: { mine: { baseUrl: "https://custom.example/v1" } } }), "utf8");
-  const refused = await routeHost(customHome, "pi", { openai: "http://127.0.0.1:8787/v1", anthropic: "http://127.0.0.1:8787" });
-  expect(refused.ok).toBe(false);
-  expect(refused.detail).toContain("every provider is custom");
-  expect(existsSync(path.join(customHome, ".tersio", "headroom-routes.json"))).toBe(false);
+  const customFile = path.join(customDir, "models.json");
+  writeFileSync(customFile, JSON.stringify({ providers: { mine: { baseUrl: "https://custom.example/v1" } } }), "utf8");
+  fakeHeadroom(path.join(customHome, "bin"));
+  await withFakePath(customHome, async () => {
+    const routed = await routeHost(customHome, "pi", { openai: "http://127.0.0.1:8787/v1", anthropic: "http://127.0.0.1:8787" });
+    expect(routed.ok, routed.detail).toBe(true);
+    expect(routed.detail).toContain("routed mine");
+    const body = JSON.parse(readFileSync(customFile, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+    expect(body.providers.mine.baseUrl).toBe("http://127.0.0.1:18801/v1");
+  });
+  expect(unrouteHost(customHome, "pi").ok).toBe(true);
+  const customRestored = JSON.parse(readFileSync(customFile, "utf8")) as { providers: Record<string, { baseUrl?: string }> };
+  expect(customRestored.providers.mine.baseUrl).toBe("https://custom.example/v1");
 });
