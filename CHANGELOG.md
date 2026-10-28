@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### Added
+ - **PiG host support.** `tersio install --host pig` writes the extension tree into `~/.pig/agent/extensions` and wires rtk, the session modes, and Ponytail for it; doctor, uninstall, the upstream scorecard, and the Quick start page know the host, which draws with its own mark. Thanks to @trun9ko33, who sent it in #77.
  - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
 
 ### Fixed

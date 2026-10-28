@@ -58,11 +58,34 @@ export function CodexLogo({ className = "size-full" }: { className?: string }) {
   );
 }
 
+// PiG's own mark: the green pixel pig from pi-in-go.dev, redrawn as pixel rects so it carries no
+// background and keeps the site's palette (ink outline, three greens, white eyes).
+export function PigLogo({ className = "size-full" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 13" aria-hidden="true" className={className}>
+      <rect x="1" y="1" width="14" height="11" fill="#14161a" />
+      <rect x="2" y="2" width="12" height="9" fill="#3cae7b" />
+      <rect x="3" y="0" width="3" height="2" fill="#14161a" />
+      <rect x="4" y="0" width="1" height="2" fill="#2c8a5f" />
+      <rect x="10" y="0" width="3" height="2" fill="#14161a" />
+      <rect x="11" y="0" width="1" height="2" fill="#2c8a5f" />
+      <rect x="4" y="4" width="2" height="2" fill="#f7f7f8" />
+      <rect x="6" y="5" width="1" height="1" fill="#14161a" />
+      <rect x="10" y="4" width="2" height="2" fill="#f7f7f8" />
+      <rect x="9" y="5" width="1" height="1" fill="#14161a" />
+      <rect x="5" y="7" width="6" height="3" fill="#2c8a5f" />
+      <rect x="6" y="8" width="1" height="1" fill="#14161a" />
+      <rect x="9" y="8" width="1" height="1" fill="#14161a" />
+    </svg>
+  );
+}
+
 export function AgentLogo({ host, className }: { host?: string; className?: string }) {
   if (host === "omp") return <OmpLogo className={className} />;
   // Claude's own terracotta, not the theme ink: the brand color is the whole point of the mark.
   if (host === "claude-code") return <MarkGlyph slug="claudecode" className={className ?? "size-full"} color="#d97757" />;
   if (host === "codex") return <CodexLogo className={className} />;
   if (host === "opencode") return <OpencodeLogo className={className} />;
+  if (host === "pig") return <PigLogo className={className} />;
   return <PiLogo className={className} />;
 }

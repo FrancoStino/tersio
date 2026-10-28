@@ -19,7 +19,7 @@ export interface ZodFactory {
 export interface HostHandle {
   zod?: unknown;
   setLabel?: (...args: string[]) => void;
-  hostId?: 'pi' | 'omp' | 'opencode';
+  hostId?: 'pi' | 'omp' | 'opencode' | 'pig';
 }
 
 export interface SelectOption {
@@ -137,9 +137,10 @@ const opencodeAdapter: HostAdapter = {
 };
 
 // One host derivation, so the adapters and the predicates below cannot disagree about who is running.
-function hostOf(pi: HostHandle): 'pi' | 'omp' | 'opencode' {
+function hostOf(pi: HostHandle): 'pi' | 'omp' | 'opencode' | 'pig' {
   if (pi.hostId === 'opencode') return 'opencode';
   if (pi.hostId === 'omp') return 'omp';
+  if (pi.hostId === 'pig') return 'pig';
   if (pi.hostId === 'pi') return 'pi';
   // The zod factory is the only host signal a caller without hostId can offer.
   return pi.zod ? 'omp' : 'pi';
@@ -147,6 +148,7 @@ function hostOf(pi: HostHandle): 'pi' | 'omp' | 'opencode' {
 
 const ADAPTERS: Record<ReturnType<typeof hostOf>, HostAdapter> = {
   pi: piAdapter,
+  pig: piAdapter,
   omp: ompAdapter,
   opencode: opencodeAdapter,
 };
@@ -157,6 +159,10 @@ function adapterFor(pi: HostHandle): HostAdapter {
 
 export function isPiHost(pi: HostHandle): boolean {
   return hostOf(pi) === 'pi';
+}
+
+export function isPigHost(pi: HostHandle): boolean {
+  return hostOf(pi) === 'pig';
 }
 
 /** The omp runtime carries a zod factory; pi and OpenCode do not. */

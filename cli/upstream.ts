@@ -19,6 +19,7 @@ import {
   httpsGetBuffer,
   normalizeRtkVersion,
   piAgentDir,
+  pigAgentDir,
   readTextIfExists,
   resolveRtkBinary,
   shimCommand,
@@ -704,6 +705,7 @@ async function checkPonytail(hosts: HostRow[]): Promise<SourceRow> {
     if (!host.installed) continue;
     if (host.host === 'opencode') copies.push({ dir: path.join(hostExtensionsDir('opencode'), 'ponytail-bundle'), files: PONYTAIL_BUNDLE_FILES });
     if (host.host === 'pi') copies.push({ dir: path.join(piAgentDir(), 'ponytail'), files: PI_PONYTAIL_FILES });
+    if (host.host === 'pig') copies.push({ dir: path.join(pigAgentDir(), 'ponytail'), files: PI_PONYTAIL_FILES });
   }
   let tracked = 0;
   let matched = 0;

@@ -627,6 +627,9 @@ export interface HealthReport {
   piPath: string | null;
   /** Config root, e.g. ~/.pi */
   piDir: string | null;
+  pig: string | null;
+  pigPath: string | null;
+  pigDir: string | null;
   opencode: string | null;
   opencodePath: string | null;
   /** Config root, e.g. ~/.config/opencode */

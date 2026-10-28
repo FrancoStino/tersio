@@ -21,10 +21,10 @@ import { checkForUpdate, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
 import { runDoctor } from './doctor.ts';
 import { runDashboard } from './dashboard.ts';
-import { wireRtkOmp, wireRtkOpencode, wireRtkPi } from './rtk-wiring.ts';
+import { wireRtkOmp, wireRtkOpencode, wireRtkPi, wireRtkPig } from './rtk-wiring.ts';
 import {
   RTK_RELEASE_API, fetchJson, findFile, httpsGet,
-  findPackageRoot, httpsDownload, parseChecksum, piAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
+  findPackageRoot, httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
@@ -33,7 +33,7 @@ import { formatCliStatus, storedProfile, storedProfileSync, writePluginSettings 
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { PI_RTK_MANIFEST, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, filesUnder, rootFiles, sourcePath, syncPluginManifest, syncTreeFiles } from './manifest.ts';
 import type { Profile } from './profile.ts';
-import { detectHosts, hostOptions, parseHostArg, piTersioSource } from './hosts.ts';
+import { detectHosts, hostOptions, parseHostArg, piTersioSource, pigTersioSource } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 
 
@@ -252,16 +252,17 @@ async function stepRetireAgentCopies(extDir: string, options: InstallOptions): P
 }
 
 // The binary is machine-wide; hosts without a hook only rebind. `tersio update` still refreshes it.
-async function stepRtk(binDir: string, options: InstallOptions, target: 'omp' | 'pi' | 'opencode' = 'omp'): Promise<void> {
+async function stepRtk(binDir: string, options: InstallOptions, target: HostId = 'omp'): Promise<void> {
   const binDest = path.join(binDir, RTK_BINARY_NAME);
   const found = resolveRtkBinary();
-  const hostName = target === 'omp' ? 'OMP' : target === 'opencode' ? 'OpenCode' : 'pi';
+  const hostName = target === 'omp' ? 'OMP' : target === 'opencode' ? 'OpenCode' : target === 'pig' ? 'PiG' : 'pi';
   const bind = async (binary: string): Promise<void> => {
     if (!(await fileExists(binary))) {
-      console.log(`  [skip] no rtk binary to wire — install rtk, then run: rtk init -g ${target === 'opencode' ? '--opencode' : `--agent ${target}`}`);
+      console.log(`  [skip] no rtk binary to wire — install rtk, then run: rtk init -g ${target === 'opencode' ? '--opencode' : `--agent ${target === 'pig' ? 'pi' : target}`}`);
       return;
     }
     if (target === 'opencode') await wireRtkOpencode(binary, options);
+    else if (target === 'pig') await wireRtkPig(binary, options);
     else if (target === 'pi') await wireRtkPi(binary, options);
     else await wireRtkOmp(binary, options);
   };
@@ -404,7 +405,7 @@ async function stepCaveman(extDir: string, options: WriteOptions): Promise<void>
   }
   if (!options.dryRun) patchState({ cavemanUpstream: { tag: CAVEMAN_PIN, at: Date.now() } });
 
-  await copySources(extDir, filesUnder('caveman').filter(([, to]) => to.endsWith('index.ts')), 'caveman/index.ts', options);
+  await copySources(extDir, filesUnder('caveman').filter(([, to]) => to.endsWith('.ts')), 'caveman/index.ts', options);
 
   // Renamed body: drop the stale copy an older install left behind.
   if (!options.dryRun) await fs.rm(path.join(cavemanDir, 'rule-wenyan.md'), { force: true });
@@ -652,6 +653,7 @@ async function stepPiRtkManifest(extDir: string, options: WriteOptions): Promise
 /** The directory a host's install writes, for the plan line a reinstall prints. */
 function resolvedHostPath(host: HostId): string {
   if (host === 'pi') return path.join(piAgentDir(), 'extensions');
+  if (host === 'pig') return path.join(pigAgentDir(), 'extensions');
   if (host === 'opencode') return path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   return path.join(OMP_PLUGINS_DIR, 'node_modules', ...PACKAGE_NAME.split('/'), 'extensions');
 }
@@ -675,19 +677,39 @@ async function stepPiLayer(options: InstallOptions): Promise<void> {
   await stepPstack(extDir, options);
   await stepTersioCommands(extDir, options);
   await stepUpdater(extDir, options);
-  await stepPonytailForPi(agentDir, options);
+  await stepPonytailForPi(agentDir, options, 'pi');
+}
+
+async function stepPigLayer(options: InstallOptions): Promise<void> {
+  const agentDir = pigAgentDir();
+  const extDir = path.join(agentDir, 'extensions');
+  const declared = pigTersioSource(agentDir);
+  if (declared) sayTagged(`  [note] pig also has a tersio package (${declared}) — remove one, or both copies load: pig remove npm:${PACKAGE_NAME}`);
+
+  if (!options.quiet) console.log(`  PiG — write the extension tree (${extDir})`);
+  await stepSharedSessionState(extDir, options);
+  await copySources(extDir, filesUnder('rtk'), 'rtk/session.ts', options);
+  await stepRtkFilter(extDir, options);
+  await stepPiRtkManifest(extDir, options);
+  await stepTiming(extDir, options);
+  await stepCaveman(extDir, options);
+  await stepCombo(extDir, options);
+  await stepPstack(extDir, options);
+  await stepTersioCommands(extDir, options);
+  await stepUpdater(extDir, options);
+  await stepPonytailForPi(agentDir, options, 'pig');
 }
 
 // A local dir, not an npm spec: pi only version-checks npm entries, so this avoids the update nag.
 const PI_PONYTAIL_PACKAGE = `${JSON.stringify({ name: 'ponytail', version: '0.0.0', private: true, pi: { extensions: ['./pi-extension/index.js'], skills: ['./skills'] } }, null, 2)}\n`;
 
-async function stepPonytailForPi(agentDir: string, options: InstallOptions): Promise<void> {
-  if (!options.quiet) console.log('  Ponytail — write the local pi package');
+async function stepPonytailForPi(agentDir: string, options: InstallOptions, host: 'pi' | 'pig' = 'pi'): Promise<void> {
+  if (!options.quiet) console.log(`  Ponytail — write the local ${host} package`);
   const root = PONYTAIL_DIR;
   const dest = path.join(agentDir, 'ponytail');
   if (!root) {
     console.log('  [skip] Ponytail package not found next to the CLI');
-    console.log('  [hint] The /ponytail command will not work; run: tersio update --host pi');
+    console.log(`  [hint] The /ponytail command will not work; run: tersio update --host ${host}`);
     return;
   }
   await writeIfChanged(path.join(dest, 'package.json'), PI_PONYTAIL_PACKAGE, options);
@@ -702,13 +724,13 @@ async function stepPonytailForPi(agentDir: string, options: InstallOptions): Pro
     await writeIfChanged(path.join(dest, ...rel.split('/')), text, options);
   }
   if (options.dryRun) return;
-  // Only when pi still declares the npm spec: with nothing to remove, `pi remove` still warns and exits non-zero.
+  // Only when pi still declares the npm spec: with nothing to remove, remove still warns and exits non-zero.
   const declared = await piDeclaredPackages(agentDir);
   if (declared.some(isNpmPonytailPackage)) {
     try {
-      await execNetwork('Removing the pi npm copy of Ponytail', 'pi', ['remove', 'npm:@dietrichgebert/ponytail'], { timeout: 120000 });
+      await execNetwork(`Removing the ${host} npm copy of Ponytail`, host, ['remove', 'npm:@dietrichgebert/ponytail'], { timeout: 120000 });
     } catch (e) {
-      sayTagged(`  [warn] pi remove ponytail: ${shortError(e)}`);
+      sayTagged(`  [warn] ${host} remove ponytail: ${shortError(e)}`);
     }
   }
   await registerPiLocalPonytail(agentDir, dest, options);
@@ -816,9 +838,11 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     const target = hostEntry(targetHost);
     const where = targetHost === 'pi'
       ? path.join(piAgentDir(), 'extensions')
-      : targetHost === 'opencode'
-        ? path.join(HOME, '.config', 'opencode', 'plugins', 'tersio')
-        : path.join(OMP_AGENT_DIR, 'extensions');
+      : targetHost === 'pig'
+        ? path.join(pigAgentDir(), 'extensions')
+        : targetHost === 'opencode'
+          ? path.join(HOME, '.config', 'opencode', 'plugins', 'tersio')
+          : path.join(OMP_AGENT_DIR, 'extensions');
     console.log(`\nWill install into ${target.label}:`);
     console.log(`  ${where}`);
     console.log('  caveman · rtk · ponytail session modes');
@@ -836,6 +860,14 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     if (verbose && !quiet) console.log(`  omp ${v}`);
   } catch {
     if (targetHost === 'omp') console.log('  [fail] omp not found — ensure it\'s installed');
+  }
+  if (targetHost === 'pig') {
+    try {
+      const v = (await execP('pig', ['--version'])).stdout.trim();
+      if (verbose && !quiet) console.log(`  pig ${v}`);
+    } catch {
+      console.log('  [fail] pig not found — ensure it\'s installed');
+    }
   }
 
   const failures: string[] = [];
@@ -864,6 +896,16 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('settings', () => writePluginSettings(profile, installOptions));
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('pi', profile.comboDefault));
+    closeRL();
+    return;
+  }
+
+  if (targetHost === 'pig') {
+    await capture('pig tree', () => stepPigLayer(installOptions));
+    await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pig'));
+    await capture('settings', () => writePluginSettings(profile, installOptions));
+    if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
+    else console.log(comboHint('PiG', profile.comboDefault));
     closeRL();
     return;
   }
