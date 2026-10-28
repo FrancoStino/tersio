@@ -8,7 +8,6 @@ import cavemanSessionExtension from "../../extensions/caveman/index.ts";
 import comboToggleExtension from "../../extensions/combo/index.ts";
 import tersioCommandsExtension from "../../extensions/commands/index.ts";
 import rtkSessionExtension from "../../extensions/rtk/session.ts";
-import { healOmpRoute } from "../../extensions/headroom/index.ts";
 import plugin from "../../extensions/server.ts";
 import {
   hasToolLifecycle,
@@ -1739,51 +1738,6 @@ test("a subagent session announces the inherited status", async () => {
       "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
     ]);
   }
-});
-
-test("a drifted omp route heals to the gateway, and a provider the user moved stays untouched", () => {
-  const home = mkdtempSync(path.join(os.tmpdir(), "tersio-heal-"));
-  const agentDir = path.join(home, ".omp", "agent");
-  mkdirSync(agentDir, { recursive: true });
-  mkdirSync(path.join(home, ".tersio"), { recursive: true });
-  const modelsYml = path.join(agentDir, "models.yml");
-  const drifted = [
-    "providers:",
-    "  magpie:",
-    "    api: openai-completions",
-    "    baseUrl: http://127.0.0.1:3425/v1",
-    "  other:",
-    "    api: openai-completions",
-    "    baseUrl: http://127.0.0.1:9999/v1",
-    "",
-  ].join("\n");
-  writeFileSync(modelsYml, drifted);
-  writeFileSync(
-    path.join(home, ".tersio", "headroom-routes.json"),
-    JSON.stringify({ hosts: {}, ymlRewrites: [{ provider: "magpie", original: "http://127.0.0.1:3425/v1", gateway: "http://127.0.0.1:8787/v1" }] }),
-  );
-  // This test process stands in for the live gateway.
-  writeFileSync(path.join(home, ".tersio", "headroom-proxy.json"), JSON.stringify({ pid: process.pid, port: 8787 }));
-
-  expect(healOmpRoute(home)).toContain("re-routed magpie");
-  const routed = readFileSync(modelsYml, "utf8");
-  expect(routed).toContain("    baseUrl: http://127.0.0.1:8787/v1");
-  expect(routed).toContain("    baseUrl: http://127.0.0.1:9999/v1");
-  expect(healOmpRoute(home)).toBeNull();
-
-  // No gateway, no rewrite: sessions must not point at a dead proxy.
-  writeFileSync(path.join(home, ".tersio", "headroom-proxy.json"), JSON.stringify({ pid: null }));
-  writeFileSync(modelsYml, drifted);
-  expect(healOmpRoute(home)).toBeNull();
-  expect(readFileSync(modelsYml, "utf8")).toBe(drifted);
-
-  // A provider the user moved away from the recorded original is theirs, not drift.
-  writeFileSync(path.join(home, ".tersio", "headroom-proxy.json"), JSON.stringify({ pid: process.pid, port: 8787 }));
-  writeFileSync(modelsYml, drifted.replace("http://127.0.0.1:3425/v1", "http://127.0.0.1:5555/v1"));
-  expect(healOmpRoute(home)).toBeNull();
-  expect(readFileSync(modelsYml, "utf8")).toContain("http://127.0.0.1:5555/v1");
-
-  rmSync(home, { recursive: true, force: true });
 });
 
 test("the status survives compaction and still matches the live state", async () => {

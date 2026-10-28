@@ -1,4 +1,4 @@
-// Toast notifications: bottom-right stack, accent icon, title + description. A plain toast
+// Toast notifications: bottom-left stack (clear of a right-side drawer), accent icon, title + description. A plain toast
 // dismisses itself; one carrying actions stays until the operator picks or closes it.
 import { createContext, useCallback, useContext, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -66,7 +66,7 @@ export function ToasterProvider({ children }: { children: React.ReactNode }) {
           {children}
           {items.length > 0 && (
             <div
-              className="fixed bottom-4 right-4 z-100 flex w-[min(452px,calc(100vw-32px))] flex-col gap-2 overflow-visible border-0 bg-transparent p-0"
+              className="fixed bottom-4 left-4 z-100 flex w-[min(452px,calc(100vw-32px))] flex-col gap-2 overflow-visible border-0 bg-transparent p-0"
               role="status"
               aria-live="polite"
             >

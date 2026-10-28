@@ -11,7 +11,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { HeadroomDrawer, HostDrawer, ModeDialog } from "./how-to-node-ui";
 import {
-  HOSTS, MODES, NODE_H, NODE_W, alignDrag, defaultPositions, edgeLit, edgePath, edgePorts, isOff, loadPositions,
+  HOSTS, MODES, NODE_H, NODE_W, agentModeRows, alignDrag, defaultPositions, edgeLit, edgePath, edgePorts, isOff, loadPositions,
   nodeOff, nodeState, nodeTitle, pipelineGraph, portPoint, savePositions, snapToGrid, versionOf,
 } from "./pipeline-model";
 import type { Box, EdgeKey, HostAction, HostState, NodeId } from "./pipeline-model";
@@ -64,7 +64,7 @@ function NodeButton({
       onClick={(event) => { if (event.detail === 0 && interactive) onActivate(); }}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       className={cn(
-        "howto-node absolute flex cursor-grab flex-col justify-center gap-0.5 overflow-hidden rounded-xl border border-line bg-panel px-3 py-2 text-left outline-none active:cursor-grabbing",
+        "howto-node absolute flex cursor-grab flex-col overflow-hidden rounded-xl border border-line bg-panel text-left outline-none active:cursor-grabbing",
         "hover:border-accent/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40",
         dashed && "items-center border-2 border-dashed bg-panel text-dim hover:border-accent/50 hover:text-ink",
         off && "border-2 border-dashed opacity-55",
@@ -74,6 +74,22 @@ function NodeButton({
     >
       {children}
     </button>
+  );
+}
+
+/** The status badge every card carries: a dot plus the level, the way a service list reads. */
+function NodeBadge({ on, label }: { on: boolean | null; label: string }) {
+  const off = isOff(on);
+  return (
+    <span
+      className={cn(
+        "mono ml-auto flex shrink-0 items-center gap-1 rounded border px-1 text-[9px] leading-none py-0.5",
+        off ? "border-line text-dim" : "border-success/40 text-success",
+      )}
+    >
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full", off ? "bg-dim" : "bg-success")} />
+      {label}
+    </span>
   );
 }
 
@@ -133,7 +149,10 @@ export function PipelineCanvas({
   const boxes = useMemo(() => {
     const defaults = defaultPositions(installed);
     const merged: Record<string, Box> = {};
-    for (const id of nodeIds) merged[id] = stored[id] ?? defaults[id] ?? { x: 40, y: 300, w: NODE_W, h: NODE_H };
+    for (const id of nodeIds) {
+      // The user owns where a node sits; the size is ours, so a stored box never pins a stale height.
+      merged[id] = stored[id] ? { ...defaults[id], x: stored[id].x, y: stored[id].y } : defaults[id] ?? { x: 40, y: 296, w: NODE_W, h: NODE_H };
+    }
     return merged;
   }, [nodeIds, stored, installed]);
 
@@ -270,23 +289,27 @@ export function PipelineCanvas({
   const zoomed = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
 
   const body = (id: NodeId): React.ReactNode => {
+    const header = "flex items-center gap-1.5 border-b border-line bg-track/30 px-3 py-1.5";
     if (id === "prompt") {
       return (
         <>
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-            <Icon name="message-square" className="size-3.5 shrink-0 text-dim" /> Prompt
+          <span className={header}>
+            <Icon name="message-square" className="size-3.5 shrink-0 text-dim" />
+            <span className="text-[12px] font-semibold">Prompt</span>
           </span>
-          <span className="mono truncate text-[10px] text-dim">your message starts the turn</span>
+          <span className="mono flex flex-1 items-center px-3 py-1.5 text-[10px] text-dim">your message starts the turn</span>
         </>
       );
     }
     if (id === "output") {
       return (
         <>
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-            <Icon name="arrow-right" className="size-3.5 shrink-0 text-dim" /> Output
+          <span className={header}>
+            <Icon name="arrow-right" className="size-3.5 shrink-0 text-dim" />
+            <span className="text-[12px] font-semibold">Output</span>
+            <NodeBadge on={true} label="on" />
           </span>
-          <span className="mono truncate text-[10px] text-dim">the turn's result</span>
+          <span className="mono flex flex-1 items-center px-3 py-1.5 text-[10px] text-dim">the turn's result</span>
         </>
       );
     }
@@ -296,29 +319,25 @@ export function PipelineCanvas({
       const off = isOff(lit(host.id));
       return (
         <>
-          <span className="flex items-center gap-2">
+          <span className={cn(header, "gap-2")}>
             <AgentLogo host={host.id} className="size-4 shrink-0" />
             <span className="truncate text-[13px] font-semibold">{host.label}</span>
+            {off
+              ? <NodeBadge on={false} label="not installed" />
+              : <NodeBadge on={true} label={versionOf(hostState.versions[host.id]) ?? "installed"} />}
           </span>
-          <span className="mono text-[10px] text-dim">
-            {off ? "not installed" : versionOf(hostState.versions[host.id]) ?? "installed"}
-          </span>
-        </>
-      );
-    }
-    if (id.startsWith("combo-")) {
-      const host = id.slice(6);
-      const label = HOSTS.find((h) => h.id === host)?.label ?? host;
-      const own = modes?.hosts?.[host]?.comboDefault;
-      const level = typeof own === "string" ? own : modes?.comboLevel || modes?.comboDefault || "on";
-      return (
-        <>
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-            <span aria-hidden="true">🧩</span> Combo · {label}
-          </span>
-          <span className="mono text-[10px] text-dim">
-            {level === "off" ? "off" : typeof own === "string" ? `${level} — this agent` : `${level} — shared`}
-          </span>
+          {!off ? (
+            <span className="grid flex-1 grid-cols-2 content-center gap-x-3 gap-y-1 px-3.5 py-2.5">
+              {agentModeRows(host.id, modes).map((row) => (
+                <span key={row.key} className={cn("mono flex items-center gap-1.5 text-[10px]", row.on ? "text-ink" : "text-dim")}>
+                  <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", row.on ? "bg-accent" : "bg-line")} />
+                  {row.glyph} {row.label}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="mono flex flex-1 items-center px-3 py-1.5 text-[10px] text-dim">install to join the pipeline</span>
+          )}
         </>
       );
     }
@@ -327,21 +346,12 @@ export function PipelineCanvas({
       const off = isNodeOff(id);
       return (
         <>
-          <span className="flex items-center gap-1.5">
-            <span aria-hidden="true" className="text-[12px]">
-              {mode.glyph}
-            </span>
+          <span className={header}>
+            <span aria-hidden="true" className="text-[12px]">{mode.glyph}</span>
             <span className="text-[13px] font-semibold">{mode.name}</span>
-            <span
-              className={cn(
-                "mono ml-auto rounded border px-1 text-[9px]",
-                off ? "border-line text-dim" : "border-accent/40 text-accent",
-              )}
-            >
-              {off ? "off" : mode.role}
-            </span>
+            <NodeBadge on={!off} label={off ? "off" : nodeState(id, modes, hostState).label} />
           </span>
-          <span className="mono truncate text-[10px] text-dim">{mode.note}</span>
+          <span className="mono flex flex-1 items-start px-3 py-1.5 text-[10px] leading-snug text-dim">{mode.role} · {mode.note}</span>
         </>
       );
     }

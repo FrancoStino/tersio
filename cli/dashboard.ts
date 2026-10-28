@@ -26,12 +26,32 @@ import { detectHosts } from './hosts.ts';
 import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
-import { readHeadroomProxy, routeHost, routedHosts, startHeadroomProxy, stopHeadroomProxy, unrouteAll, unrouteHost } from './headroom-route.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
+
+/** The tools headroom can wrap (`headroom wrap --help`), and the binary each one runs under. */
+const WRAP_TARGETS = [
+  'claude', 'codex', 'copilot', 'vscode', 'vscode-claude', 'aider', 'openclaude', 'vibe',
+  'grok', 'cursor', 'grok-build', 'cline', 'continue', 'goose', 'openhands', 'openclaw', 'opencode',
+] as const;
+
+const WRAP_BINARY: Record<string, string> = {
+  vscode: 'code', 'vscode-claude': 'code', cline: 'code', continue: 'code', 'grok-build': 'grok', copilot: 'gh',
+};
+
+/** Whether a wrap target's binary sits somewhere on PATH (plus the user-script dir pip installs to). */
+async function binaryExists(name: string): Promise<boolean> {
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const extra = path.join(homeDir(), '.local', 'bin');
+  if (!dirs.includes(extra)) dirs.push(extra);
+  for (const dir of dirs) {
+    if (existsSync(path.join(dir, name))) return true;
+  }
+  return false;
+}
 
 export interface DashboardOptions {
   port: number;
@@ -919,11 +939,32 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() }));
       return;
     }
-    // The gateway toggle: one proxy every agent points at, started and stopped by explicit action.
-    if (req.url === '/api/headroom/route' && req.method === 'GET') {
-      const home = homeDir();
+    // Which headroom wrap targets exist on this machine, so the drawer only offers what can run.
+    if (req.url === '/api/headroom/wrap' && req.method === 'GET') {
+      const bin = resolveHeadroomBinary();
+      const targets = await Promise.all(WRAP_TARGETS.map(async (name) => ({
+        name,
+        available: bin !== null && await binaryExists(WRAP_BINARY[name] ?? name),
+      })));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home), routed: routedHosts(home) }));
+      res.end(JSON.stringify({ ok: bin !== null, targets }));
+      return;
+    }
+    // The automated wrap: one documented command per tool, run detached, so nobody copies it by hand.
+    if (req.url === '/api/headroom/wrap' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      const name = String(body.name ?? '');
+      const bin = resolveHeadroomBinary();
+      if (!bin || !(WRAP_TARGETS as readonly string[]).includes(name)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown wrap target or no headroom binary' }));
+        return;
+      }
+      const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
+      child.unref();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, detail: `${name} launches through headroom in the background — its traffic is compressed from here on` }));
       return;
     }
     // The canvas node layout lives tersio-side, not in the browser: localStorage is scoped to the
@@ -950,49 +991,6 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, 'utf8');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    if (req.url === '/api/headroom/route' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {}; } catch { body = {}; }
-      const home = homeDir();
-      const action = body.action;
-      const HOSTS = ['omp', 'pi', 'opencode'] as const;
-      const hostScope = typeof body.host === 'string' && (HOSTS as readonly string[]).includes(body.host)
-        ? body.host as (typeof HOSTS)[number]
-        : null;
-      if (action !== 'start-proxy' && action !== 'stop-proxy' && action !== 'route-host' && action !== 'unroute-host') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
-        return;
-      }
-      if ((action === 'route-host' || action === 'unroute-host') && !hostScope) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'route actions need a host' }));
-        return;
-      }
-      let result: { ok: boolean; detail: string };
-      if (action === 'start-proxy') {
-        result = await startHeadroomProxy(home);
-      } else if (action === 'stop-proxy') {
-        // Stopping unroutes every host first: a routed agent against a dead proxy cannot reach a model.
-        const unrouted = unrouteAll(home);
-        result = stopHeadroomProxy(home);
-        if (unrouted.length > 0) result.detail += ` — unrouted ${unrouted.join(', ')}`;
-      } else {
-        // Routing an agent starts the proxy for it: the wiring is only real when the process is live.
-        // omp manages its own gateway instances (one per upstream), so it routes without the pre-start.
-        if (hostScope !== 'omp' && !(await readHeadroomProxy(home)).running) await startHeadroomProxy(home);
-        result = action === 'route-host'
-          ? await routeHost(home, hostScope as 'omp' | 'pi', {
-              openai: (await readHeadroomProxy(home)).openaiUrl,
-              anthropic: (await readHeadroomProxy(home)).anthropicUrl,
-            })
-          : unrouteHost(home, hostScope as 'omp' | 'pi');
-      }
-      recordActivity('agent', `Headroom gateway ${action.replace('-host', '')}`, result.detail.slice(0, 200), result.ok);
-      res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: result.ok, detail: result.detail, proxy: readHeadroomProxy(home), routed: routedHosts(home) }));
       return;
     }
     if (req.url === '/api/headroom/install' && req.method === 'POST') {

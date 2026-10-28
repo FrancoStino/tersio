@@ -545,7 +545,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
             hint={
               headroom.measured
                 ? `${pct(headroom.savingsPercent / 100, 1)} of ${fmtShort(headroom.tokensBefore)} across ${fmt(headroom.calls)} calls`
-                : "install Headroom and run its proxy to record savings"
+                : "install Headroom and wrap a tool to record savings"
             }
           />
         </StatGrid>
@@ -728,7 +728,7 @@ export function ToolsPage({ agent, money }: { agent: AgentStats; money: (v: numb
           headroom.measured
             ? `Tokens Headroom's compression kept out of context, from its durable ledger. Today: ${fmtShort(headroom.todayTokens)} · 7 days: ${fmtShort(headroom.last7Tokens)} · 30 days: ${fmtShort(headroom.last30Tokens)}.`
             : headroomPresent
-              ? `Headroom ${health?.headroom?.version ? `(${health.headroom.version}) ` : ""}is installed, but no savings are recorded yet. Run \`headroom proxy\` or \`headroom wrap <agent>\` so traffic flows through it.`
+              ? `Headroom ${health?.headroom?.version ? `(${health.headroom.version}) ` : ""}is installed, but no savings are recorded yet. Run \`headroom wrap <tool>\` — or flip the switch on the Quick start canvas — so traffic flows through it.`
               : "Headroom is not installed. Installing adds the headroom CLI; nothing is enabled on its own."
         }
         flush

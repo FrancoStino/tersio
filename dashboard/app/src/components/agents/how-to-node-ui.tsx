@@ -1,4 +1,4 @@
-// Node option surfaces: shadcn dialogs for the mode levels, side drawers for hosts and the gateway.
+// Node option surfaces: shadcn dialogs for the mode levels, side drawers for hosts and the wrap center.
 // Every control that used to live in the fold panel or the Modes tab lands here.
 import { useCallback, useEffect, useState } from "react";
 import { AgentLogo } from "@/components/agent-logos";
@@ -8,16 +8,17 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle,
+  Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle,
 } from "@/components/ui/drawer";
+import { MarkGlyph } from "@/components/brand";
+import { luminance, MARK_BG } from "../../../../../extensions/shared/brand-marks.ts";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "../toaster";
 import { cn } from "cn";
-import { fetchHeadroomProxy, postHeadroomProxy, postHeadroomRoute } from "@/lib/data";
-import type { HeadroomProxyReport } from "@/lib/data";
+import { fetchWrapTargets, postHeadroomWrap } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -206,15 +207,13 @@ function AgentModes({ host, onSaved }: { host: HostId; onSaved: () => void }) {
 
 /** Mode nodes open a dialog: the level list, and the scope the level writes to. */
 export function ModeDialog({ node, open, onOpenChange, modes, hostState, busy, onSet }: NodeSurfaceProps) {
-  const key = node.startsWith("combo-") ? "combo" : (MODES.find((m) => m.key === node)?.key ?? "headroom") as keyof typeof PICKER;
+  const key = (MODES.find((m) => m.key === node)?.key ?? "headroom") as keyof typeof PICKER;
   const picker = PICKER[key];
-  const comboHost = node.startsWith("combo-") ? node.slice(6) as HostId : null;
   const installed = HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => h.id as HostId);
-  // A combo node IS the scope: it writes that agent's section and nothing else.
-  const [scope, setScope] = useState<HostId | "all">(comboHost ?? "all");
+  const [scope, setScope] = useState<HostId | "all">("all");
   useEffect(() => {
-    if (open) setScope(comboHost ?? "all");
-  }, [open, comboHost]);
+    if (open) setScope("all");
+  }, [open]);
   const current = nodeValue(node, scope, modes);
   const picked = picker.options.some((option) => option.id === current) ? current : null;
   // A scope without its own section inherits the shared value, so the row says so.
@@ -227,28 +226,26 @@ export function ModeDialog({ node, open, onOpenChange, modes, hostState, busy, o
         <DialogHeader>
           <DialogTitle><SurfaceHeader node={node} modes={modes} hostState={hostState} /></DialogTitle>
           <DialogDescription className="text-[11px] leading-relaxed">
-            {comboHost ? ABOUT.combo : ABOUT[node] ?? ""}
+            {ABOUT[node] ?? ""}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          {comboHost ? null : (
-            <div className="mb-1 flex items-center gap-2">
-              <span className="mono text-[10px] tracking-[0.1em] text-dim uppercase">scope</span>
-              <Select value={scope} onValueChange={(v) => setScope(v as HostId | "all")}>
-                <SelectTrigger size="sm" className="ml-auto w-[170px]" aria-label="Who this level applies to">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="all">All agents (shared)</SelectItem>
-                    {installed.map((h) => (
-                      <SelectItem key={h} value={h}>{HOSTS.find((x) => x.id === h)?.label ?? h} only</SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="mb-1 flex items-center gap-2">
+            <span className="mono text-[10px] tracking-[0.1em] text-dim uppercase">scope</span>
+            <Select value={scope} onValueChange={(v) => setScope(v as HostId | "all")}>
+              <SelectTrigger size="sm" className="ml-auto w-[170px]" aria-label="Who this level applies to">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">All agents (shared)</SelectItem>
+                  {installed.map((h) => (
+                    <SelectItem key={h} value={h}>{HOSTS.find((x) => x.id === h)?.label ?? h} only</SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
           {modes === null ? (
             <div className="grid gap-1.5" aria-busy="true" aria-hidden="true">
               <Skeleton className="h-8 w-full rounded-md" />
@@ -301,14 +298,14 @@ export function HostDrawer({ node, open, onOpenChange, hostState, busy, onHostAc
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
       <DrawerContent>
-        <DrawerHeader className="border-b border-line">
+        <DrawerHeader className="border-b border-line pb-3.5 px-6 pt-4">
           <DrawerTitle>
             <span className="flex items-center gap-2">
               <AgentLogo host={hostId} className="size-4 shrink-0" />
               <span className="min-w-0 truncate">{host?.label ?? hostId}</span>
               <span className={cn(
                 "mono ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[9px]",
-                installed ? "border-accent/40 text-accent" : "border-line text-dim",
+                installed ? "border-success/40 text-success" : "border-line text-dim",
               )}
               >
                 {installed ? versionOf(hostState.versions[hostId]) ?? "installed" : "not installed"}
@@ -317,33 +314,7 @@ export function HostDrawer({ node, open, onOpenChange, hostState, busy, onHostAc
           </DrawerTitle>
           <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT[node] ?? ""}</DrawerDescription>
         </DrawerHeader>
-        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-4 py-4">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {installed ? (
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => start("update")} className="gap-1.5">
-                {busy === node && running === "update" ? <Spinner className="size-3 text-accent" /> : <Icon name="arrow-up-circle" className="size-3.5" />}
-                Update
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => start("install")} className="gap-1.5">
-                {busy === node && running === "install" ? <Spinner className="size-3 text-accent" /> : <Icon name="plus" className="size-3.5" />}
-                Install
-              </Button>
-            )}
-            {installed ? (
-              confirming ? (
-                <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => start("uninstall")} className="gap-1.5">
-                  {busy === node && running === "uninstall" ? <Spinner className="size-3" /> : <Icon name="triangle-alert" className="size-3.5" />}
-                  Confirm uninstall
-                </Button>
-              ) : (
-                <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirming(true)} className="gap-1.5 text-dim">
-                  <Icon name="trash-2" className="size-3.5" />
-                  Uninstall
-                </Button>
-              )
-            ) : null}
-          </div>
+        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 py-4">
           {installed ? (
             <div className="rounded-lg bg-track/40 p-4">
               <AgentModes host={hostId} onSaved={onSaved} />
@@ -354,115 +325,168 @@ export function HostDrawer({ node, open, onOpenChange, hostState, busy, onHostAc
             </p>
           )}
         </div>
+        <DrawerFooter className="border-t border-line px-6 pb-4 pt-3.5">
+          <div className="grid w-full grid-cols-2 gap-2">
+            {installed ? (
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => start("update")} className="w-full gap-1.5">
+                {busy === node && running === "update" ? <Spinner className="size-3 text-accent" /> : <Icon name="circle-arrow-up" className="size-3.5" />}
+                Update
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => start("install")} className="w-full gap-1.5">
+                {busy === node && running === "install" ? <Spinner className="size-3 text-accent" /> : <Icon name="plus" className="size-3.5" />}
+                Install
+              </Button>
+            )}
+            {installed ? (
+              confirming ? (
+                <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => start("uninstall")} className="w-full gap-1.5">
+                  {busy === node && running === "uninstall" ? <Spinner className="size-3" /> : <Icon name="trash" className="size-3.5" />}
+                  Confirm uninstall
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirming(true)} className="w-full gap-1.5 text-dim">
+                  <Icon name="trash" className="size-3.5" />
+                  Uninstall
+                </Button>
+              )
+            ) : null}
+          </div>
+        </DrawerFooter>
       </DrawerContent>
     </Drawer>
   );
 }
 
-/** The gateway node opens the traffic drawer: the proxy, its base URLs, and the routing list. */
+/** One icon per wrap target, so the list reads as tools rather than strings. */
+/** The lucide glyph a wrap target falls back to when the house marks carry no slug for it. */
+const WRAP_ICONS: Record<string, string> = {
+  codex: "terminal", vscode: "code", "vscode-claude": "code", aider: "book-open", openclaude: "rocket",
+  vibe: "zap", grok: "at-sign", cursor: "mouse-pointer-2", "grok-build": "hammer", "continue": "circle-arrow-right",
+  goose: "feather", openhands: "hand", openclaw: "anchor",
+};
+
+/** The wrap targets the house mark system has a slug (and brand accent) for. */
+const WRAP_SLUGS: Record<string, string> = {
+  claude: "claudecode", copilot: "githubcopilot", cline: "cline",
+};
+
+function BrandMark({ name, className }: { name: string; className: string }) {
+  const slug = WRAP_SLUGS[name];
+  if (slug === undefined) return <Icon name={WRAP_ICONS[name] ?? "terminal"} className={className} />;
+  const color = MARK_BG[slug];
+  if (color === undefined) return <Icon name={WRAP_ICONS[name] ?? "terminal"} className={className} />;
+  // A brand color near black or white disappears on the theme, so those marks fall back to the row's ink.
+  const lum = luminance(color);
+  return <MarkGlyph slug={slug} className={className} color={lum < 60 || lum > 225 ? "currentColor" : color} />;
+}
+
+/** The headroom node opens the wrap drawer: one switch per installed tool, run by Tersio itself. */
 export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "onHostAction">) {
-  const [proxy, setProxy] = useState<HeadroomProxyReport | null>(null);
-  const [proxyBusy, setProxyBusy] = useState(false);
-  const [routeBusy, setRouteBusy] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
+  const [wrapTargets, setWrapTargets] = useState<Array<{ name: string; available: boolean }> | null>(null);
+  // Which durable integrations the dashboard has installed; optimistic, kept across drawer opens.
+  const [wrapped, setWrapped] = useState<Record<string, true>>(() => {
+    try { return JSON.parse(localStorage.getItem("tersio.headroom.wrap.v1") ?? "{}") as Record<string, true>; } catch { return {}; }
+  });
+  const [wrapBusy, setWrapBusy] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
-    void fetchHeadroomProxy().then(setProxy);
+    void fetchWrapTargets().then(setWrapTargets);
   }, [open]);
-  const toggleProxy = (): void => {
-    setProxyBusy(true);
-    setDetail(null);
-    void postHeadroomProxy(proxy?.running ? "stop-proxy" : "start-proxy")
-      .then((result) => {
-        setDetail(result?.detail ?? "the dashboard server did not answer");
-        void fetchHeadroomProxy().then(setProxy);
-      })
-      .finally(() => setProxyBusy(false));
-  };
-  const toggleRoute = (host: HostId): void => {
-    setRouteBusy(host);
-    setDetail(null);
-    const routed = (proxy?.routed ?? []).includes(host);
-    void postHeadroomRoute(host, routed ? "unroute-host" : "route-host")
-      .then((result) => {
-        setDetail(result?.detail ?? "the dashboard server did not answer");
-        void fetchHeadroomProxy().then(setProxy);
-      })
-      .finally(() => setRouteBusy(null));
-  };
   const picker = PICKER.headroom;
   const current = nodeValue("headroom", "all", modes);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
       <DrawerContent>
-        <DrawerHeader className="border-b border-line">
+        <DrawerHeader className="border-b border-line pb-3.5 px-6 pt-4">
           <DrawerTitle>
             <span className="flex items-center gap-2">
               <span aria-hidden="true" className="text-[13px] leading-none">🍃</span>
               <span className="min-w-0 truncate">headroom</span>
-              <span className={cn(
-                "mono ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[9px]",
-                proxy?.running ? "border-success/40 text-success" : "border-line text-dim",
-              )}
-              >
-                {proxy?.running ? `running on :${proxy.port}` : "proxy stopped"}
-              </span>
             </span>
           </DrawerTitle>
           <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT.headroom}</DrawerDescription>
         </DrawerHeader>
-        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-4 py-4">
-          <div className="rounded-lg bg-track/40 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="mono text-[10px] tracking-[0.12em] text-dim uppercase">gateway</span>
-              <Button size="sm" variant="outline" disabled={proxyBusy} onClick={toggleProxy} className="ml-auto gap-1.5">
-                {proxyBusy ? <Spinner className="size-3" /> : <Icon name={proxy?.running ? "square" : "play"} className="size-3.5" />}
-                {proxy?.running ? "stop proxy" : "start proxy"}
-              </Button>
-            </div>
-            <dl className="mt-3.5 grid gap-2">
-              <div className="flex items-baseline gap-3">
-                <dt className="mono w-20 shrink-0 text-[9px] tracking-[0.1em] text-dim uppercase">anthropic</dt>
-                <dd className="mono m-0 truncate text-[10px] text-ink">ANTHROPIC_BASE_URL={proxy?.anthropicUrl ?? "http://127.0.0.1:8787"}</dd>
-              </div>
-              <div className="flex items-baseline gap-3">
-                <dt className="mono w-20 shrink-0 text-[9px] tracking-[0.1em] text-dim uppercase">openai</dt>
-                <dd className="mono m-0 truncate text-[10px] text-ink">OPENAI_BASE_URL={proxy?.openaiUrl ?? "http://127.0.0.1:8787/v1"}</dd>
-              </div>
-            </dl>
-            <p className="m-0 mt-3.5 text-[11px] leading-relaxed text-dim">
-              Route an agent below and Tersio points its providers at the gateway — a custom upstream
-              becomes the gateway's own forwarding target. Stopping the proxy unroutes
-              everyone first. Measured savings land on the Tools page once calls flow.
+        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 py-4 pb-5">
+          <div className="grid gap-1.5">
+            <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+              <Icon name="package" className="size-3.5 text-dim" /> Wrap an installed tool
+              <span className="mono ml-auto shrink-0 rounded border border-accent/40 px-1.5 py-0.5 text-[9px] text-accent">recommended</span>
             </p>
-            <div className="mt-3 grid gap-1.5">
-              {HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => {
-                const routed = (proxy?.routed ?? []).includes(h.id);
-                return (
-                  <div key={h.id} className="flex items-center gap-2 rounded-md bg-panel/60 px-2 py-1.5">
-                    <AgentLogo host={h.id} className="size-3.5 shrink-0" />
-                    <span className="truncate text-[11px] text-ink">{h.label}</span>
-                    <span className={cn(
-                      "mono rounded border px-1.5 py-0.5 text-[9px]",
-                      routed ? "border-success/40 text-success" : "border-line text-dim",
-                    )}
+            <p className="m-0 text-[10px] leading-relaxed text-dim">
+              Flip the switch and Tersio runs headroom's own integration for that tool — no terminal,
+              nothing to copy. Tools without a durable install launch through headroom instead.
+            </p>
+            {wrapTargets === null ? (
+              <Skeleton className="h-8 w-full rounded-md" />
+            ) : (
+              <div className="grid gap-1">
+                {wrapTargets.map((target) => {
+                  const on = wrapped[target.name] === true;
+                  return (
+                    <div
+                      key={target.name}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors",
+                        on ? "border-success/30 bg-success/5" : target.available ? "border-line" : "border-dashed border-line/60",
+                      )}
                     >
-                      {routed ? "routed" : "unrouted"}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={routeBusy !== null}
-                      onClick={() => toggleRoute(h.id as HostId)}
-                      className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
-                    >
-                      {routeBusy === h.id ? "working" : routed ? "unroute" : "route"}
-                    </button>
-                  </div>
-                );
-              })}
+                      <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />
+                      <span className={cn("mono min-w-0 flex-1 truncate text-[11px]", on ? "text-ink" : target.available ? "text-dim" : "text-dim/60")}>{target.name}</span>
+                      <span className={cn("mono shrink-0 rounded border px-1 py-0.5 text-[9px]", on ? "border-success/40 text-success" : "border-line text-dim")}>
+                        {target.available ? (on ? "wrapped" : "ready") : "not installed"}
+                      </span>
+                      <Switch
+                        size="sm"
+                        checked={on}
+                        disabled={!target.available || wrapBusy !== null}
+                        onCheckedChange={(next: boolean) => {
+                          if (!next) return;
+                          setWrapBusy(target.name);
+                          setDetail(null);
+                          void postHeadroomWrap(target.name)
+                            .then((result) => {
+                              if (result?.ok) {
+                                setWrapped((current) => {
+                                  const nextMap: Record<string, true> = { ...current, [target.name]: true };
+                                  try { localStorage.setItem("tersio.headroom.wrap.v1", JSON.stringify(nextMap)); } catch { /* private mode */ }
+                                  return nextMap;
+                                });
+                              }
+                              setDetail(result?.detail ?? "the dashboard server did not answer");
+                            })
+                            .finally(() => setWrapBusy(null));
+                        }}
+                        aria-label={`Wrap ${target.name} through headroom`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {wrapBusy !== null ? (
+              <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-accent">
+                <Spinner className="size-3" /> wrapping {wrapBusy}…
+              </p>
+            ) : detail ? <p className="mono m-0 text-[10px] text-accent">{detail}</p> : null}
+          </div>
+          <div className="grid gap-1.5">
+            <p className="flex items-center gap-1.5 text-[13px] font-semibold">
+              <Icon name="bot" className="size-3.5 text-dim" /> Tersio agents on this machine
+            </p>
+            <div className="grid gap-1">
+              {HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => (
+                <div key={h.id} className="flex items-center gap-2.5 rounded-md border border-line px-2.5 py-1.5">
+                  <AgentLogo host={h.id} className="size-3.5 shrink-0" />
+                  <span className="mono min-w-0 flex-1 truncate text-[11px] text-dim">{h.label}</span>
+                  <span className="mono shrink-0 text-[9px] text-dim">
+                    {h.id === "opencode" ? "wraps · see above" : "no wrap · see its node"}
+                  </span>
+                </div>
+              ))}
             </div>
-            {detail ? <p className="mono m-0 mt-2 text-[10px] text-dim">{detail}</p> : null}
           </div>
           <div className="grid gap-1.5">
             <p className="m-0 text-[13px] font-semibold">Session default</p>
@@ -475,7 +499,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
                   label={option.label}
                   active={current === option.id}
                   disabled={busy !== null}
-                  onClick={() => { onSet("headroom", picker.field, option.id === "on"); onSaved(); }}
+                  onClick={() => { onSet("headroom", picker.field, option.id); onSaved(); }}
                 />
               ))
             )}
@@ -486,7 +510,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
   );
 }
 
-/** No agent on this machine yet: the centered canvas node opens this picker. */
+/** The add-agent picker: every agent with its install state, so what is missing is obvious at a glance. */
 export function AddAgentDialog({
   open, onOpenChange, missingHosts, hostState, busy, onHostAction,
 }: {
@@ -503,29 +527,41 @@ export function AddAgentDialog({
         <DialogHeader>
           <DialogTitle>Add an agent</DialogTitle>
           <DialogDescription className="text-[11px] leading-relaxed">
-            Installs the Tersio tree for this agent and puts its node on the canvas.
+            Installing writes the Tersio tree for the agent and puts its node on the canvas.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
-          {missingHosts.map((host) => (
-            <div key={host.id} className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2">
-              <AgentLogo host={host.id as "omp"} className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate text-[12px]">{host.label}</span>
-              <span className="mono shrink-0 text-[9px] text-dim">
-                {hostState.versions[host.id] ? `v${hostState.versions[host.id]}` : ""}
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy !== null}
-                onClick={() => onHostAction(`host-${host.id}` as NodeId, "install")}
-                className="h-7 gap-1.5 px-2 text-[11px]"
-              >
-                {busy === `host-${host.id}` ? <Spinner className="size-3 text-accent" /> : <Icon name="plus" className="size-3.5" />}
-                Install
-              </Button>
-            </div>
-          ))}
+          {HOSTS.map((host) => {
+            const installed = hostState.installed[host.id] !== false;
+            const missing = missingHosts.some((m) => m.id === host.id);
+            return (
+              <div key={host.id} className={cn("flex items-center gap-2 rounded-lg border px-2.5 py-2", installed ? "border-line" : "border-dashed border-line")}>
+                <AgentLogo host={host.id as "omp"} className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-[12px]">{host.label}</span>
+                <span
+                  className={cn(
+                    "mono flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[9px]",
+                    installed ? "border-success/40 text-success" : "border-line text-dim",
+                  )}
+                >
+                  <span aria-hidden="true" className={cn("size-1.5 rounded-full", installed ? "bg-success" : "bg-dim")} />
+                  {installed ? versionOf(hostState.versions[host.id]) ?? "installed" : "not installed"}
+                </span>
+                {!installed ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy !== null || !missing}
+                    onClick={() => onHostAction(`host-${host.id}` as NodeId, "install")}
+                    className="h-7 gap-1.5 px-2 text-[11px]"
+                  >
+                    {busy === `host-${host.id}` ? <Spinner className="size-3 text-accent" /> : <Icon name="plus" className="size-3.5" />}
+                    Install
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </DialogContent>
     </Dialog>

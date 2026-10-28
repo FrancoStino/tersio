@@ -643,17 +643,6 @@ export function useAgentRequestEntry(file: string | null, entryId: string | null
   return { entry, loading };
 }
 
-export interface HeadroomProxyReport {
-  running: boolean;
-  port: number;
-  pid: number | null;
-  anthropicUrl: string;
-  openaiUrl: string;
-  detail: string;
-  /** The hosts whose providers currently point at the gateway. */
-  routed: string[];
-}
-
 /** The canvas node layout, stored tersio-side so a dashboard restart on a new port keeps it. */
 export async function fetchPipelinePositions(): Promise<Record<string, unknown> | null> {
   try {
@@ -679,52 +668,33 @@ export async function postPipelinePositions(positions: Record<string, unknown>):
   }
 }
 
-/** Reads the gateway's state: whether the proxy tersio started is live, and the URLs it serves. */
-export async function fetchHeadroomProxy(): Promise<HeadroomProxyReport | null> {
+/** Which headroom wrap targets have their binary on this machine. */
+export async function fetchWrapTargets(): Promise<Array<{ name: string; available: boolean }> | null> {
   try {
-    const r = await fetch("/api/headroom/route");
+    const r = await fetch("/api/headroom/wrap");
     if (!r.ok) return null;
-    const body = (await r.json()) as { proxy?: Omit<HeadroomProxyReport, "routed">; routed?: string[] };
-    // The server reports the routed hosts beside the proxy state, not inside it.
-    return body.proxy ? { ...body.proxy, routed: body.routed ?? [] } : null;
+    const body = (await r.json()) as { targets?: Array<{ name: string; available: boolean }> };
+    return body.targets ?? null;
   } catch {
     return null;
   }
 }
 
-export async function postHeadroomProxy(action: "start-proxy" | "stop-proxy"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
+/** Runs headroom's documented wrap command for one tool, detached. */
+export async function postHeadroomWrap(name: string): Promise<{ ok: boolean; detail: string } | null> {
   try {
-    const r = await fetch("/api/headroom/route", {
+    const r = await fetch("/api/headroom/wrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ name }),
     });
-    const body = (await r.json()) as { ok: boolean; detail: string; routed?: string[] };
-    return { ok: body?.ok ?? false, detail: body?.detail ?? "", routed: body?.routed ?? [] };
+    if (!r.ok) return null;
+    return (await r.json()) as { ok: boolean; detail: string };
   } catch {
     return null;
   }
 }
 
-/** Routes one installed agent through the gateway, or undoes it. The server auto-starts the proxy. */
-export async function postHeadroomRoute(host: "omp" | "pi" | "pig" | "opencode", action: "route-host" | "unroute-host"): Promise<{ ok: boolean; detail: string; routed: string[] } | null> {
-  try {
-    const r = await fetch("/api/headroom/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, host }),
-    });
-    const body = (await r.json()) as { ok: boolean; detail: string; routed?: string[] };
-    return { ok: body?.ok ?? false, detail: body?.detail ?? "", routed: body?.routed ?? [] };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Installs Headroom from the dashboard and polls the job until the binary lands, the pip run names its
- * failure, or the budget runs out. Resolves `present` when the binary exists, else the reason it does not.
- */
 export async function installHeadroom(budgetMs = 180_000): Promise<{ present: boolean; error: string | null }> {
   try {
     const start = await fetch("/api/headroom/install", { method: "POST" })
