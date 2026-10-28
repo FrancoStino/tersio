@@ -88,7 +88,10 @@ test("ompProvidersFromYml reads each provider's own baseUrl and ignores a model-
   ]);
 });
 
-test("routing omp points the provider at its gateway and starts the instance on the original upstream", async () => {
+// The instance tests spawn the fake gateway: a POSIX script a Windows spawn cannot exec, so they
+// run everywhere the fake can. The yml rewrite assertions inside them are platform-independent,
+// and the refusal tests below cover the Windows path.
+test.skipIf(process.platform === "win32")("routing omp points the provider at its gateway and starts the instance on the original upstream", async () => {
   const home = tempHome();
   const file = writeModels(home);
   const argvLog = fakeHeadroom(path.join(home, "bin"));
@@ -110,7 +113,7 @@ test("routing omp points the provider at its gateway and starts the instance on 
   expect(stopHeadroomProxy(home).ok).toBe(true);
 }, 60_000);
 
-test("routing twice is idempotent, and unroute restores the original baseUrl exactly", async () => {
+test.skipIf(process.platform === "win32")("routing twice is idempotent, and unroute restores the original baseUrl exactly", async () => {
   const home = tempHome();
   const file = writeModels(home);
   fakeHeadroom(path.join(home, "bin"));
