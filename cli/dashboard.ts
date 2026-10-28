@@ -219,6 +219,10 @@ function piPath(): string | null {
   return binOnPath('pi');
 }
 
+function pigPath(): string | null {
+  return binOnPath('pig');
+}
+
 function opencodePath(): string | null {
   return binOnPath('opencode');
 }
@@ -267,10 +271,12 @@ function healthJson(): string {
   const rtkPresent = rtkBin !== null;
   const detectedOmpPath = ompPath();
   const detectedPiPath = piPath();
+  const detectedPigPath = pigPath();
   const detectedOpencodePath = opencodePath();
-  const agentDir = (id: 'omp' | 'pi' | 'opencode'): string | null => {
+  const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
     if (id === 'omp') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.omp');
     if (id === 'pi') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.pi');
+    if (id === 'pig') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.pig');
     return path.join(process.env.HOME || process.env.USERPROFILE || '', '.config', 'opencode');
   };
   return JSON.stringify({
@@ -283,6 +289,9 @@ function healthJson(): string {
     pi: agentVersion(detectedPiPath),
     piPath: detectedPiPath,
     piDir: agentDir('pi'),
+    pig: agentVersion(detectedPigPath),
+    pigPath: detectedPigPath,
+    pigDir: agentDir('pig'),
     opencode: agentVersion(detectedOpencodePath),
     opencodePath: detectedOpencodePath,
     opencodeDir: agentDir('opencode'),

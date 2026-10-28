@@ -12,7 +12,7 @@ import { useToast } from "../toaster";
 import { cn } from "cn";
 
 type Point = readonly [number, number];
-type EdgeKey = "hosts" | "omp" | "pi" | "opencode" | "combo" | "caveman" | "pstack" | "rtk" | "ponytail";
+type EdgeKey = "hosts" | "omp" | "pi" | "pig" | "opencode" | "combo" | "caveman" | "pstack" | "rtk" | "ponytail";
 
 type HostAction = "install" | "uninstall" | "update";
 
@@ -38,6 +38,7 @@ type NodeId =
   | "hosts"
   | "host-omp"
   | "host-pi"
+  | "host-pig"
   | "host-opencode"
   | "combo"
   | "caveman"
@@ -199,14 +200,15 @@ function ortho(points: ReadonlyArray<Point>, radius = 8): string {
 function versionOf(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const tail = raw.split("/").pop() ?? raw;
-  const version = tail.replace(/^(omp|pi|opencode)\s+/i, "").trim();
+  const version = tail.replace(/^(omp|pi|pig|opencode)\s+/i, "").trim();
   return version || null;
 }
 
-/** The three hosts, in the order the installer writes them. */
+/** The hosts, in the order the installer writes them. */
 const HOSTS = [
   { id: "omp", label: "Oh My Pi" },
   { id: "pi", label: "pi" },
+  { id: "pig", label: "PiG" },
   { id: "opencode", label: "OpenCode" },
 ] as const;
 
@@ -251,9 +253,10 @@ const PICKER: Partial<Record<NodeId, { field: string; options: ReadonlyArray<{ i
 
 /** What the detail panel says about a node. */
 const ABOUT: Record<NodeId, string> = {
-  hosts: "Every agent loads the same extension tree. Only the way each host loads it differs, so a mode behaves the same in all three.",
+  hosts: "Every agent loads the same extension tree. Only the way each host loads it differs, so a mode behaves the same in every host.",
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
+  "host-pig": "PiG loads the same tree from its own agent directory, the way pi does.",
   "host-opencode": "OpenCode loads the tree as one plugin, registered in opencode.json.",
   combo: "One preset for caveman, RTK, and Ponytail. pstack keeps its own switch.",
   caveman: "Voice. Terse replies; code, commands, paths, and errors stay exact.",
@@ -996,7 +999,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
               });
               void fetchHealth().then((report) => {
                 if (!report) return;
-                const version = versionOf(report[host as "omp" | "pi" | "opencode"]);
+                const version = versionOf(report[host as "omp" | "pi" | "pig" | "opencode"]);
                 if (version) setHostState((s) => ({ ...s, versions: { ...s.versions, [host]: version } }));
               });
               if (job?.code === 0) {
@@ -1020,7 +1023,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
     <Page>
       <PageHeader
         title="Quick start"
-        description="One package, three agents, four modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
+        description="One package, four agents, four modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
       />
 
       <Card
