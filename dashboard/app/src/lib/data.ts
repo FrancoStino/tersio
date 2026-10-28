@@ -695,6 +695,42 @@ export async function postHeadroomWrap(name: string): Promise<{ ok: boolean; det
   }
 }
 
+/** One vendor row from the scorecard: the installed version against the latest release. */
+export interface VendorRow {
+  source: string;
+  pin: string | null;
+  upstream: string | null;
+}
+
+/** Refreshes the scorecard and returns the row for one vendor tool. */
+export async function checkVendor(tool: "Headroom" | "RTK"): Promise<VendorRow | null> {
+  try {
+    const check = await fetch("/api/upstream/check", { method: "POST", signal: AbortSignal.timeout(120_000) });
+    if (!check.ok) return null;
+    await fetch("/api/upstream");
+    const r = await fetch("/api/upstream");
+    if (!r.ok) return null;
+    const body = (await r.json()) as { card?: { sources?: VendorRow[] } };
+    return body.card?.sources?.find((row) => row.source === tool) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The vendor footer's actions: update in the background, or remove the binary. */
+export async function postVendorAction(tool: "headroom" | "rtk", action: "update" | "uninstall"): Promise<{ ok: boolean; detail: string; error?: string } | null> {
+  try {
+    const r = await fetch(`/api/vendor/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool }),
+    });
+    return (await r.json()) as { ok: boolean; detail: string; error?: string };
+  } catch {
+    return null;
+  }
+}
+
 export async function installHeadroom(budgetMs = 180_000): Promise<{ present: boolean; error: string | null }> {
   try {
     const start = await fetch("/api/headroom/install", { method: "POST" })

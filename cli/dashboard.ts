@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -965,6 +965,85 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       child.unref();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, detail: `${name} launches through headroom in the background — its traffic is compressed from here on` }));
+      return;
+    }
+    // The vendor footers: update or remove a third-party binary (headroom, rtk) from its drawer.
+    if (req.url === '/api/vendor/update' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const tool = String(body.tool ?? '');
+      if (tool === 'headroom') {
+        const bin = resolveHeadroomBinary();
+        if (!bin) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'headroom is not installed' }));
+          return;
+        }
+        const child = spawn(bin, ['update'], { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'Headroom update started');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: 'headroom updates in the background' }));
+        return;
+      }
+      if (tool === 'rtk') {
+        const entry = process.argv[1];
+        const host = detectHosts().find((entry) => entry.installed)?.id;
+        if (!entry || !host) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'no installed agent to refresh rtk through' }));
+          return;
+        }
+        const runtime = entry.endsWith('.ts') ? 'bun' : process.execPath;
+        const child = spawn(runtime, [entry, 'install', '--host', host, '--apply-update', '--yes'], { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'RTK update started');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: `rtk updates through the ${host} refresh — running in the background` }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
+      return;
+    }
+    if (req.url === '/api/vendor/uninstall' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const tool = String(body.tool ?? '');
+      const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+      dirs.push(path.join(homeDir(), '.local', 'bin'));
+      if (tool === 'headroom') {
+        const viaUv = dirs.some((dir) => existsSync(path.join(dir, 'uv')));
+        const cmd = viaUv ? 'uv' : 'pip3';
+        const args = viaUv ? ['tool', 'uninstall', 'headroom-ai'] : ['uninstall', '-y', 'headroom-ai'];
+        const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'Headroom uninstall started');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: `uninstalling headroom-ai with ${cmd} in the background` }));
+        return;
+      }
+      if (tool === 'rtk') {
+        const found = dirs.map((dir) => path.join(dir, 'rtk')).find((p) => existsSync(p));
+        if (!found) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'rtk is not installed' }));
+          return;
+        }
+        try {
+          existsSync(`${found}.bak`) ? unlinkSync(`${found}.bak`) : undefined;
+          unlinkSync(found);
+          recordActivity('agent', 'RTK uninstalled');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, detail: 'the rtk binary is removed — its hooks skip a missing rtk' }));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: (e as Error).message || 'could not remove the rtk binary' }));
+        }
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
       return;
     }
     // The canvas node layout lives tersio-side, not in the browser: localStorage is scoped to the

@@ -9,7 +9,7 @@ import { fetchPipelinePositions, postPipelinePositions } from "@/lib/data";
 import { cn } from "cn";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { HeadroomDrawer, HostDrawer, ModeDialog } from "./how-to-node-ui";
+import { HeadroomDrawer, HostDrawer, ModeDialog, RtkDrawer } from "./how-to-node-ui";
 import {
   HOSTS, MODES, NODE_H, NODE_W, agentModeRows, alignDrag, defaultPositions, edgeLit, edgePath, edgePorts, isOff, loadPositions,
   nodeOff, nodeState, nodeTitle, pipelineGraph, portPoint, savePositions, snapToGrid, versionOf,
@@ -564,7 +564,17 @@ export function PipelineCanvas({
           onSaved={onSaved}
         />
       ) : null}
-      {selected !== null && selected !== "headroom" && !selected.startsWith("host-") && selected !== "prompt" && selected !== "output" ? (
+      {selected === "rtk" ? (
+        <RtkDrawer
+          open
+          onOpenChange={(open) => { if (!open) setSelected(null); }}
+          modes={modes}
+          busy={busy}
+          onSet={onSet}
+          onSaved={onSaved}
+        />
+      ) : null}
+      {selected !== null && selected !== "headroom" && selected !== "rtk" && !selected.startsWith("host-") && selected !== "prompt" && selected !== "output" ? (
         <ModeDialog
           node={selected}
           open
