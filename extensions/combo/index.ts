@@ -249,14 +249,11 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     announceStatus(ctx);
   });
 
-  // Resume, branch, and compaction re-announce; dedupe keeps repeats silent. omp's /new arrives
-  // here as a session_switch rather than a session_start, so a fresh session with no mode state
-  // still gets the configured defaults, exactly like a fresh launch.
+  // Resume, branch, and compaction re-announce. A `/new` emits a switch and no start, so a fresh UI session restores the defaults here too.
   for (const event of sessionChangeEvents(pi)) {
     onHostEvent(pi, event, async (_event, ctx) => {
       track(ctx);
-      const entries = sessionEntries(ctx);
-      if (!hasModeState(entries) && (ctx?.hasUI || OPENCODE)) restoreConfiguredDefaults();
+      if (ctx?.hasUI && !hasModeState(sessionEntries(ctx))) restoreConfiguredDefaults();
       announceStatus(ctx);
     });
   }
