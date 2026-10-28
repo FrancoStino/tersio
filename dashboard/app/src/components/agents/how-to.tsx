@@ -1,37 +1,29 @@
 // Quick start: the pipeline as one canvas, drawn the way a workflow tool lays it out.
 // Everything here mirrors docs/ARCHITECTURE.md: the hosts, the block order, and the turn it produces.
 import { useEffect, useState } from "react";
-import { Card, Page, PageHeader, Segmented } from "@/components/charts";
-import { AgentLogo } from "@/components/agent-logos";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/icon";
-import { Spinner } from "@/components/ui/spinner";
-import { Skeleton } from "@/components/ui/skeleton";
 import { usePending } from "@/hooks/use-pending";
 import { isFileExport } from "@/lib/data";
 import { fetchHealth } from "@/lib/data";
 import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
-import { AgentsAccordion } from "./how-to-modes";
+import { AddAgentDialog } from "./how-to-node-ui";
 import { PipelineCanvas, PipelineSkeleton } from "./how-to-canvas";
 import { HOSTS, readHosts, versionOf } from "./pipeline-model";
 import type { HostAction, HostState, NodeId } from "./pipeline-model";
-
-
 
 export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; onModesChanged: () => void }) {
   const toast = useToast();
   const [hostState, setHostState] = useState<HostState>({ installed: {}, versions: {} });
   const [busy, setBusy] = useState<NodeId | null>(null);
-  // Adding an agent lives in the card header, separate from the mode workflow it feeds.
-  const [addOpen, setAddOpen] = useState(false);
   const missingHosts = HOSTS.filter((host) => hostState.installed[host.id] === false);
   const [hostsLoaded, setHostsLoaded] = useState(false);
   // An exported file has no server: /settings never answers, so the documented every-node-lit reading holds
   // there instead of a permanent skeleton.
   const pipelinePending = usePending(!hostsLoaded || (!isFileExport() && modes === null));
-  // The pipeline card carries both views: the interactive canvas, and the agent list beside it.
-  const [pipelineView, setPipelineView] = useState<"canvas" | "agents">("canvas");
+  // One picker serves both entries: the canvas's centered empty-state node, and the header button.
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     void readHosts()
@@ -122,71 +114,45 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
   };
 
   return (
-    <Page>
-      <PageHeader
-        title="Quick start"
-        description="One package, four agents, five modes. This is the path a turn takes from your prompt to the reply, drawn from what this machine has on."
-      />
-
-      <Card
-        title="The pipeline"
-        icon="workflow"
-        description="Each mode appends one block to the prompt, and RTK rewrites and filters what runs. A dimmed node is off or uninstalled. Click a node to switch it."
-        actions={
-          <div className="flex items-center gap-2">
-            {pipelinePending ? (
-              <Skeleton className="h-7 w-40 rounded-lg" aria-hidden="true" />
-            ) : (
-              <Segmented
-                label="Pipeline view"
-                value={pipelineView}
-                options={[
-                  { value: "canvas", label: "Canvas", title: "The interactive pipeline" },
-                  { value: "agents", label: "Modes", title: "Every agent and the mode defaults it can turn on" },
-                ]}
-                onChange={setPipelineView}
-              />
-            )}
-            {pipelinePending ? (
-              <Skeleton className="h-8 w-28 rounded-lg" aria-hidden="true" />
-            ) : missingHosts.length > 0 ? (
-              <div className="relative">
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen((open) => !open)}>
-                  <Icon name="plus" className="size-3.5" />
-                  Add agent
-                </Button>
-                {addOpen ? (
-                  <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-xl border border-line bg-panel p-2 shadow-xl">
-                    <p className="mono m-0 px-1 pb-1 text-[9px] text-dim">Installs the Tersio tree for this agent</p>
-                    {missingHosts.map((host) => (
-                      <div key={host.id} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-track/60">
-                        <AgentLogo host={host.id} className="size-3.5 shrink-0" />
-                        <span className="truncate text-[11px]">{host.label}</span>
-                        <button
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => { setAddOpen(false); hostAction(`host-${host.id}`, "install"); }}
-                          className="mono ml-auto flex items-center gap-1.5 cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
-                        >
-                          {busy === `host-${host.id}` ? <Spinner className="size-3 shrink-0 text-accent" /> : null}
-                          {busy === `host-${host.id}` ? "working" : "Install"}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        }
-      >
-        {pipelinePending ? <PipelineSkeleton /> : pipelineView === "canvas" ? (
-          <PipelineCanvas modes={modes} hostState={hostState} onSet={save} onHostAction={hostAction} busy={busy} />
-        ) : (
-          <AgentsAccordion hostState={hostState} onSaved={onModesChanged} />
+    // Fullscreen like a workflow tool: the canvas is the page, the chrome floats on top of it.
+    <div className="relative h-[calc(100dvh-3rem)] w-full">
+      {pipelinePending ? null : (
+        <div className="pointer-events-none absolute left-4 top-3 z-10 max-w-xl">
+          <h1 className="font-display text-lg leading-tight font-bold tracking-tight">Quick start</h1>
+          <p className="mono mt-1 text-[11px] leading-snug text-dim">
+            One package, four agents, five modes — the path a turn takes from your prompt to the reply.
+            Drag the nodes, and the flow follows; click one for its options. A dimmed node is off or uninstalled.
+          </p>
+        </div>
+      )}
+      <div className="h-full">
+        {pipelinePending ? <PipelineSkeleton /> : (
+          <PipelineCanvas
+            modes={modes}
+            hostState={hostState}
+            onSet={save}
+            onHostAction={hostAction}
+            busy={busy}
+            onSaved={onModesChanged}
+            onAddAgent={() => setAddOpen(true)}
+          />
         )}
-      </Card>
-    </Page>
+      </div>
+      {!pipelinePending && missingHosts.length > 0 ? (
+        <Button size="sm" variant="outline" className="absolute top-3 right-4 z-10 gap-1.5 bg-panel/90 backdrop-blur" onClick={() => setAddOpen(true)}>
+          <Icon name="plus" className="size-3.5" />
+          Add agent
+        </Button>
+      ) : null}
+
+      <AddAgentDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        missingHosts={missingHosts}
+        hostState={hostState}
+        busy={busy}
+        onHostAction={hostAction}
+      />
+    </div>
   );
 }
-

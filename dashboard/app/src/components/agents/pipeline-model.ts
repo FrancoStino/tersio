@@ -1,13 +1,10 @@
-// Quick start data model: the pipeline's types, tables, and layout, plus every derivation the canvas
-// and the fold panel read. No JSX here, so the host surfaces stay in the component modules.
+// Quick start data model: the pipeline graph, its tables, and every derivation the canvas and the
+// dialogs read. No JSX here, so the host surfaces stay in the component modules.
 import type { ModeState } from "./shell";
 
 export type Point = readonly [number, number];
 
-export const MODE_KEYS = ["caveman", "pstack", "rtk", "ponytail"] as const;
-export type ModeKey = (typeof MODE_KEYS)[number];
-
-export type EdgeKey = "hosts" | "omp" | "pi" | "pig" | "opencode" | "combo" | "headroom" | ModeKey | `${ModeKey}-${string}`;
+export type EdgeKey = "hosts" | "omp" | "pi" | "pig" | "opencode" | "combo" | "headroom" | "caveman" | "pstack" | "rtk" | "ponytail";
 
 export type HostAction = "install" | "uninstall" | "update";
 
@@ -24,6 +21,7 @@ export interface Box {
 }
 
 export type NodeId =
+  | "prompt"
   | "output"
   | "caveman"
   | "pstack"
@@ -31,125 +29,216 @@ export type NodeId =
   | "rtk"
   | "ponytail"
   | `host-${string}`
-  | `combo-${string}`
-  | `${ModeKey}-${string}`;
+  | `combo-${string}`;
 
-/** A lane block id (`caveman-omp`) names one agent's own copy of a mode block; null for every other id. */
-export function laneBlockOf(id: NodeId): { block: ModeKey; host: string } | null {
-  const cut = id.lastIndexOf("-");
-  if (cut <= 0) return null;
-  const block = id.slice(0, cut);
-  const host = id.slice(cut + 1);
-  return (MODE_KEYS as ReadonlyArray<string>).includes(block) && host !== "" ? { block: block as ModeKey, host } : null;
+export interface GraphEdge {
+  from: NodeId;
+  to: NodeId;
 }
 
-const FIELD_OF: Record<ModeKey, "cavemanDefault" | "pstackDefault" | "rtkDefault" | "ponytailDefault"> = {
-  caveman: "cavemanDefault", pstack: "pstackDefault", rtk: "rtkDefault", "ponytail": "ponytailDefault",
-};
+/** The injection order: each block appends to the prompt in this sequence. */
+export const CHAIN = ["caveman", "pstack", "rtk", "ponytail"] as const;
 
-interface Link {
-  p: ReadonlyArray<Point>;
-  k?: EdgeKey;
+/** The turn order the chains read, plus one preset-and-agent pair per installed host. */
+export function pipelineGraph(installedHosts: ReadonlyArray<string>): { nodes: NodeId[]; edges: GraphEdge[] } {
+  const nodes: NodeId[] = ["prompt", ...CHAIN, "headroom", "output"];
+  for (const host of installedHosts) nodes.push(`combo-${host}` as NodeId, `host-${host}` as NodeId);
+  const edges: GraphEdge[] = [
+    { from: "prompt", to: "caveman" },
+    ...CHAIN.slice(0, -1).map((id, i) => ({ from: id, to: CHAIN[i + 1] as NodeId })),
+    { from: "ponytail", to: "output" },
+    { from: "prompt", to: "headroom" },
+    { from: "headroom", to: "output" },
+  ];
+  for (const host of installedHosts) {
+    edges.push({ from: `combo-${host}` as NodeId, to: `host-${host}` as NodeId });
+    edges.push({ from: `host-${host}` as NodeId, to: "output" });
+  }
+  return { nodes, edges };
 }
 
-interface Caption {
-  x: number;
-  y: number;
-  text: string;
-  anchor?: "start" | "end";
+export const NODE_W = 200;
+export const NODE_H = 56;
+
+/** Everything lands on this grid, so nodes line up with the dot background and with each other. */
+export const GRID_SNAP = 8;
+
+export function snapToGrid(value: number): number {
+  return Math.round(value / GRID_SNAP) * GRID_SNAP;
 }
 
-interface Layout {
-  w: number;
-  h: number;
-  nodes: ReadonlyArray<readonly [NodeId, Box]>;
-  links: readonly Link[];
-  captions: readonly Caption[];
+export type PortSide = "left" | "right" | "top" | "bottom";
+
+/** The midpoint of one side: the port an edge leaves from or arrives at. */
+export function portPoint(box: Box, side: PortSide): Point {
+  if (side === "left") return [box.x, box.y + box.h / 2];
+  if (side === "right") return [box.x + box.w, box.y + box.h / 2];
+  if (side === "top") return [box.x + box.w / 2, box.y];
+  return [box.x + box.w / 2, box.y + box.h];
 }
 
-const BLOCK_COLUMN_H = 4 * 76 + 8;
+/** The two ports an edge uses, chosen by the target's direction from the source — n8n lets lines leave any side. */
+export function edgePorts(s: Box, t: Box): { from: PortSide; to: PortSide } {
+  const dx = t.x + t.w / 2 - (s.x + s.w / 2);
+  const dy = t.y + t.h / 2 - (s.y + s.h / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? { from: "right", to: "left" } : { from: "left", to: "right" };
+  return dy >= 0 ? { from: "bottom", to: "top" } : { from: "top", to: "bottom" };
+}
+
+const PORT_NORMAL: Record<PortSide, Point> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
+
+/** One n8n-style cubic: leaves the source port along its outward normal, arrives along the target's. */
+export function bezierEdge(s: Point, t: Point, from: PortSide, to: PortSide): string {
+  const outFrom = PORT_NORMAL[from];
+  const outTo = PORT_NORMAL[to];
+  const dx = t[0] - s[0];
+  const dy = t[1] - s[1];
+  const reach = Math.max(48, Math.hypot(dx, dy) * 0.45);
+  return `M${s[0]} ${s[1]} C${s[0] + outFrom[0] * reach} ${s[1] + outFrom[1] * reach}, ${t[0] + outTo[0] * reach} ${t[1] + outTo[1] * reach}, ${t[0]} ${t[1]}`;
+}
+
+const EDGE_CLEARANCE = 12;
+const EDGE_BOW = 30;
+
+/** How close a dragged edge or center must be to another node's before it snaps. */
+export const ALIGN_THRESHOLD = 6;
+
+export interface GuideLine {
+  /** The coordinate the line sits at (x for vertical, y for horizontal). */
+  at: number;
+  /** The line's span across the other axis. */
+  from: number;
+  to: number;
+}
+
+export interface Alignment {
+  box: Box;
+  vertical: GuideLine[];
+  horizontal: GuideLine[];
+}
 
 /**
- * One design space, one lane per agent: the host and its preset feed that agent's own row of mode
- * blocks, and every lane closes in its own output. The blocks dim by that agent's saved defaults, so
- * two agents with different sections draw two different flows instead of one shared pipe. Adding an
- * agent adds a lane, so the card pans and zooms instead of squeezing the nodes. Gaps stay generous:
- * the pair link, the block arrows, and the row wrap all need visible room to read as flow.
+ * Figma-style snapping: the dragged node's edges and center snap to every other node's edges and
+ * center within the threshold, winning over the pixel grid, and reports the guide lines to draw.
  */
-export function pipelineLayout(hosts: ReadonlyArray<{ id: string }>, compact: boolean): Layout {
-  const nodes: Array<readonly [NodeId, Box]> = [];
-  const links: Link[] = [];
-  if (compact) {
-    // Narrow card: each lane stacks its pair on the left and its blocks in a column on the right.
-    // Lane pitch clears the lane's last block plus a gap, so lanes never overlap.
-    const lanePitch = BLOCK_COLUMN_H + 86;
-    hosts.forEach((host, i) => {
-      const laneY = 88 + i * lanePitch;
-      nodes.push(
-        [`host-${host.id}` as NodeId, { x: 16, y: laneY, w: 190, h: 54 }],
-        [`combo-${host.id}` as NodeId, { x: 16, y: laneY + 70, w: 190, h: 54 }],
-      );
-      links.push({ p: [[115, laneY + 54], [115, laneY + 70]], k: host.id as EdgeKey });
-      links.push({ p: [[206, laneY + 97], [222, laneY + 97], [222, laneY + 31], [238, laneY + 31]], k: `caveman-${host.id}` as EdgeKey });
-      MODE_KEYS.forEach((block, j) => {
-        nodes.push([`${block}-${host.id}` as NodeId, { x: 238, y: laneY + j * 76, w: 210, h: 62 }]);
-        if (j > 0) links.push({ p: [[343, laneY + (j - 1) * 76 + 62], [343, laneY + j * 76]], k: `${block}-${host.id}` as EdgeKey });
-      });
-    });
-    // The one proxy sits above every lane; a quiet drop line ties it to the lanes' entry row.
-    nodes.push(["headroom", { x: 123, y: 14, w: 210, h: 54 }]);
-    if (hosts.length > 0) links.push({ p: [[228, 68], [228, 80], [343, 80], [343, 88]] });
-    const laneBottom = (i: number): number => 88 + i * lanePitch + BLOCK_COLUMN_H + 8;
-    return {
-      w: 456,
-      h: hosts.length ? laneBottom(hosts.length - 1) + 52 : 96,
-      nodes,
-      links,
-      captions: [],
-    };
-  }
-  // Wide card: one lane per agent — the host and its preset feed that agent's own row of mode blocks.
-  // Gaps stay generous: the pair link, the block arrows, and the trunk all need visible room to read
-  // as flow. Headroom is not a step in any flow: the one proxy sits above every lane.
-  hosts.forEach((host, i) => {
-    const y = 118 + i * 158;
-    nodes.push(
-      [`host-${host.id}` as NodeId, { x: 20, y, w: 190, h: 54 }],
-      [`combo-${host.id}` as NodeId, { x: 20, y: y + 78, w: 190, h: 54 }],
-    );
-    links.push({ p: [[115, y + 54], [115, y + 78]], k: host.id as EdgeKey });
-    // The preset feeds this lane's first block, and the blocks chain left to right in injection order.
-    links.push({ p: [[210, y + 105], [226, y + 105], [226, y + 66], [262, y + 66]], k: `caveman-${host.id}` as EdgeKey });
-    MODE_KEYS.forEach((block, j) => {
-      nodes.push([`${block}-${host.id}` as NodeId, { x: 262 + j * 210, y: y + 37, w: 180, h: 58 }]);
-      if (j > 0) links.push({ p: [[262 + (j - 1) * 210 + 180, y + 66], [262 + j * 210, y + 66]], k: `${block}-${host.id}` as EdgeKey });
-    });
-  });
-  const rowEnd = 262 + MODE_KEYS.length * 210 - 30;
-  nodes.push(["headroom", { x: rowEnd / 2 - 95, y: 12, w: 190, h: 54 }]);
-  if (hosts.length > 0) links.push({ p: [[rowEnd / 2, 66], [rowEnd / 2, 118 + 37]] });
-  const lastLaneBottom = hosts.length ? 118 + (hosts.length - 1) * 158 + 132 : 118;
+export function alignDrag(id: string, next: Box, boxes: ReadonlyArray<readonly [string, Box]>): Alignment {
+  const pick = (axis: "x" | "y"): { delta: number; line: GuideLine } | null => {
+    const size = axis === "x" ? next.w : next.h;
+    const origin = axis === "x" ? next.x : next.y;
+    const mine = [origin, origin + size / 2, origin + size];
+    let best: { delta: number; line: GuideLine } | null = null;
+    for (const [otherId, b] of boxes) {
+      if (otherId === id) continue;
+      const otherOrigin = axis === "x" ? b.x : b.y;
+      const otherSize = axis === "x" ? b.w : b.h;
+      for (const theirs of [otherOrigin, otherOrigin + otherSize / 2, otherOrigin + otherSize]) {
+        for (const m of mine) {
+          const delta = theirs - m;
+          if (Math.abs(delta) > ALIGN_THRESHOLD) continue;
+          if (best && Math.abs(delta) >= Math.abs(best.delta)) continue;
+          const cross = axis === "x"
+            ? [Math.min(next.y, b.y), Math.max(next.y + next.h, b.y + b.h)]
+            : [Math.min(next.x, b.x), Math.max(next.x + next.w, b.x + b.w)];
+          best = { delta, line: { at: theirs, from: cross[0], to: cross[1] } };
+        }
+      }
+    }
+    return best;
+  };
+  const vertical = pick("x");
+  const horizontal = pick("y");
   return {
-    w: rowEnd + 20,
-    h: lastLaneBottom + 66,
-    nodes,
-    links,
-    captions: [],
+    box: { ...next, x: next.x + (vertical?.delta ?? 0), y: next.y + (horizontal?.delta ?? 0) },
+    vertical: vertical ? [vertical.line] : [],
+    horizontal: horizontal ? [horizontal.line] : [],
   };
 }
 
-/** An orthogonal route through these points, with every corner rounded by `radius`. */
-export function ortho(points: ReadonlyArray<Point>, radius = 8): string {
-  const [first, ...rest] = points;
-  let d = `M${first[0]} ${first[1]}`;
-  for (let i = 0; i < rest.length; i += 1) {
-    const [x, y] = rest[i];
-    const [prevX, prevY] = rest[i - 1] ?? first;
-    const cornerX = Math.abs(x - prevX) > radius ? (x > prevX ? x - radius : x + radius) : x;
-    const cornerY = Math.abs(y - prevY) > radius ? (y > prevY ? y - radius : y + radius) : y;
-    d += ` L${prevX === x ? prevX : cornerX} ${prevY === y ? prevY : cornerY} L${x} ${y}`;
+/**
+ * The connector between two nodes, bowing around any node the straight run would cross: the path
+ * detours through a waypoint just off the face it exits, so lines never run under a node card.
+ */
+export function edgePath(s: Box, t: Box, others: ReadonlyArray<Box>): string {
+  const ports = edgePorts(s, t);
+  const sp = portPoint(s, ports.from);
+  const tp = portPoint(t, ports.to);
+  let waypoint: Point | null = null;
+  let normal: Point = [0, -1];
+  for (const b of others) {
+    for (let i = 1; i < 16 && !waypoint; i += 1) {
+      const px = sp[0] + ((tp[0] - sp[0]) * i) / 16;
+      const py = sp[1] + ((tp[1] - sp[1]) * i) / 16;
+      if (px <= b.x - EDGE_CLEARANCE || px >= b.x + b.w + EDGE_CLEARANCE) continue;
+      if (py <= b.y - EDGE_CLEARANCE || py >= b.y + b.h + EDGE_CLEARANCE) continue;
+      // The face nearest the crossing point is where the path climbs out.
+      const left = px - b.x;
+      const right = b.x + b.w - px;
+      const top = py - b.y;
+      const bottom = b.y + b.h - py;
+      const face = Math.min(left, right, top, bottom);
+      const clamped: Point = face === left ? [b.x, py] : face === right ? [b.x + b.w, py] : face === top ? [px, b.y] : [px, b.y + b.h];
+      normal = face === left ? [-1, 0] : face === right ? [1, 0] : face === top ? [0, -1] : [0, 1];
+      waypoint = [clamped[0] + normal[0] * EDGE_BOW, clamped[1] + normal[1] * EDGE_BOW];
+    }
+    if (waypoint) break;
   }
-  return d;
+  if (!waypoint) return bezierEdge(sp, tp, ports.from, ports.to);
+  const reach = 40;
+  const w = waypoint;
+  const inFrom: Point = [sp[0] + PORT_NORMAL[ports.from][0] * reach, sp[1] + PORT_NORMAL[ports.from][1] * reach];
+  const apexIn: Point = [w[0] - normal[0] * reach, w[1] - normal[1] * reach];
+  const apexOut: Point = [w[0] + normal[0] * reach, w[1] + normal[1] * reach];
+  const inTo: Point = [tp[0] + PORT_NORMAL[ports.to][0] * reach, tp[1] + PORT_NORMAL[ports.to][1] * reach];
+  return `M${sp[0]} ${sp[1]} C${inFrom[0]} ${inFrom[1]}, ${apexIn[0]} ${apexIn[1]}, ${w[0]} ${w[1]} C${apexOut[0]} ${apexOut[1]}, ${inTo[0]} ${inTo[1]}, ${tp[0]} ${tp[1]}`;
+}
+
+/** The n8n reading: columns left to right, the shared chain on the main line, the traffic layer above, agents below. */
+export function defaultPositions(installedHosts: ReadonlyArray<string>): Record<string, Box> {
+  const positions: Record<string, Box> = {
+    prompt: { x: 40, y: 296, w: NODE_W, h: NODE_H },
+    headroom: { x: 320, y: 120, w: NODE_W, h: NODE_H },
+    output: { x: 1440, y: 296, w: NODE_W, h: NODE_H },
+  };
+  CHAIN.forEach((id, i) => {
+    positions[id] = { x: 320 + i * 280, y: 296, w: NODE_W, h: NODE_H };
+  });
+  installedHosts.forEach((host, i) => {
+    positions[`combo-${host}`] = { x: 600, y: 456 + i * 104, w: NODE_W, h: NODE_H };
+    positions[`host-${host}`] = { x: 880, y: 456 + i * 104, w: NODE_W, h: NODE_H };
+  });
+  return positions;
+}
+
+const POSITIONS_KEY = "tersio.pipeline.positions.v1";
+
+/** Node positions survive reloads; a corrupt or missing store falls back to the default layout. */
+export function loadPositions(): Record<string, Box> | null {
+  try {
+    const raw = localStorage.getItem(POSITIONS_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const boxes = parsed as Record<string, unknown>;
+    const clean: Record<string, Box> = {};
+    for (const [id, box] of Object.entries(boxes)) {
+      if (
+        box && typeof box === "object" &&
+        typeof (box as Box).x === "number" && typeof (box as Box).y === "number" &&
+        typeof (box as Box).w === "number" && typeof (box as Box).h === "number"
+      ) clean[id] = box as Box;
+    }
+    return Object.keys(clean).length > 0 ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
+export function savePositions(positions: Record<string, Box>): void {
+  try {
+    localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
+  } catch {
+    // Private mode: the layout just does not persist.
+  }
 }
 
 /** `/health` reports `omp/18.12.6` and `opencode/opencode v2.1.3`, so the node keeps only the version. */
@@ -176,11 +265,7 @@ export const MODES = [
   { key: "ponytail", glyph: "🧠", name: "ponytail", role: "size", note: "smallest complete change" },
 ] as const;
 
-export const TURN = [
-  { id: "output", icon: "arrow-right", title: "Output", note: "the turn's result" },
-] as const;
-
-/** The nodes a click can set, the field each writes, and the levels that field takes. Every per-agent preset node shares the combo entry. */
+/** The nodes a click can set, the field each writes, and the levels that field takes. Every per-agent preset shares the combo entry. */
 export const PICKER: Record<"combo" | "caveman" | "rtk" | "ponytail" | "pstack" | "headroom", { field: string; options: ReadonlyArray<{ id: string; label: string }> }> = {
   combo: {
     field: "comboDefault",
@@ -276,8 +361,9 @@ export const OFF_DEFAULTS: DefaultsPayload = {
   comboDefault: "off", comboLevel: "off", cavemanDefault: "off", rtkDefault: false, ponytailDefault: "off", pstackDefault: "off", headroomDefault: "off",
 };
 
-/** What the fold says about a node. The per-agent preset nodes share the combo entry. */
+/** What the option surface says about a node. */
 export const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
+  prompt: "Your message starts the turn. Every block below appends to it before the agent sees it.",
   "host-omp": "Oh My Pi loads the extensions from its plugin package.",
   "host-pi": "pi auto-discovers the same tree from its extensions directory.",
   "host-pig": "PiG loads the same tree from its own agent directory, the way pi does.",
@@ -288,6 +374,7 @@ export const ABOUT: Partial<Record<NodeId, string>> & { combo: string } = {
   headroom: "Compression below the shell layer. Your own Headroom install compresses tool outputs and history; Tersio tracks it and reads its savings.",
   rtk: "Tooling. Rewrites a shell command and condenses its output before the model sees it.",
   "ponytail": "Size. Caps the diff at the smallest complete change.",
+  output: "The turn's result: what the agent answers after every block applied.",
 };
 
 export interface HostState {
@@ -295,16 +382,18 @@ export interface HostState {
   versions: Record<string, string | null>;
 }
 
-/** One definition of a node's live state, read by the canvas and the fold panel alike. */
+/** One definition of a node's live state, read by the canvas and the dialogs alike. */
 export function edgeLit(key: EdgeKey, modes: ModeState | null, hostState: HostState): Lit {
-  const lane = laneBlockOf(key as NodeId);
-  if (lane) return nodeState(`${lane.block}-${lane.host}` as NodeId, modes, hostState).on;
   if (key === "hosts") {
     const installed = Object.values(hostState.installed);
     return installed.length ? installed.some(Boolean) : null;
   }
   if (key === "omp" || key === "pi" || key === "opencode") {
     const installed = hostState.installed[key];
+    return installed === undefined ? null : installed;
+  }
+  if (key === "pig") {
+    const installed = hostState.installed.pig;
     return installed === undefined ? null : installed;
   }
   if (!modes) return null;
@@ -317,8 +406,6 @@ export function edgeLit(key: EdgeKey, modes: ModeState | null, hostState: HostSt
 }
 
 export function nodeTitle(id: NodeId): string {
-  const lane = laneBlockOf(id);
-  if (lane) return `${MODES.find((mm) => mm.key === lane.block)?.name ?? lane.block} · ${HOSTS.find((h) => h.id === lane.host)?.label ?? lane.host}`;
   if (id.startsWith("host-")) return HOSTS.find((h) => `host-${h.id}` === id)?.label ?? id;
   if (id.startsWith("combo-")) {
     const label = HOSTS.find((h) => `combo-${h.id}` === id)?.label ?? id.slice(6);
@@ -326,19 +413,11 @@ export function nodeTitle(id: NodeId): string {
   }
   const mode = MODES.find((mm) => mm.key === id);
   if (mode) return mode.name;
-  return TURN.find((t) => t.id === id)?.title ?? id;
+  if (id === "prompt") return "Prompt";
+  return "Output";
 }
 
 export function nodeState(id: NodeId, modes: ModeState | null, hostState: HostState): { label: string; on: boolean | null } {
-  const lane = laneBlockOf(id);
-  if (lane) {
-    if (!modes) return { label: "off", on: false };
-    const section = (modes.hosts?.[lane.host] ?? {}) as Partial<Record<string, string | boolean>>;
-    const shared = modes as unknown as Partial<Record<string, string | boolean>>;
-    const raw = section[FIELD_OF[lane.block]] ?? shared[FIELD_OF[lane.block]];
-    const level = lane.block === "rtk" ? (raw === true ? "on" : "off") : String(raw ?? "off");
-    return { label: level, on: level !== "off" };
-  }
   if (id.startsWith("host-")) {
     const key = id.slice(5);
     const on = edgeLit(key as EdgeKey, modes, hostState);
@@ -363,8 +442,6 @@ export function nodeState(id: NodeId, modes: ModeState | null, hostState: HostSt
 }
 
 export function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostState): boolean {
-  const lane = laneBlockOf(id);
-  if (lane) return isOff(nodeState(id, modes, hostState).on);
   if (id.startsWith("host-")) return isOff(edgeLit(id.slice(5) as EdgeKey, modes, hostState));
   if (id.startsWith("combo-")) {
     const host = id.slice(6);
@@ -378,15 +455,8 @@ export function nodeOff(id: NodeId, modes: ModeState | null, hostState: HostStat
   return false;
 }
 
-/** What the node's control reads right now, in the scope the node itself stands for. */
+/** What the node's control reads right now, in the scope the dialog writes to. */
 export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "pig" | "opencode", modes: ModeState | null): string | null {
-  const lane = laneBlockOf(id);
-  if (lane) {
-    if (!modes) return null;
-    const section = (modes.hosts?.[lane.host] ?? {}) as Partial<Record<string, string | boolean>>;
-    const raw = section[FIELD_OF[lane.block]] ?? (modes as unknown as Partial<Record<string, string | boolean>>)[FIELD_OF[lane.block]];
-    return lane.block === "rtk" ? (raw === true ? "on" : "off") : String(raw ?? "off");
-  }
   if (!modes) return null;
   if (id.startsWith("combo-")) {
     if (scope !== "all") {
@@ -395,18 +465,48 @@ export function nodeValue(id: NodeId, scope: "all" | "omp" | "pi" | "pig" | "ope
     }
     return modes.comboLevel || modes.comboDefault;
   }
-  if (id === "caveman") return modes.cavemanDefault;
-  if (id === "ponytail") return modes.ponytailDefault;
-  if (id === "pstack") return modes.pstackDefault;
-  if (id === "headroom") return modes.headroomDefault;
-  if (id === "rtk") return modes.rtkDefault ? "on" : "off";
+  if (id === "caveman") {
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.cavemanDefault;
+      if (typeof own === "string") return own;
+    }
+    return modes.cavemanDefault;
+  }
+  if (id === "ponytail") {
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.ponytailDefault;
+      if (typeof own === "string") return own;
+    }
+    return modes.ponytailDefault;
+  }
+  if (id === "pstack") {
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.pstackDefault;
+      if (typeof own === "string") return own;
+    }
+    return modes.pstackDefault;
+  }
+  if (id === "headroom") {
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.headroomDefault;
+      if (typeof own === "string") return own;
+    }
+    return modes.headroomDefault;
+  }
+  if (id === "rtk") {
+    if (scope !== "all") {
+      const own = modes.hosts?.[scope]?.rtkDefault;
+      if (own !== undefined) return own === true ? "on" : "off";
+    }
+    return modes.rtkDefault ? "on" : "off";
+  }
   return null;
 }
 
 export function nodeGlyph(id: NodeId): string | null {
   if (id.startsWith("combo-")) return "🧩";
-  const lane = laneBlockOf(id);
-  if (lane) return MODES.find((mm) => mm.key === lane.block)?.glyph ?? null;
+  if (id === "prompt") return "▶";
+  if (id === "output") return null;
   return MODES.find((mm) => mm.key === id)?.glyph ?? null;
 }
 

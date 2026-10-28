@@ -926,6 +926,32 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       res.end(JSON.stringify({ ok: true, proxy: readHeadroomProxy(home), routed: routedHosts(home) }));
       return;
     }
+    // The canvas node layout lives tersio-side, not in the browser: localStorage is scoped to the
+    // origin, so a dashboard restart on a new port would forget every node the user placed.
+    if (req.url === '/api/pipeline/positions' && req.method === 'GET') {
+      const file = path.join(tersioHome(), 'pipeline-positions.json');
+      let positions: unknown = {};
+      try { positions = JSON.parse(readFileSync(file, 'utf8')) as unknown; } catch { /* none yet */ }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, positions: positions && typeof positions === 'object' ? positions : {} }));
+      return;
+    }
+    if (req.url === '/api/pipeline/positions' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      const stored = body.positions;
+      if (!stored || typeof stored !== 'object') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'positions must be an object' }));
+        return;
+      }
+      const file = path.join(tersioHome(), 'pipeline-positions.json');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
     if (req.url === '/api/headroom/route' && req.method === 'POST') {
       let body: Record<string, unknown> = {};
       try { body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {}; } catch { body = {}; }

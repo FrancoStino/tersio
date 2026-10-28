@@ -1,21 +1,22 @@
-// The pipeline canvas: node buttons, the fold panel that opens beneath a node, and the pan/zoom loop.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// The pipeline canvas, laid out the way a workflow tool lays it out: an infinite pan/zoom viewport,
+// free-floating node cards the user drags wherever they want, and bezier connectors that follow.
+// Node positions persist tersio-side (with a localStorage cache), so a restart on a new port keeps the layout.
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import type { ModeState } from "./shell";
-import { fetchHeadroomProxy, postHeadroomProxy } from "@/lib/data";
-import type { HeadroomProxyReport } from "@/lib/data";
+import { fetchPipelinePositions, postPipelinePositions } from "@/lib/data";
 import { cn } from "cn";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
+import { HeadroomDrawer, HostDrawer, ModeDialog } from "./how-to-node-ui";
 import {
-  ABOUT, edgeLit, laneBlockOf, HOSTS, MODES, isOff, nodeOff, nodeState, nodeTitle, nodeValue, ortho,
-  pipelineLayout, PICKER, versionOf,
+  HOSTS, MODES, NODE_H, NODE_W, alignDrag, defaultPositions, edgeLit, edgePath, edgePorts, isOff, loadPositions,
+  nodeOff, nodeState, nodeTitle, pipelineGraph, portPoint, savePositions, snapToGrid, versionOf,
 } from "./pipeline-model";
-import type { Box, EdgeKey, HostAction, HostState, Lit, NodeId, Point } from "./pipeline-model";
-
+import type { Box, EdgeKey, HostAction, HostState, NodeId } from "./pipeline-model";
+import type { Alignment, GuideLine } from "./pipeline-model";
+import type { ModeState } from "./shell";
 
 function NodeButton({
   box,
@@ -24,8 +25,12 @@ function NodeButton({
   accent,
   dashed,
   label,
-  onSelect,
+  interactive,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
   onHover,
+  onActivate,
   children,
 }: {
   box: Box;
@@ -34,34 +39,32 @@ function NodeButton({
   accent?: boolean;
   dashed?: boolean;
   label: string;
-  onSelect: () => void;
+  interactive: boolean;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onHover: (on: boolean) => void;
+  onActivate: () => void;
   children: React.ReactNode;
 }) {
-  // A mode switch or a finished install changes the label; that change gets one soft ring.
-  const [pulse, setPulse] = useState<string | null>(null);
-  const previous = useRef(label);
-  useEffect(() => {
-    if (previous.current === label) return;
-    previous.current = label;
-    setPulse(label);
-    const timer = window.setTimeout(() => setPulse(null), 600);
-    return () => window.clearTimeout(timer);
-  }, [label]);
-
   return (
     <button
       type="button"
       aria-label={label}
       aria-current={selected ? "true" : undefined}
-      onClick={onSelect}
+      data-canvas-node
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onFocus={() => onHover(true)}
       onBlur={() => onHover(false)}
+      // Keyboard activation: pointer selection is handled in the drag gesture, so Enter and Space ride onClick.
+      onClick={(event) => { if (event.detail === 0 && interactive) onActivate(); }}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       className={cn(
-        "howto-node absolute flex cursor-pointer flex-col justify-center gap-0.5 overflow-hidden rounded-xl border border-line bg-panel px-3 py-2 text-left outline-none",
+        "howto-node absolute flex cursor-grab flex-col justify-center gap-0.5 overflow-hidden rounded-xl border border-line bg-panel px-3 py-2 text-left outline-none active:cursor-grabbing",
         "hover:border-accent/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40",
         dashed && "items-center border-2 border-dashed bg-panel text-dim hover:border-accent/50 hover:text-ink",
         off && "border-2 border-dashed opacity-55",
@@ -69,438 +72,224 @@ function NodeButton({
         selected && "border-accent ring-2 ring-accent/30",
       )}
     >
-      {pulse ? <span key={pulse} aria-hidden="true" className="howto-pulse pointer-events-none absolute inset-0 rounded-xl ring-2 ring-accent/50" /> : null}
       {children}
     </button>
   );
 }
 
-/** One small action in the node menu: a level, a host command, or an install. */
-function MenuAction({ onClick, disabled, danger, children }: {
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "mono cursor-pointer rounded-md border px-1.5 py-1 text-[10px] transition-colors disabled:cursor-default disabled:opacity-40",
-        danger
-          ? "border-destructive/50 text-destructive hover:bg-destructive/10"
-          : "border-line text-dim hover:border-accent/50 hover:text-ink",
-      )}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** One node's glyph, shared by the canvas button and the fold panel header. */
-function nodeGlyph(id: NodeId): string | null {
-  if (id.startsWith("combo-")) return "🧩";
-  return MODES.find((m) => m.key === id)?.glyph ?? null;
-}
-
-/**
- * The properties fold: a screen-space overlay anchored beneath the clicked node, unfolding from the node's
- * edge. When the space below runs out it flips above and folds from the bottom instead. It keeps its own
- * type size at any zoom, because it never lives inside the canvas transform.
- */
-function NodePanel({
-  hostRef,
-  modes,
-  hostState,
-  node,
-  busy,
-  confirming,
-  onConfirm,
-  onSet,
-  onHostAction,
-  onClose,
-  anchor,
-  bounds,
-}: {
-  hostRef: React.RefObject<HTMLDivElement | null>;
-  modes: ModeState | null;
-  hostState: HostState;
-  node: NonNullable<NodeId | null>;
-  busy: NodeId | null;
-  confirming: NodeId | null;
-  onConfirm: (node: NodeId | null) => void;
-  onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "pig" | "opencode") => void;
-  onHostAction: (node: NodeId, action: HostAction) => void;
-  onClose: () => void;
-  anchor: { x: number; y: number; w: number; h: number };
-  bounds: { w: number; h: number };
-}) {
-  const panel = useRef<HTMLElement>(null);
-  const WIDTH = 280;
-  const GAP = 10;
-  // Which action this panel started, so the busy spinner lives on the button that began it.
-  const [running, setRunning] = useState<HostAction | null>(null);
-  useEffect(() => {
-    if (busy !== node) setRunning(null);
-  }, [busy, node]);
-  const start = (action: HostAction): void => {
-    setRunning(action);
-    onHostAction(node, action);
-  };
-  // Placement first: measure the rendered panel, pick below or above the node, clamp into the canvas.
-  const [place, setPlace] = useState<{ left: number; top: number; origin: "top" | "bottom" } | null>(null);
-  useLayoutEffect(() => {
-    const el = panel.current;
-    if (!el) return;
-    const h = el.offsetHeight;
-    let left = Math.round(anchor.x + anchor.w / 2 - WIDTH / 2);
-    left = Math.max(8, Math.min(left, Math.max(8, bounds.w - WIDTH - 8)));
-    let top = Math.round(anchor.y + anchor.h + GAP);
-    let origin: "top" | "bottom" = "top";
-    if (top + h > bounds.h - 8) {
-      top = Math.round(anchor.y - h - GAP);
-      origin = "bottom";
-    }
-    if (top < 8) {
-      // Neither side fits whole: pin below the node's top edge and let the panel's own scroll take over.
-      top = 8;
-      origin = "top";
-    }
-    setPlace({ left, top, origin });
-  }, [anchor.x, anchor.y, anchor.w, anchor.h, bounds.w, bounds.h, node, modes]);
-
-  useGSAP(() => {
-    if (!panel.current || !place) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      gsap.set(panel.current, { rotateX: 0, y: 0, opacity: 1 });
-      gsap.set(panel.current.querySelectorAll("[data-sheet]"), { y: 0, opacity: 1 });
-      return;
-    }
-    // The fold: the panel swings out of the node's edge, and the rows rise in behind it.
-    const from = place.origin === "top" ? -7 : 7;
-    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-    tl.fromTo(
-      panel.current,
-      { rotateX: from, y: place.origin === "top" ? -10 : 10, opacity: 0 },
-      { rotateX: 0, y: 0, opacity: 1, duration: 0.34, transformOrigin: `${place.origin} center` },
-    );
-    tl.fromTo(
-      panel.current.querySelectorAll("[data-sheet]"),
-      { y: 8, opacity: 0 },
-      { y: 0, opacity: 1, duration: 0.2, stagger: 0.03 },
-      "-=0.12",
-    );
-    return () => { tl.kill(); };
-  }, { scope: panel, dependencies: [node, place?.top, place?.left] });
-
-  const state = nodeState(node, modes, hostState);
-  const glyph = nodeGlyph(node);
-  const lane = laneBlockOf(node);
-  const about = lane ? (ABOUT[lane.block] ?? "") : (ABOUT[node.startsWith("combo-") ? "combo" : node] ?? "");
-  const pickerKey = node.startsWith("combo-") ? "combo" : (lane ? lane.block : node);
-  const picker = pickerKey in PICKER ? PICKER[pickerKey as keyof typeof PICKER] : undefined;
-  // A per-agent node IS the scope: the panel writes that agent's section and nothing else.
-  const scope = node.startsWith("combo-") ? (node.slice(6) as "omp" | "pi" | "pig" | "opencode") : (lane ? (lane.host as "omp" | "pi" | "pig" | "opencode") : "all");
-  const current = nodeValue(node, scope, modes);
-  // A host scope without its own section inherits the shared value, so the row says so.
-  const inherited = node.startsWith("combo-") && scope !== "all" && typeof modes?.hosts?.[scope]?.comboDefault !== "string";
-  // `custom` is what the three modes say, so it matches no preset button and names no command.
-  const picked = picker && current !== null && picker.options.some((option) => option.id === current) ? current : null;
-  const hostId = node.startsWith("host-") ? node.slice("host-".length) : null;
-  const hostInstalled = hostId !== null && !isOff(edgeLit(hostId as EdgeKey, modes, hostState));
-  // No modes yet: a mode node's live state is unknowable, so the skeleton stands in instead of fake "off" rows.
-  const pendingRows = !node.startsWith("host-") && !node.startsWith("combo-") && modes === null;
-  // The headroom node doubles as the gateway control, so the canvas carries the same start/stop as Modes.
-  const [proxy, setProxy] = useState<HeadroomProxyReport | null>(null);
-  const [proxyBusy, setProxyBusy] = useState(false);
-  useEffect(() => {
-    if (node !== "headroom") return;
-    void fetchHeadroomProxy().then(setProxy);
-  }, [node]);
-  const toggleProxy = (): void => {
-    setProxyBusy(true);
-    void postHeadroomProxy(proxy?.running ? "stop-proxy" : "start-proxy")
-      .then((result) => {
-        setProxyDetail(result?.detail ?? "the dashboard server did not answer");
-        setProxy({ ...(proxy ?? { running: false, port: 8787, pid: null, anthropicUrl: "", openaiUrl: "", detail: "", routed: [] }), ...(result ?? {}), ...(result?.routed ? { routed: result.routed } : {}) } as HeadroomProxyReport);
-        void fetchHeadroomProxy().then(setProxy);
-      })
-      .finally(() => setProxyBusy(false));
-  };
-  const [proxyDetail, setProxyDetail] = useState<string | null>(null);
-
-  return (
-    <div ref={hostRef} data-node-panel>
-      <aside
-        ref={panel}
-        aria-label="Node properties"
-        style={{
-          left: place?.left ?? anchor.x,
-          top: place?.top ?? anchor.y + anchor.h,
-          width: WIDTH,
-          transformOrigin: place ? `${place.origin} center` : "top center",
-          visibility: place ? undefined : "hidden",
-        }}
-        className="absolute z-20 flex max-h-[calc(100%-16px)] min-h-0 flex-col rounded-xl border border-line bg-panel shadow-xl shadow-black/25"
-      >
-        <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5">
-          {glyph ? <span aria-hidden="true" className="text-[12px] leading-none">{glyph}</span> : null}
-          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{nodeTitle(node)}</span>
-          <span className="mono shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] leading-none text-dim">{state.label}</span>
-          {busy !== null ? (
-            <span className="mono flex shrink-0 items-center gap-1 text-[9px] leading-none text-accent">
-              <Spinner className="size-3" /> working
-            </span>
-          ) : null}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close properties"
-            className="grid size-5 shrink-0 cursor-pointer place-items-center rounded text-dim transition-colors hover:bg-track hover:text-ink"
-          >
-            <Icon name="x" className="size-3" />
-          </button>
-        </header>
-        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto p-3">
-          <p data-sheet className="m-0 pb-0.5 text-[11px] leading-relaxed text-dim">{about}</p>
-          {hostId ? (
-            <div data-sheet className="flex flex-wrap items-center gap-1.5">
-              {hostInstalled ? (
-                <MenuAction disabled={busy !== null} onClick={() => start("update")}>
-                  {busy === node && running === "update" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Update"}
-                </MenuAction>
-              ) : (
-                <MenuAction disabled={busy !== null} onClick={() => start("install")}>
-                  {busy === node && running === "install" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Install"}
-                </MenuAction>
-              )}
-              {hostInstalled ? (
-                confirming === node ? (
-                  <MenuAction danger disabled={busy !== null} onClick={() => start("uninstall")}>
-                    {busy === node && running === "uninstall" ? <><Spinner className="size-3 shrink-0 text-accent" /> working</> : "Confirm uninstall"}
-                  </MenuAction>
-                ) : (
-                  <MenuAction disabled={busy !== null} onClick={() => onConfirm(node)}>Uninstall</MenuAction>
-                )
-              ) : null}
-            </div>
-          ) : null}
-          {node === "headroom" ? (
-            <div data-sheet className="grid gap-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={cn(
-                    "mono rounded border px-1.5 py-0.5 text-[10px]",
-                    proxy?.running ? "border-success/40 text-success" : "border-line text-dim",
-                  )}
-                >
-                  {proxy?.running ? `running on :${proxy.port}` : "proxy stopped"}
-                </span>
-                <button
-                  type="button"
-                  disabled={proxyBusy}
-                  onClick={toggleProxy}
-                  className="mono ml-auto cursor-pointer rounded-md border border-line px-2 py-1 text-[10px] text-dim transition-colors hover:border-accent/50 hover:text-ink disabled:cursor-default disabled:opacity-40"
-                >
-                  {proxyBusy ? "working" : proxy?.running ? "stop proxy" : "start proxy"}
-                </button>
-              </div>
-              <p className="m-0 text-[10px] leading-relaxed text-dim">
-                The proxy is the wiring: agents flow through it once their base URL points here. Route
-                them from the Modes view, or set the base URL in their environment.
-              </p>
-              {proxyDetail ? <p className="mono m-0 text-[10px] text-accent">{proxyDetail}</p> : null}
-            </div>
-          ) : null}
-          {pendingRows ? (
-            <div className="grid gap-1.5" aria-busy="true" aria-hidden="true">
-              <Skeleton className="h-8 w-full rounded-md" />
-              <Skeleton className="h-8 w-full rounded-md" />
-            </div>
-          ) : picker ? (
-            picker.options.map((option) => (
-              <OptionRow
-                key={option.id}
-                label={option.label}
-                active={current === option.id}
-                disabled={busy !== null}
-                hint={inherited && current === option.id ? "inherited" : undefined}
-                onClick={() => onSet(lane ? (lane.block as NodeId) : node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
-              />
-            ))
-          ) : null}
-        </div>
-        {picker ? (
-          <footer data-sheet className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-line px-3 py-2">
-            {picked ? (
-              <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{pickerKey} {picked}</code>
-            ) : null}
-            <span className="mono ml-auto text-[9px] text-dim">
-              {scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
-            </span>
-          </footer>
-        ) : null}
-      </aside>
-    </div>
-  );
-}
-
-/** One option row in the properties panel: a full-width control with the active state carried by a check. */
-function OptionRow({
-  label,
-  active,
-  disabled,
-  onClick,
-  hint,
-}: {
-  label: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  hint?: string;
-}) {
-  return (
-    <button
-      data-sheet
-      type="button"
-      aria-pressed={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "group flex w-full cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150",
-        active
-          ? "border-accent/60 bg-accent-soft"
-          : "border-transparent hover:border-line hover:bg-track/60",
-        disabled && "cursor-default opacity-50",
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "grid size-4 shrink-0 place-items-center rounded border transition-colors",
-          active ? "border-accent bg-accent text-panel" : "border-line text-transparent group-hover:border-dim",
-        )}
-      >
-        <Icon name="check" className="size-3" />
-      </span>
-      <span className={cn("mono truncate text-[11px]", active ? "text-ink" : "text-dim group-hover:text-ink")}>{label}</span>
-      <span className={cn("mono ml-auto shrink-0 text-[9px]", active ? "text-accent" : "text-transparent")}>
-        {hint ?? "current"}
-      </span>
-    </button>
-  );
-}
-
-
-/** What the folder says about a node. The per-agent preset nodes share the combo entry. */
 export function PipelineCanvas({
   modes,
   hostState,
   onSet,
   onHostAction,
   busy,
+  onSaved,
+  onAddAgent,
 }: {
   modes: ModeState | null;
   hostState: HostState;
   onSet: (node: NodeId, field: string, value: string | boolean, host?: "omp" | "pi" | "pig" | "opencode") => void;
   onHostAction: (node: NodeId, action: HostAction) => void;
   busy: NodeId | null;
+  onSaved: () => void;
+  onAddAgent: () => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
+  const [containerH, setContainerH] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [hovered, setHovered] = useState<NodeId | null>(null);
-  // `selected` is the node the panel is for; `shown` is the node actually on screen, so a closing fold
-  // can finish before the panel unmounts while a new selection replays the entrance instead.
   const [selected, setSelected] = useState<NodeId | null>(null);
-  const [shown, setShown] = useState<NodeId | null>(null);
-  const [confirming, setConfirming] = useState<NodeId | null>(null);
-  const panelHost = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
-
-  const toggleNode = (id: NodeId): void => {
-    setConfirming(null);
-    if (selected === id) { closePanel(); return; }
-    setSelected(id);
-    setShown(id);
-  };
-
-  const closePanel = (): void => {
-    const closing = selected;
-    setSelected(null);
-    if (!closing) return;
-    const panel = panelHost.current?.querySelector("aside");
-    if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setShown(null); return; }
-    // The fold away: the panel swings back into the node's edge before it leaves the layout.
-    const up = (panel as HTMLElement).style.transformOrigin.includes("bottom");
-    gsap.to(panel, {
-      rotateX: up ? 6 : -6, y: up ? 8 : -8, opacity: 0, duration: 0.16, ease: "power2.in",
-      transformOrigin: (panel as HTMLElement).style.transformOrigin,
-      onComplete: () => setShown((cur) => (cur === closing ? null : cur)),
-    });
-  };
-
+  const [guides, setGuides] = useState<{ vertical: GuideLine[]; horizontal: GuideLine[] } | null>(null);
+  const [stored, setStored] = useState<Record<string, Box>>(() => loadPositions() ?? {});
+  // The server copy wins over localStorage: the layout belongs to the machine, not to one origin,
+  // so a dashboard restart on a new port keeps every node where the user placed it.
   useEffect(() => {
-    if (!selected) return;
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") closePanel();
-    };
-    // A click outside both the canvas and the open fold closes it: the page around the card is part
-    // of the gesture, not a dead zone.
-    const closeOnOutside = (event: PointerEvent): void => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest("[data-node-panel]") || boxRef.current?.contains(target)) return;
-      closePanel();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    document.addEventListener("pointerdown", closeOnOutside);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      document.removeEventListener("pointerdown", closeOnOutside);
-    };
-  }, [selected]);
+    let cancelled = false;
+    void fetchPipelinePositions().then((server) => {
+      if (cancelled || !server) return;
+      setStored((current) => {
+        const merged: Record<string, Box> = { ...current };
+        for (const [id, box] of Object.entries(server)) {
+          const candidate = box as Box;
+          if (typeof candidate?.x === "number" && typeof candidate?.y === "number") merged[id] = candidate;
+        }
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+  const panDrag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const nodeDrag = useRef<{ id: NodeId; px: number; py: number; origin: Box; moved: boolean } | null>(null);
 
-  // The canvas draws at its own width and the card scales it; drag and the zoom controls reach the rest.
+  // An exported file reads no host list, so every host counts as present there.
+  const installedKey = HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => h.id).join(",");
+  const installed = useMemo(() => installedKey ? installedKey.split(",") : [], [installedKey]);
+  const { nodes: nodeIds, edges } = useMemo(() => pipelineGraph(installed), [installed]);
+  const noAgents = installed.length === 0;
+
+  const boxes = useMemo(() => {
+    const defaults = defaultPositions(installed);
+    const merged: Record<string, Box> = {};
+    for (const id of nodeIds) merged[id] = stored[id] ?? defaults[id] ?? { x: 40, y: 300, w: NODE_W, h: NODE_H };
+    return merged;
+  }, [nodeIds, stored, installed]);
+
+  // The add-agent node rides the canvas center when no agent exists yet, so the empty state reads
+  // as an invitation instead of an empty grid.
+  const addBox = useMemo<Box>(() => {
+    const xs = nodeIds.map((id) => boxes[id]);
+    const minX = Math.min(...xs.map((b) => b.x));
+    const maxX = Math.max(...xs.map((b) => b.x + b.w));
+    const maxY = Math.max(...xs.map((b) => b.y + b.h));
+    return { x: snapToGrid((minX + maxX) / 2 - NODE_W / 2), y: snapToGrid(maxY + 72), w: NODE_W, h: NODE_H + 14 };
+  }, [nodeIds, boxes]);
+
+  // Fit the whole graph once per host set: the user's own pan and zoom take over from there.
+  const fittedKey = useRef("");
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el || containerW === 0 || containerH === 0) return;
+    const key = `${installedKey}`;
+    if (fittedKey.current === key) return;
+    fittedKey.current = key;
+    const all = noAgents ? [...nodeIds.map((id) => boxes[id]), addBox] : nodeIds.map((id) => boxes[id]);
+    const minX = Math.min(...all.map((b) => b.x));
+    const minY = Math.min(...all.map((b) => b.y));
+    const maxX = Math.max(...all.map((b) => b.x + b.w));
+    const maxY = Math.max(...all.map((b) => b.y + b.h));
+    const worldW = maxX - minX + 48;
+    const worldH = maxY - minY + 48;
+    const fit = Math.min(1, (containerW - 24) / worldW, (containerH - 24) / worldH);
+    setZoom(fit);
+    setPan({
+      x: (containerW - worldW * fit) / 2 - minX * fit,
+      y: (containerH - worldH * fit) / 2 - minY * fit,
+    });
+  }, [containerW, containerH, installedKey, nodeIds, boxes, addBox, noAgents]);
+
   useLayoutEffect(() => {
     const el = boxRef.current;
     if (!el) return;
-    const measure = (): void => setContainerW(el.clientWidth);
+    const measure = (): void => { setContainerW(el.clientWidth); setContainerH(el.clientHeight); };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  const lit = (key: EdgeKey): Lit => edgeLit(key, modes, hostState);
-  // An unknown host stays on the canvas: an exported file reads no host list.
-  const shownHosts = HOSTS.filter((host) => hostState.installed[host.id] !== false);
-  const compact = containerW > 0 && containerW < 620;
-  const layout = pipelineLayout(shownHosts, compact);
-  // Natural size only: a wide canvas overflows the card, so drag-pan and zoom reach the later agents instead of the nodes shrinking.
-  const fit = containerW > 0 ? Math.min(1, containerW / layout.w) : 1;
-  const scale = fit * zoom;
+  // One soft entrance for the node cards; drag and edges take over from there.
+  useGSAP(() => {
+    if (!boxRef.current) return;
+    const nodes = boxRef.current.querySelectorAll("[data-canvas-node]");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      gsap.set(nodes, { opacity: 1, y: 0, scale: 1 });
+      return;
+    }
+    gsap.fromTo(
+      nodes,
+      { opacity: 0, y: 10, scale: 0.96 },
+      { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "power3.out", stagger: 0.045, clearProps: "transform" },
+    );
+  }, { scope: boxRef, dependencies: [installedKey] });
+
+  const scale = zoom;
+
+  const lit = (key: EdgeKey): boolean | null => edgeLit(key, modes, hostState);
+
+  const openNode = (id: NodeId): void => setSelected(id);
+
+  const moveNode = (id: NodeId, box: Box): void => {
+    setStored((current) => ({ ...current, [id]: box }));
+  };
+
+  // One writer for both stores: localStorage is the instant cache, the server copy is what survives
+  // a dashboard restart on a new port.
+  const persist = (positions: Record<string, Box>): void => {
+    savePositions(positions);
+    void postPipelinePositions(positions);
+  };
+
+  const onNodePointerDown = (id: NodeId) => (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+    nodeDrag.current = { id, px: event.clientX, py: event.clientY, origin: boxes[id], moved: false };
+  };
+  const onNodePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = nodeDrag.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.px;
+    const dy = event.clientY - drag.py;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    const rect = boxRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const gridded = {
+      ...drag.origin,
+      x: Math.max(8, snapToGrid(drag.origin.x + dx / scale)),
+      y: Math.max(8, snapToGrid(drag.origin.y + dy / scale)),
+    };
+    // Alignment wins over the grid: a near match with another node's edge or center takes the exact value.
+    const aligned: Alignment = alignDrag(drag.id, gridded, Object.entries(boxes));
+    moveNode(drag.id, aligned.box);
+    setGuides({ vertical: aligned.vertical, horizontal: aligned.horizontal });
+  };
+  const onNodePointerUp = (id: NodeId) => (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = nodeDrag.current;
+    nodeDrag.current = null;
+    setGuides(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag && drag.moved) {
+      setStored((current) => {
+        const next = { ...current };
+        persist(next);
+        return next;
+      });
+      return;
+    }
+    if (interactiveNode(id)) openNode(id);
+  };
+
+  // The prompt node starts the turn; it moves but opens nothing.
+  const interactiveNode = (id: NodeId): boolean => id !== "prompt";
+
+  const resetLayout = (): void => {
+    const defaults = defaultPositions(installed);
+    setStored(defaults);
+    persist(defaults);
+  };
+
+  const zoomBy = (factor: number): void => {
+    setZoom((z) => Math.min(2.4, Math.max(0.4, Number((z * factor).toFixed(2)))));
+  };
 
   const isNodeOff = (id: NodeId): boolean => nodeOff(id, modes, hostState);
-
-  /** The boxes a point sits on, so a link can name the nodes it joins without a second table. */
-  const nodeAt = (p: Point): NodeId | null => {
-    for (const [id, b] of layout.nodes) {
-      if (p[0] >= b.x - 1 && p[0] <= b.x + b.w + 1 && p[1] >= b.y - 1 && p[1] <= b.y + b.h + 1) return id;
-    }
-    return null;
-  };
-  const touches = (points: ReadonlyArray<Point>, id: NodeId): boolean =>
-    nodeAt(points[0]) === id || nodeAt(points[points.length - 1]) === id;
-
   const focus = hovered ?? selected;
   const zoomed = zoom !== 1 || pan.x !== 0 || pan.y !== 0;
 
   const body = (id: NodeId): React.ReactNode => {
+    if (id === "prompt") {
+      return (
+        <>
+          <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+            <Icon name="message-square" className="size-3.5 shrink-0 text-dim" /> Prompt
+          </span>
+          <span className="mono truncate text-[10px] text-dim">your message starts the turn</span>
+        </>
+      );
+    }
+    if (id === "output") {
+      return (
+        <>
+          <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+            <Icon name="arrow-right" className="size-3.5 shrink-0 text-dim" /> Output
+          </span>
+          <span className="mono truncate text-[10px] text-dim">the turn's result</span>
+        </>
+      );
+    }
     if (id.startsWith("host-")) {
       const host = HOSTS.find((h) => `host-${h.id}` === id);
       if (!host) return null;
@@ -533,8 +322,7 @@ export function PipelineCanvas({
         </>
       );
     }
-    const lane = laneBlockOf(id);
-    const mode = MODES.find((m) => m.key === (lane ? lane.block : id));
+    const mode = MODES.find((m) => m.key === id);
     if (mode) {
       const off = isNodeOff(id);
       return (
@@ -557,221 +345,240 @@ export function PipelineCanvas({
         </>
       );
     }
-    return (
-      <>
-        <span className="flex items-center gap-1.5 text-[13px] font-semibold">
-          <Icon name="arrow-right" className="size-3.5 shrink-0 text-dim" /> Output
-        </span>
-        <span className="mono truncate text-[10px] text-dim">the turn's result</span>
-      </>
-    );
+    return null;
   };
 
-  // When the card is wider than the drawn pipeline, the cluster centers instead of hugging the left edge.
-  const centerX = Math.max(0, (containerW - layout.w * scale) / 2);
+  // The SVG world spans the laid-out graph; every connector reads its two nodes' current boxes, so a
+  // drag replumbs the flow live.
+  const worldBoxes = Object.values(boxes);
+  const worldW = Math.max(...worldBoxes.map((b) => b.x + b.w), addBox.x + addBox.w) + 48;
+  const worldH = Math.max(...worldBoxes.map((b) => b.y + b.h), addBox.y + addBox.h) + 48;
 
-  const zoomBy = (factor: number): void => {
-    setZoom((z) => Math.min(2.4, Math.max(0.6, Number((z * factor).toFixed(2)))));
-  };
-
-
-  // The fold panel anchors to the shown node in screen space and flips above when the space below runs out.
-  const shownBox = shown ? layout.nodes.find(([id]) => id === shown)?.[1] ?? null : null;
-  const panelAnchor = shownBox ? { x: shownBox.x * scale + pan.x, y: shownBox.y * scale + pan.y, w: shownBox.w * scale, h: shownBox.h * scale } : null;
-  // While a node is open the canvas keeps a working height, so the fold unfolds with room instead of
-  // collapsing into a sliver; at rest the strip stays as short as the row needs.
-  const canvasH = Math.max(layout.h * fit, shown !== null ? 460 : 0);
-  const panelBounds = { w: containerW, h: Math.round(canvasH) };
   return (
-    <div className="relative min-w-0" style={{ perspective: "900px" }}>
+    <div className="relative h-full min-w-0">
+      <div
+        ref={boxRef}
+        role="group"
+        aria-label="Pipeline canvas"
+        className={cn(
+          "relative h-full touch-none overflow-hidden select-none",
+          "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
+        )}
+        style={{ cursor: panning ? "grabbing" : "grab" }}
+        onPointerDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest("button")) return;
+          if (selected) setSelected(null);
+          if (event.pointerType !== "mouse") return;
+          panDrag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
+          setPanning(true);
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const start = panDrag.current;
+          if (!start) return;
+          setPan({ x: start.px + (event.clientX - start.x), y: start.py + (event.clientY - start.y) });
+        }}
+        onPointerUp={() => { panDrag.current = null; setPanning(false); }}
+        onPointerCancel={() => { panDrag.current = null; setPanning(false); }}
+        onWheel={(event) => {
+          // A bare wheel belongs to the page; the canvas only takes it with the zoom modifier.
+          if (!event.ctrlKey && !event.metaKey) return;
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          const px = event.clientX - rect.left;
+          const py = event.clientY - rect.top;
+          const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+          const next = Math.min(2.4, Math.max(0.4, zoom * factor));
+          const ratio = next / zoom;
+          setPan((p) => ({ x: px - (px - p.x) * ratio, y: py - (py - p.y) * ratio }));
+          setZoom(next);
+        }}
+        onPointerLeave={() => { panDrag.current = null; setPanning(false); }}
+        onDragStart={(event) => event.preventDefault()}
+      >
         <div
-          ref={boxRef}
-          role="group"
-          aria-label="Pipeline canvas"
-          className={cn(
-            // A drag pans the canvas; it never selects a label or a file path on the way.
-            "relative touch-none overflow-hidden rounded-lg border border-line select-none",
-            "[background-image:radial-gradient(circle_at_1px_1px,var(--line)_1px,transparent_0)] [background-size:16px_16px]",
-          )}
-          style={{ height: canvasH, cursor: panning ? "grabbing" : "grab" }}
-          onPointerDown={(event) => {
-            const target = event.target as HTMLElement;
-            if (target.closest("button") || target.closest("[data-node-panel]")) return;
-            if (selected) closePanel();
-            if (event.pointerType !== "mouse") return;
-            drag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
-            setPanning(true);
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const start = drag.current;
-            if (!start) return;
-            setPan({ x: start.px + (event.clientX - start.x), y: start.py + (event.clientY - start.y) });
-          }}
-          onPointerUp={() => { drag.current = null; setPanning(false); }}
-          onPointerCancel={() => { drag.current = null; setPanning(false); }}
-          onWheel={(event) => {
-            // A bare wheel belongs to the page; the canvas only takes it with the zoom modifier.
-            if (!event.ctrlKey && !event.metaKey) return;
-            event.preventDefault();
-            const rect = event.currentTarget.getBoundingClientRect();
-            const px = event.clientX - rect.left;
-            const py = event.clientY - rect.top;
-            const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-            const next = Math.min(2.4, Math.max(0.6, zoom * factor));
-            const ratio = next / zoom;
-            setPan((p) => ({ x: px - (px - p.x) * ratio, y: py - (py - p.y) * ratio }));
-            setZoom(next);
-          }}
-          onPointerLeave={() => { drag.current = null; setPanning(false); }}
-          onDragStart={(event) => event.preventDefault()}
+          className="absolute origin-top-left"
+          style={{ width: worldW, height: worldH, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
         >
-          <div
-            className="absolute origin-top-left"
-            style={{ width: layout.w, height: layout.h, transform: `translate(${pan.x + centerX}px, ${pan.y}px) scale(${scale})` }}
+          <svg
+            className="pointer-events-none absolute inset-0"
+            width={worldW}
+            height={worldH}
+            viewBox={`0 0 ${worldW} ${worldH}`}
+            aria-hidden="true"
           >
-            <svg
-              className="pointer-events-none absolute inset-0"
-              width={layout.w}
-              height={layout.h}
-              viewBox={`0 0 ${layout.w} ${layout.h}`}
-              aria-hidden="true"
-            >
-              <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-                {layout.links.map((link) => {
-                  const off = link.k ? isOff(lit(link.k)) : false;
-                  // A focused node keeps its own routes readable and lets the rest recede.
-                  const dim = focus !== null && !touches(link.p, focus);
-                  return (
+            <g fill="none" strokeLinejoin="round" strokeLinecap="round">
+              {edges.map((edge) => {
+                const from = boxes[edge.from];
+                const to = boxes[edge.to];
+                if (!from || !to) return null;
+                // The path bows around any node the straight run would cross.
+                const others = Object.entries(boxes).filter(([id]) => id !== edge.from && id !== edge.to).map(([, box]) => box);
+                const tp = portPoint(to, edgePorts(from, to).to);
+                const off = isOff(lit(edge.from as EdgeKey));
+                const touchesFocus = focus === null || focus === edge.from || focus === edge.to;
+                return (
+                  <g key={`${edge.from}->${edge.to}`}>
                     <path
-                      key={ortho(link.p)}
-                      d={ortho(link.p)}
+                      d={edgePath(from, to, others)}
                       className="howto-link"
                       stroke="var(--dim)"
                       strokeWidth={2.5}
-                      strokeOpacity={dim ? 0.35 : off ? 0.6 : 1}
+                      strokeOpacity={touchesFocus ? (off ? 0.6 : 1) : 0.35}
                     />
-                  );
-                })}
-                {layout.links.map((link) => {
-                  const off = link.k ? isOff(lit(link.k)) : false;
-                  const dim = focus !== null && !touches(link.p, focus);
-                  // Every connector is a network cable; traffic (the moving dash) only runs where the mode is on.
-                  return (
+                    {/* Every connector is a network cable; the moving dash runs only where the source is on. */}
                     <path
-                      key={`flow-${ortho(link.p)}`}
-                      d={ortho(link.p)}
+                      d={edgePath(from, to, others)}
                       className="flow-line howto-link"
                       stroke="var(--accent)"
                       strokeWidth={1.5}
-                      data-active={!off && !dim}
-                      strokeOpacity={off ? 0.5 : focus === null || touches(link.p, focus) ? 0.8 : 0.3}
+                      data-active={!off}
+                      strokeOpacity={off ? 0.5 : touchesFocus ? 0.8 : 0.3}
                     />
-                  );
-                })}
-              </g>
-              {layout.captions.map((caption) => (
-                <text
-                  key={caption.text}
-                  x={caption.x}
-                  y={caption.y}
-                  textAnchor={caption.anchor ?? "start"}
-                  fontSize={10}
-                  fill="var(--dim)"
-                  className="mono"
-                >
-                  {caption.text}
-                </text>
-              ))}
-            </svg>
+                    <circle cx={tp[0]} cy={tp[1]} r={4} className="fill-panel stroke-[var(--line)]" strokeWidth={1.5} />
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
 
-            {layout.nodes.map(([id, box]) => {
-              const state = nodeState(id, modes, hostState);
-              return (
-                <NodeButton
-                  key={id}
-                  box={box}
-                  off={isNodeOff(id)}
-                  selected={selected === id}
-                  label={`${nodeTitle(id)}, ${state.label}`.replace(/, $/, "")}
-                  onSelect={() => toggleNode(id)}
-                  onHover={(on) => setHovered(on ? id : null)}
-                >
-                  {body(id)}
-                </NodeButton>
-              );
-            })}
-          </div>
+          {guides ? (
+            [...guides.vertical.map((line) => (
+              <div key={`vg${line.at}`} aria-hidden="true" className="pointer-events-none absolute w-px bg-accent/70" style={{ left: line.at, top: line.from, height: line.to - line.from }} />
+            )), ...guides.horizontal.map((line) => (
+              <div key={`hg${line.at}`} aria-hidden="true" className="pointer-events-none absolute h-px bg-accent/70" style={{ top: line.at, left: line.from, width: line.to - line.from }} />
+            ))]
+          ) : null}
 
-          <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
-            <button
-              type="button"
-              onClick={() => zoomBy(1 / 1.2)}
-              aria-label="Zoom out"
-              className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
-            >
-              <Icon name="zoom-out" className="size-3.5" />
-            </button>
-            <span className="mono w-9 text-center text-[10px] text-dim">{Math.round(zoom * 100)}%</span>
-            <button
-              type="button"
-              onClick={() => zoomBy(1.2)}
-              aria-label="Zoom in"
-              className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
-            >
-              <Icon name="zoom-in" className="size-3.5" />
-            </button>
-            {zoomed ? (
+          {nodeIds.map((id) => {
+            const box = boxes[id];
+            const state = nodeState(id, modes, hostState);
+            return (
+              <NodeButton
+                key={id}
+                box={box}
+                off={isNodeOff(id)}
+                selected={selected === id}
+                accent={id === "headroom"}
+                interactive={interactiveNode(id)}
+                label={`${nodeTitle(id)}, ${state.label}`.replace(/, $/, "")}
+                onPointerDown={onNodePointerDown(id)}
+                onActivate={() => openNode(id)}
+                onPointerMove={onNodePointerMove}
+                onPointerUp={onNodePointerUp(id)}
+                onHover={(on) => setHovered(on ? id : null)}
+              >
+                {body(id)}
+              </NodeButton>
+            );
+          })}
+
+          {noAgents ? (
+            <div style={{ position: "absolute", left: addBox.x, top: addBox.y, width: addBox.w }}>
               <button
                 type="button"
-                onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-                aria-label="Reset the view"
-                className="mono grid h-6 cursor-pointer place-items-center rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
+                data-canvas-node
+                onClick={onAddAgent}
+                aria-label="Add your first agent"
+                className="howto-node flex w-full cursor-pointer flex-col items-center gap-1 rounded-xl border-2 border-dashed border-line bg-panel px-3 py-4 text-center outline-none transition-colors hover:border-accent/50 hover:text-ink focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40"
               >
-                reset
+                <Icon name="plus" className="size-5 text-dim" />
+                <span className="text-[13px] font-semibold">Add agent</span>
+                <span className="mono text-[10px] leading-snug text-dim">no agent on this machine yet — install one to build the pipeline</span>
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
-    {/* The fold panel lives in screen space beside the node, so its type stays crisp at any zoom. */}
-    {shown && panelAnchor ? (
-      <NodePanel
-        hostRef={panelHost}
-        modes={modes}
-        hostState={hostState}
-        node={shown}
-        busy={busy}
-        confirming={confirming}
-        onConfirm={setConfirming}
-        onSet={onSet}
-        onHostAction={onHostAction}
-        onClose={closePanel}
-        anchor={panelAnchor}
-        bounds={panelBounds}
-      />
-    ) : null}
+
+        <div className="absolute bottom-2 right-2 flex items-center gap-1 rounded-lg border border-line bg-panel/90 p-1 backdrop-blur">
+          <button
+            type="button"
+            onClick={() => zoomBy(1 / 1.2)}
+            aria-label="Zoom out"
+            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
+          >
+            <Icon name="zoom-out" className="size-3.5" />
+          </button>
+          <span className="mono w-9 text-center text-[10px] text-dim">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            onClick={() => zoomBy(1.2)}
+            aria-label="Zoom in"
+            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
+          >
+            <Icon name="zoom-in" className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={resetLayout}
+            aria-label="Reset the node layout"
+            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
+          >
+            <Icon name="rotate-ccw" className="size-3.5" />
+          </button>
+          {zoomed ? (
+            <button
+              type="button"
+              onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+              aria-label="Reset the view"
+              className="mono grid h-6 cursor-pointer place-items-center rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
+            >
+              reset
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {selected === "headroom" ? (
+        <HeadroomDrawer
+          open
+          onOpenChange={(open) => { if (!open) setSelected(null); }}
+          modes={modes}
+          hostState={hostState}
+          busy={busy}
+          onSet={onSet}
+          onSaved={onSaved}
+        />
+      ) : null}
+      {selected?.startsWith("host-") ? (
+        <HostDrawer
+          node={selected}
+          open
+          onOpenChange={(open) => { if (!open) setSelected(null); }}
+          modes={modes}
+          hostState={hostState}
+          busy={busy}
+          onSet={onSet}
+          onHostAction={onHostAction}
+          onSaved={onSaved}
+        />
+      ) : null}
+      {selected !== null && selected !== "headroom" && !selected.startsWith("host-") && selected !== "prompt" && selected !== "output" ? (
+        <ModeDialog
+          node={selected}
+          open
+          onOpenChange={(open) => { if (!open) setSelected(null); }}
+          modes={modes}
+          hostState={hostState}
+          busy={busy}
+          onSet={onSet}
+          onHostAction={onHostAction}
+          onSaved={onSaved}
+        />
+      ) : null}
     </div>
   );
 }
 
-
-
-/** The canvas's shape while the host list is still out: host pairs, a row of blocks, output. */
+/** While the host list and modes are out, the canvas holds one quiet line instead of fake nodes. */
 export function PipelineSkeleton() {
   return (
-    <div
-      aria-busy="true"
-      aria-label="Loading the pipeline"
-      className="flex min-h-[200px] items-center gap-6 rounded-lg border border-line p-4"
-    >
-      <div className="grid gap-3">
-        {[0, 1].map((row) => <Skeleton key={row} className="h-12 w-44 rounded-xl" />)}
+    <div aria-busy="true" aria-label="Loading the pipeline" className="grid h-full place-items-center">
+      <div className="flex items-center gap-2 text-dim">
+        <Spinner className="size-4 text-accent" />
+        <span className="mono text-[11px]">reading what this machine has on…</span>
       </div>
-      <div className="flex items-center gap-4">
-        {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-14 w-44 rounded-xl" />)}
-      </div>
-      <Skeleton className="h-14 w-48 rounded-xl" />
     </div>
   );
 }
-

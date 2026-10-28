@@ -654,6 +654,31 @@ export interface HeadroomProxyReport {
   routed: string[];
 }
 
+/** The canvas node layout, stored tersio-side so a dashboard restart on a new port keeps it. */
+export async function fetchPipelinePositions(): Promise<Record<string, unknown> | null> {
+  try {
+    const r = await fetch("/api/pipeline/positions");
+    if (!r.ok) return null;
+    const body = (await r.json()) as { positions?: Record<string, unknown> };
+    return body.positions ?? {};
+  } catch {
+    return null;
+  }
+}
+
+export async function postPipelinePositions(positions: Record<string, unknown>): Promise<boolean> {
+  try {
+    const r = await fetch("/api/pipeline/positions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ positions }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Reads the gateway's state: whether the proxy tersio started is live, and the URLs it serves. */
 export async function fetchHeadroomProxy(): Promise<HeadroomProxyReport | null> {
   try {
