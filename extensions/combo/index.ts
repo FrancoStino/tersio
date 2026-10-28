@@ -102,6 +102,12 @@ function savedModes(host: HostScope): { caveman: string; rtk: string; ponytail: 
     : { ...preset, pstack: 'off', headroom: 'off' };
 }
 
+// Registers the shared-state listener for this session's UI; the factory calls it per context.
+function listen(ctx?: ExtensionCtx): void {
+  if (!ctx?.hasUI) return;
+  setSharedComboListener('combo', (state) => { announceStatus(ctx); return state; });
+}
+
 export default function comboToggleExtension(pi: ExtensionApi): void {
   const host = hostIdOf(pi);
   setExtensionLabel(pi, 'Combo session toggle (caveman, RTK, Ponytail)');
@@ -141,10 +147,6 @@ export default function comboToggleExtension(pi: ExtensionApi): void {
     const entries = sessionEntries(ctx);
     if (!resetEmpty && entries.length === 0) return getSharedComboState();
     return reconcileSharedComboEntries(entries);
-  }
-  function listen(ctx?: ExtensionCtx): void {
-    if (!ctx?.hasUI) return;
-    setSharedComboListener('combo', (state) => { announceStatus(ctx); return state; });
   }
   function track(ctx?: ExtensionCtx, resetEmpty = false): void {
     listen(ctx);

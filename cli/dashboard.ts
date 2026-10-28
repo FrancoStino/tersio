@@ -21,7 +21,6 @@ import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule, HostDefaultField } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
-import type { ComboLevel } from '../extensions/shared/types.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
 import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
@@ -336,6 +335,14 @@ function ompDefaultModel(): string | null {
   }
 }
 
+/** The config root per agent, for the health report. */
+const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
+  if (id === 'omp') return path.join(homeDir(), '.omp');
+  if (id === 'pi') return path.join(homeDir(), '.pi');
+  if (id === 'pig') return path.join(homeDir(), '.pig');
+  return path.join(homeDir(), '.config', 'opencode');
+};
+
 function healthJson(): string {
   const rtkBin = resolveRtkBinary();
   const rtkPresent = rtkBin !== null;
@@ -345,12 +352,6 @@ function healthJson(): string {
   const detectedPiPath = piPath();
   const detectedPigPath = pigPath();
   const detectedOpencodePath = opencodePath();
-  const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
-    if (id === 'omp') return path.join(homeDir(), '.omp');
-    if (id === 'pi') return path.join(homeDir(), '.pi');
-    if (id === 'pig') return path.join(homeDir(), '.pig');
-    return path.join(homeDir(), '.config', 'opencode');
-  };
   return JSON.stringify({
     tersio: PACKAGE_VERSION,
     node: process.version,
@@ -435,12 +436,14 @@ function ageStr(p: string): string | null {
   }
 }
 
+/** Two-digit padding for the absTime stamp. */
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
 function absTime(p: string): string | null {
   try {
     const d = new Date(statSync(p).mtimeMs);
-    const q = (n: number): string => String(n).padStart(2, '0');
     const h24 = d.getHours();
-    return `${q(d.getMonth() + 1)}-${q(d.getDate())}-${d.getFullYear()}, ${q(h24 % 12 || 12)}:${q(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
+    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}-${d.getFullYear()}, ${pad2(h24 % 12 || 12)}:${pad2(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
   } catch {
     return null;
   }
@@ -456,14 +459,16 @@ function relAge(ms: number): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
+/** Whether an extension file the doctor names exists. */
+const pathExists = (p: string): boolean => existsSync(p);
+
 function computeDoctorRows(): DoctorRow[] {
   const rows: DoctorRow[] = [];
   const rtkBin = resolveRtkBinary();
   const tersioPluginDir = path.join(OMP_PLUGINS_DIR, 'node_modules', ...PACKAGE_NAME.split('/'));
-  const ok = (p: string): boolean => existsSync(p);
   const configPath = path.join(OMP_AGENT_DIR, 'config.yml');
   const ext = (label: string, p: string): void => {
-    rows.push({ label, ok: ok(p), detail: ok(p) ? 'installed' : p, group: 'Extensions' });
+    rows.push({ label, ok: pathExists(p), detail: pathExists(p) ? 'installed' : p, group: 'Extensions' });
   };
   const addon = (label: string, present: boolean, detail: string, group = 'Add-ons'): void => {
     rows.push({ label, ok: present, detail, group });
@@ -479,7 +484,7 @@ function computeDoctorRows(): DoctorRow[] {
   // A listed extension whose file is gone makes the host warn on every load, so surface it here.
   const dangling = explicitEntries
     .filter((entry) => entry.includes(`extensions${path.sep}`) || entry.includes('extensions/'))
-    .filter((entry) => !ok(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
+    .filter((entry) => !pathExists(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
   addon('Extension files present', dangling.length === 0, dangling.length ? dangling.join(', ') : 'ok', 'Extensions');
   ext('Caveman extension', path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts'));
   ext('pstack extension', path.join(tersioPluginDir, 'extensions', 'pstack', 'index.ts'));

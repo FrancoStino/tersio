@@ -122,7 +122,7 @@ export function saveComboSetup(level: string, host?: HostScope | null): boolean 
   const stored = readPluginSettings();
   // A host scope writes its own section, so this agent's preset never becomes every agent's.
   const next = host
-    ? { ...stored, hosts: { ...(stored.hosts as Record<string, unknown> | undefined) ?? {}, [host]: { ...hostDefaults(host), ...patch } } }
+    ? { ...stored, hosts: { ...(stored.hosts as Record<string, unknown> | undefined), [host]: { ...hostDefaults(host), ...patch } } }
     : { ...stored, ...patch };
   writeFileSync(file, `${JSON.stringify({ ...next, comboSetupComplete: true }, null, 2)}\n`, 'utf8');
   return true;

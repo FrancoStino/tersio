@@ -3,7 +3,7 @@
 // only, originals persisted tersio-side, and stopping the proxy unroutes everything before it dies.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 
@@ -125,7 +125,7 @@ export function routedHosts(home: string): string[] {
   const state = readRoutingState(home);
   const hosts = new Set(Object.keys(state.hosts));
   if (state.ymlInstances && state.ymlInstances.length > 0) hosts.add('omp');
-  return [...hosts].sort();
+  return [...hosts].toSorted();
 }
 
 function modelsFile(home: string, host: 'omp' | 'pi'): string | null {
@@ -192,7 +192,7 @@ function setProviderBaseUrl(home: string, provider: string, value: string | null
   const lines = readFileSync(file, 'utf8').split('\n');
   const range = providerBlockRange(lines, provider);
   if (!range) return false;
-  const existing = lines.findIndex((line, i) => i > range.start && i < range.end && /^    baseUrl:/.test(line));
+  const existing = lines.findIndex((line, i) => i > range.start && i < range.end && line.startsWith('    baseUrl:'));
   if (existing > 0) {
     if (value === null) lines.splice(existing, 1);
     else lines[existing] = `    baseUrl: ${value}`;

@@ -11,7 +11,6 @@ import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } fro
 import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, pigAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
-import { fileURLToPath } from 'node:url';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
 interface UninstallOptions {
@@ -134,7 +133,7 @@ async function updateJsonFile(
   mutate: (data: Record<string, unknown>) => boolean,
   dryRunNote: string,
   writeNote: string,
-  dryRun: boolean,
+  shouldDryRun: boolean,
 ): Promise<void> {
   const raw = await readTextIfExists(filePath);
   if (!raw) return;
@@ -146,7 +145,7 @@ async function updateJsonFile(
     return;
   }
   if (!mutate(data)) return;
-  if (dryRun) {
+  if (shouldDryRun) {
     sayTagged(`  [dry-run] ${dryRunNote}`);
     return;
   }
