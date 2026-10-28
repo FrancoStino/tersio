@@ -1720,7 +1720,7 @@ test("a /new session switch restores the configured defaults", async () => {
   const pi = statusInstantiate(comboToggleExtension, entries);
   const fresh = statusContext(entries);
   await statusFire(pi, "session_switch", fresh);
-  expect(statuses(fresh.notifications)).toEqual(["🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF"]);
+  expect(statuses(fresh.notifications)).toEqual(["🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF"]);
 });
 
 test("a subagent session announces the inherited status", async () => {
