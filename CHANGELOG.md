@@ -1,4 +1,4 @@
-## Unreleased
+## v2.25.15
 
 ### Added
  - **PiG (Pi-in-go) support.** `tersio install --host pig` sets Tersio up for PiG the same way it does for the other agents: its extensions, RTK, the session modes, and Ponytail. The doctor, uninstall, the upstream check, and the Quick start page know the host too. Thanks to @trun9ko33 (#77).
