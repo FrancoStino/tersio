@@ -227,7 +227,7 @@ function SidebarAction({ icon, label, onClick }: { icon: string; label: string; 
       title={label}
       className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] text-dim transition-[background,color] duration-200 hover:bg-track hover:text-ink group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0"
     >
-      <Icon name={icon} className="size-4 shrink-0" />
+      <Icon name={icon} className="size-4 shrink-0 group-data-[collapsible=icon]:size-5" />
       <span className="group-data-[collapsible=icon]:hidden">{label}</span>
     </button>
   );
@@ -296,11 +296,11 @@ export function AppSidebar({
                             className={cn(
                               "mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink",
                               // The collapsed rail is 64px while the button is 32px, so it centers instead of hugging the left.
-                              "group-data-[collapsible=icon]:mx-auto",
+                              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:!pl-1.5",
                               dimmed && "cursor-default opacity-40 hover:bg-transparent",
                             )}
                           >
-                            <Icon name={item.icon} className="size-4" />
+                            <Icon name={item.icon} className="size-4 group-data-[collapsible=icon]:size-5" />
                             <span className="truncate">{item.label}</span>
                             <kbd className="mono ml-auto hidden shrink-0 text-[10px] opacity-70 group-data-[collapsible=offcanvas]:inline">
                               G {item.hotkey.toUpperCase()}
@@ -371,7 +371,7 @@ export function Topbar({
       <div
         className={cn(
           "flex h-full shrink-0 items-center gap-2.5",
-          isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-0 px-0" : "-ml-3 w-(--sidebar-width) pr-3",
+          isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-0 px-0" : "-ml-3 w-(--sidebar-width) pl-4 pr-3",
         )}
       >
         <img src="brand.webp" alt="" width="24" height="24" className={cn("size-6 shrink-0 rounded-[8px]", state === "collapsed" && !isMobile && "hidden")} />
@@ -384,7 +384,7 @@ export function Topbar({
           Tersio <span className="font-normal text-dim">Dashboard</span>
         </span>
         <SidebarTrigger
-          className={cn("size-8 shrink-0 text-dim hover:text-ink", state !== "collapsed" && "ml-auto")}
+          className={cn("size-8 shrink-0 text-dim hover:text-ink", state === "collapsed" && "[&_svg]:!size-5", state !== "collapsed" && "ml-auto")}
           aria-label="Toggle navigation"
         />
       </div>
