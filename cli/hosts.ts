@@ -77,21 +77,9 @@ export function piPonytailPackageDir(agentDir = piAgentDir()): string {
   return path.join(agentDir, 'npm', 'node_modules', '@dietrichgebert', 'ponytail');
 }
 
+/** pi and PiG read the same settings shape, so the one lookup serves both. */
 export function pigPonytailPackageDir(agentDir = pigAgentDir()): string {
-  let packages: unknown[] = [];
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(pigSettingsFile(agentDir), 'utf8'));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray((parsed as { packages?: unknown }).packages)) {
-      packages = (parsed as { packages: unknown[] }).packages;
-    }
-  } catch { /* no settings file, or unreadable */ }
-  for (const entry of packages) {
-    const source = typeof entry === 'string' ? entry : (entry as { source?: unknown } | null)?.source;
-    if (typeof source !== 'string') continue;
-    const trimmed = source.trim().replace(/[/\\]+$/, '');
-    if (path.isAbsolute(trimmed) && path.basename(trimmed) === 'ponytail') return trimmed;
-  }
-  return path.join(agentDir, 'npm', 'node_modules', '@dietrichgebert', 'ponytail');
+  return piPonytailPackageDir(agentDir);
 }
 
 function packageVersion(dir: string): string | null {

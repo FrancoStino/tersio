@@ -6,6 +6,7 @@ export interface ComboState {
   rtk: string;
   ponytail: string;
   pstack: string;
+  headroom: string;
 }
 
 export type ComboLevel = 'off' | 'lite' | 'balanced' | 'max' | 'custom';

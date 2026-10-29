@@ -2,7 +2,7 @@
 import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
+  ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PACKAGE_NAME, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS,
   verbose,
 } from './common.ts';
 import type { WriteOptions } from './common.ts';
@@ -10,6 +10,7 @@ import os from 'node:os';
 import { DEFAULT_CURRENCY, isCurrencyCode } from './currency.ts';
 import { recordActivity } from './activity.ts';
 import type { CurrencyCode } from './currency.ts';
+import type { HostId } from './hosts.ts';
 import { readTextIfExists } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
@@ -27,6 +28,7 @@ interface Profile {
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
+  headroomDefault: string;
   currency: CurrencyCode;
   backupSchedule: BackupSchedule;
   // The dashboard's Developer tools switch and accent. Both live here, not in browser storage, so
@@ -49,6 +51,7 @@ function defaultProfile(): Profile {
     rtkDefault: false,
     ponytailDefault: 'off',
     pstackDefault: 'off',
+    headroomDefault: 'off',
     currency: DEFAULT_CURRENCY,
     backupSchedule: 'monthly',
     devTools: false,
@@ -69,6 +72,8 @@ interface StoredSettings {
   rtkDefault?: unknown;
   ponytailDefault?: unknown;
   pstackDefault?: unknown;
+  headroomDefault?: unknown;
+  hosts?: unknown;
   currency?: unknown;
   backupSchedule?: unknown;
   devTools?: unknown;
@@ -77,12 +82,16 @@ interface StoredSettings {
   subagentMarkers?: unknown;
 }
 
-// Seed from OMP settings so pre-~/.tersio installs keep values. Sync: awaiting let piped stdin beat `ask()`.
-function storedProfileSync(): Profile {
+/** Seed from OMP settings so pre-~/.tersio installs keep values. Sync: awaiting let piped stdin beat `ask()`. A host section, when named, wins over the flat keys. */
+function storedProfileSync(host?: HostId | null): Profile {
   const base = defaultProfile();
   const stored = parseStored(readTextIfExistsSync(tersioSettingsFile()) ?? readTextIfExistsSync(legacyOmpLockPath()));
   if (!stored) return base;
   applyStored(base, stored);
+  if (host) {
+    const section = (stored.hosts as Record<string, Record<string, unknown>> | undefined)?.[host];
+    if (section) applyStored(base, section as StoredSettings);
+  }
   return base;
 }
 
@@ -92,6 +101,7 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   if (typeof stored.rtkDefault === 'boolean') base.rtkDefault = stored.rtkDefault;
   if (typeof stored.ponytailDefault === 'string' && PONYTAIL_DEFAULTS.has(stored.ponytailDefault)) base.ponytailDefault = stored.ponytailDefault;
   if (typeof stored.pstackDefault === 'string' && PSTACK_DEFAULTS.has(stored.pstackDefault)) base.pstackDefault = stored.pstackDefault;
+  if (typeof stored.headroomDefault === 'string' && HEADROOM_DEFAULTS.has(stored.headroomDefault)) base.headroomDefault = stored.headroomDefault;
   if (typeof stored.currency === 'string' && isCurrencyCode(stored.currency.trim().toUpperCase())) {
     base.currency = stored.currency.trim().toUpperCase() as CurrencyCode;
   }
@@ -107,8 +117,8 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   }
 }
 
-async function storedProfile(): Promise<Profile> {
-  return storedProfileSync();
+async function storedProfile(host?: HostId | null): Promise<Profile> {
+  return storedProfileSync(host);
 }
 
 function legacyOmpLockPath(): string {
@@ -168,6 +178,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     rtkDefault: profile.rtkDefault,
     ponytailDefault: profile.ponytailDefault,
     pstackDefault: profile.pstackDefault,
+    headroomDefault: profile.headroomDefault,
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     devTools: profile.devTools,
@@ -182,19 +193,51 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
   // Only a mode write is a session default; an accent or currency save is not, and would mislabel one.
-  const modesChanged = !before || ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault']
+  const modesChanged = !before || ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault']
     .some((key) => before[key as keyof StoredSettings] !== values[key as keyof typeof values]);
   if (modesChanged) recordActivity('mode', 'Session defaults saved', formatProfile(profile));
   console.log(`  [write] Session defaults in ${file}`);
   await mirrorPonytailDefault(profile.ponytailDefault, options);
 }
 
+/** The mode fields a host section can carry. */
+export type HostDefaultField = 'comboDefault' | 'cavemanDefault' | 'rtkDefault' | 'ponytailDefault' | 'pstackDefault' | 'headroomDefault';
+
+/** A host's own section wins over the shared defaults, and only the fields the request chose land in it, so a later shared change still reaches the agent. */
+export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostDefaultField>, profile: Profile, options: WriteOptions): Promise<void> {
+  const file = tersioSettingsFile();
+  const before = parseStored(await readTextIfExists(file)) ?? {};
+  const flat = before as Record<string, unknown>;
+  const section: Record<string, string | boolean> = {};
+  for (const field of [...new Set(fields)]) {
+    const value = profile[field];
+    // Equality with the flat key is inheritance, not an override, so the section never freezes the shared value.
+    if (flat[field] === undefined || flat[field] !== value) section[field] = value as string | boolean;
+  }
+  const hosts = { ...((before.hosts as Record<string, Record<string, unknown>> | undefined) ?? {}) };
+  const merged: Record<string, string | boolean> = { ...((hosts[host] as Record<string, string | boolean> | undefined) ?? {}), ...section };
+  for (const key of Object.keys(merged)) {
+    if (merged[key] === flat[key]) delete merged[key];
+  }
+  if (Object.keys(merged).length > 0) hosts[host] = merged;
+  else delete hosts[host];
+  const next = { ...before, hosts };
+  if (options.dryRun) {
+    if (verbose && !options.quiet) console.log(`  [dry-run] would write session defaults for ${host} to ${file}`);
+    return;
+  }
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  recordActivity('mode', `Session defaults for ${host} saved`, formatProfile(profile));
+  console.log(`  [write] Session defaults for ${host} in ${file}`);
+}
+
 function formatProfile(profile: Profile): string {
-  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault}) · currency=${profile.currency}`;
+  return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault}) · currency=${profile.currency}`;
 }
 
 export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };
-export type { Profile };
+export type { Profile, HostId };
 
 /** A combo level writes the three modes it owns, so the level names the preset that produced them. */
 export function applyComboPreset(profile: Profile, level: string): Profile {
@@ -219,10 +262,11 @@ export function comboLevelOf(profile: Profile): string {
   return matches ? comboDefault : 'custom';
 }
 
-/** The status line the extensions print, read from the persisted profile. */
+/** The status line the extensions print, read from the persisted profile. Lockstep with formatStatus in extensions/shared/status.ts. */
 export function formatCliStatus(profile: Profile): string {
   const level = comboLevelOf(profile);
-  if (level === 'off') return '🧩 COMBO OFF';
-  const rtk = profile.rtkDefault ? 'ON' : 'OFF';
-  return `🧩 COMBO ${level.toUpperCase()}: 🪨 caveman=${profile.cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk} | 🧠 ponytail=${profile.ponytailDefault.toUpperCase()} | 🥔 pstack=${profile.pstackDefault.toUpperCase()}`;
+  const rtk = profile.rtkDefault ? 'on' : 'off';
+  if (level === 'off' && profile.cavemanDefault === 'off' && rtk === 'off' && profile.ponytailDefault === 'off' && profile.pstackDefault === 'off' && profile.headroomDefault === 'off') return '🧩 COMBO OFF';
+  const label = level === 'off' || level === 'custom' ? 'CUSTOM' : level.toUpperCase();
+  return `🧩 COMBO ${label}: 🪨 caveman=${profile.cavemanDefault.toUpperCase()} | 🗜️ rtk=${rtk.toUpperCase()} | 🍃 headroom=${profile.headroomDefault.toUpperCase()} | 🧠 ponytail=${profile.ponytailDefault.toUpperCase()} | 🥔 pstack=${profile.pstackDefault.toUpperCase()}`;
 }

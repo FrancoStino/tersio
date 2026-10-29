@@ -2,12 +2,14 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
-import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
+import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, HEADROOM_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, execFileP } from './common.ts';
+import { resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 import { formatCurrency, readStoredCurrency } from './currency.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
 import { isRangeKey, RANGES } from '../extensions/shared/agent-stats.ts';
 import type { RangeKey } from '../extensions/shared/agent-stats.ts';
+import { readHeadroomSavings } from '../extensions/shared/headroom-gain.ts';
 
 /** The spec version this server speaks; a client naming another is answered with this one. */
 const PROTOCOL_VERSION = '2025-06-18';
@@ -35,12 +37,18 @@ interface ActivityToolArgs {
   limit?: unknown;
 }
 
+interface HeadroomToolArgs {
+  action?: string;
+  suite?: string;
+}
+
 interface ModesToolArgs {
   combo?: unknown;
   caveman?: unknown;
   rtk?: unknown;
   ponytail?: unknown;
   pstack?: unknown;
+  headroom?: unknown;
 }
 
 /** One validated value per mode a call may set; null means the call left that mode alone. */
@@ -50,6 +58,7 @@ interface ModeWants {
   rtk: 'on' | 'off' | null;
   ponytail: string | null;
   pstack: 'on' | 'off' | null;
+  headroom: 'on' | 'off' | null;
 }
 
 /**
@@ -101,9 +110,10 @@ async function modesText(want: ModeWants): Promise<string> {
   if (want.rtk !== null) next = { ...next, rtkDefault: want.rtk === 'on' };
   if (want.ponytail !== null) next = { ...next, ponytailDefault: want.ponytail };
   if (want.pstack !== null) next = { ...next, pstackDefault: want.pstack };
-  const changed = want.combo !== null || want.caveman !== null || want.rtk !== null || want.ponytail !== null || want.pstack !== null;
+  if (want.headroom !== null) next = { ...next, headroomDefault: want.headroom };
+  const changed = want.combo !== null || want.caveman !== null || want.rtk !== null || want.ponytail !== null || want.pstack !== null || want.headroom !== null;
   if (!changed) {
-    return `Current session defaults: ${formatProfile(next)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) or any single mode — caveman, rtk, ponytail, pstack — to change them.`;
+    return `Current session defaults: ${formatProfile(next)}. Pass combo (${[...COMBO_DEFAULTS].join(', ')}) or any single mode — caveman, rtk, ponytail, pstack, headroom — to change them.`;
   }
   const { text } = await captureLog(() => writePluginSettings(next, { quiet: true }));
   return [text, `Session defaults saved: ${formatProfile(next)}`].filter(Boolean).join('\n');
@@ -129,7 +139,7 @@ const TOOLS = [
   },
   {
     name: 'tersio_modes',
-    description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack) overrides its piece of that preset.',
+    description: 'Read the session-start mode defaults, or set them: combo applies a preset, and any single mode (caveman, rtk, ponytail, pstack, headroom) overrides its piece of that preset.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -138,6 +148,18 @@ const TOOLS = [
         rtk: { type: 'string', enum: [...RTK_DEFAULTS], description: 'Condensed shell output: on or off.' },
         ponytail: { type: 'string', enum: [...PONYTAIL_DEFAULTS], description: `Lean-code level: ${[...PONYTAIL_DEFAULTS].join(', ')}.` },
         pstack: { type: 'string', enum: [...PSTACK_DEFAULTS], description: 'Rigor mode: on or off.' },
+        headroom: { type: 'string', enum: [...HEADROOM_DEFAULTS], description: 'Headroom token-saver mode: on or off. Opt-in; tracks the user\'s own Headroom install.' },
+      },
+    },
+  },
+  {
+    name: 'tersio_headroom',
+    description: 'Headroom, the token saver: compression savings by default, or its memory store, an eval suite, and the savings dashboard. Unmeasured when Headroom is not installed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['savings', 'memory', 'evals', 'dashboard'], description: 'What to ask headroom for. savings is the default.' },
+        suite: { type: 'string', description: 'With evals: the suite name, as `headroom evals --help` lists them.' },
       },
     },
   },
@@ -146,7 +168,7 @@ const TOOLS = [
 async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const call = (params ?? {}) as { name?: unknown; arguments?: unknown };
   const name = typeof call.name === 'string' ? call.name : null;
-  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs;
+  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs & HeadroomToolArgs;
   if (name === 'tersio_stats') {
     if (args.range !== undefined && !isRangeKey(args.range)) throw new RpcError(-32602, `range must be one of ${RANGES.join(', ')}`);
     return { content: [{ type: 'text', text: statsText(isRangeKey(args.range) ? args.range : '24h') }] };
@@ -173,8 +195,35 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
       rtk: rtkOrPstack(args.rtk, RTK_DEFAULTS, 'rtk'),
       ponytail: oneOf(args.ponytail, PONYTAIL_DEFAULTS, 'ponytail'),
       pstack: rtkOrPstack(args.pstack, PSTACK_DEFAULTS, 'pstack'),
+      headroom: rtkOrPstack(args.headroom, HEADROOM_DEFAULTS, 'headroom'),
     };
     return { content: [{ type: 'text', text: await modesText(want) }] };
+  }
+  if (name === 'tersio_headroom') {
+    // Upstream owns these surfaces; Tersio passes the command through and returns its tail.
+    const action = args.action ?? 'savings';
+    if (!['savings', 'memory', 'evals', 'dashboard'].includes(action)) throw new RpcError(-32602, 'action must be savings, memory, evals, or dashboard');
+    if (action !== 'savings') {
+      const bin = resolveHeadroomBinary();
+      if (!bin) return { content: [{ type: 'text', text: 'Headroom: not installed — install it from the dashboard Tools page, or run pip install "headroom-ai[all]".' }] };
+      const argv = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : ['evals', ...(typeof args.suite === 'string' && args.suite ? [args.suite] : [])];
+      try {
+        const run = await execFileP(bin, argv, { timeout: 120_000 });
+        return { content: [{ type: 'text', text: (`${run.stdout}\n${run.stderr}`.trim() || `headroom ${argv.join(' ')}: done`) }] };
+      } catch (e) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const said = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim();
+        return { isError: true, content: [{ type: 'text', text: said || err.message || `headroom ${argv.join(' ')} failed` }] };
+      }
+    }
+    const gain = readHeadroomSavings();
+    if (!gain.measured) return { content: [{ type: 'text', text: `Headroom savings: not measured — ${gain.failure}. Install Headroom, then wrap your tools (headroom wrap <tool>, or the switch on the dashboard) so their traffic flows through it.` }] };
+    const lines = [
+      `Headroom savings — lifetime: ${gain.lifetime.tokensSaved.toLocaleString()} of ${gain.lifetime.tokensBefore.toLocaleString()} tokens (${gain.lifetime.savingsPercent.toFixed(1)}%), $${gain.lifetime.costUsd.toFixed(4)} avoided across ${gain.lifetime.calls} calls.`,
+      `Today: ${gain.windows.today.tokensSaved.toLocaleString()} tokens · 7 days: ${gain.windows.last7Days.tokensSaved.toLocaleString()} · 30 days: ${gain.windows.last30Days.tokensSaved.toLocaleString()}.`,
+      ...gain.byClient.map((row) => `${row.client}: ${row.calls} calls · ${row.tokensSaved.toLocaleString()} tokens saved`),
+    ];
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
   throw new RpcError(-32602, `unknown tool: ${name}`);
 }
@@ -197,7 +246,7 @@ export async function handleMessage(message: WireMessage, send: (msg: unknown) =
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: 'tersio', version: PACKAGE_VERSION },
-        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, and read or set session modes with tersio_modes.',
+        instructions: 'Tersio watches this machine\'s agent sessions. Ask for usage with tersio_stats, recent changes with tersio_activity, read or set session modes with tersio_modes, and Headroom compression savings with tersio_headroom.',
       };
     } else if (method === 'ping') result = {};
     else if (method === 'tools/list') result = { tools: TOOLS };

@@ -1,17 +1,16 @@
 // cli/uninstall.ts — remove managed extensions, plugins, and binaries.
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   BUN_BIN_DIR, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_NAME, RTK_BINARY_NAME,
   args, dryRun, keepPonytail, removePonytail, removeRtk, yes,
-  debug, writeConfigLines,
+  debug, execP, writeConfigLines,
 } from './common.ts';
 import { PONYTAIL_PKG } from './manifest.ts';
 import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } from './interactive.ts';
 import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
-import { piAgentDir, pigAgentDir, readTextIfExists } from '../extensions/shared/utils.ts';
-import { fileURLToPath } from 'node:url';
+import { piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
 interface UninstallOptions {
@@ -24,17 +23,12 @@ interface UninstallOptions {
 
 // The pi tree mirrors the OMP one. Ponytail and rtk stay: a package and a shared binary are not ours to delete.
 
-const PI_TREE_DIRS = [
-  // What an install writes now.
-  'caveman',
-  'pstack',
-  'rtk',
+/** Every extension dir an install writes; a removal that misses one strands an extension on a shared file it deleted. */
+export const SHIPPED_TREE_DIRS = ['caveman', 'combo', 'commands', 'headroom', 'pstack', 'rtk', 'shared', 'timing'] as const;
+
+/** A tree an older build wrote, or a foreign name that was never shipped here. */
+const LEGACY_TREE_DIRS = [
   'updater',
-  'combo',
-  'commands',
-  'shared',
-  'server.ts',
-  // Legacy: a tree an older build wrote, or a foreign name that was never shipped here.
   'caveman-session',
   'rtk-session',
   'rtk-filter',
@@ -42,8 +36,16 @@ const PI_TREE_DIRS = [
   'combo-toggle',
   'tersio-commands',
   'lib',
-  'opencode',
   'aaa-combo-boot',
+] as const;
+
+export const PI_TREE_DIRS = [
+  ...SHIPPED_TREE_DIRS,
+  // pi loads server.ts from the tree root; OMP never writes it there.
+  'server.ts',
+  ...LEGACY_TREE_DIRS,
+  // Foreign to the pi loader; never shipped here on purpose.
+  'opencode',
 ];
 
 // One package remove, for packages the installer adds.
@@ -128,7 +130,7 @@ async function updateJsonFile(
   mutate: (data: Record<string, unknown>) => boolean,
   dryRunNote: string,
   writeNote: string,
-  dryRun: boolean,
+  shouldDryRun: boolean,
 ): Promise<void> {
   const raw = await readTextIfExists(filePath);
   if (!raw) return;
@@ -140,7 +142,7 @@ async function updateJsonFile(
     return;
   }
   if (!mutate(data)) return;
-  if (dryRun) {
+  if (shouldDryRun) {
     sayTagged(`  [dry-run] ${dryRunNote}`);
     return;
   }
@@ -170,67 +172,132 @@ async function removeUninstallTarget(target: string, shouldDryRun: boolean, recu
   }
 }
 
+/** Removes the user's own Headroom install with whichever package manager installed it. */
+async function removeHeadroomBinary(shouldDryRun: boolean): Promise<void> {
+  // Undo the agent-side wraps first: a removed binary behind a headroom-managed config strands the agent.
+  const headroomBin = resolveHeadroomBinary();
+  if (headroomBin && !shouldDryRun) {
+    for (const target of ['omp', 'opencode']) {
+      try {
+        await execP(headroomBin, ['unwrap', target], { timeout: 90_000 });
+        sayTagged(`  [rm] Headroom unwrap: ${target}`);
+      } catch { /* not wrapped, or nothing to undo */ }
+    }
+  }
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  dirs.push(path.join(HOME, '.local', 'bin'));
+  const viaUv = dirs.some((dir) => existsSync(path.join(dir, 'uv')));
+  const cmd = viaUv ? 'uv' : 'pip3';
+  const cmdArgs = viaUv ? ['tool', 'uninstall', 'headroom-ai'] : ['uninstall', '-y', 'headroom-ai'];
+  if (shouldDryRun) {
+    sayTagged(`  [dry-run] would run: ${cmd} ${cmdArgs.join(' ')}`);
+    return;
+  }
+  try {
+    await execP(cmd, cmdArgs, { timeout: 300_000 });
+    sayTagged('  [rm] Headroom binary uninstalled');
+  } catch {
+    sayTagged('  [warn] Headroom binary uninstall failed — remove it by hand if it stays');
+  }
+}
+
 async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   const shouldDryRun = options.dryRun ?? dryRun;
   const confirmed = (options.yes ?? yes) || shouldDryRun;
   // Ponytail ships with Tersio, so a full uninstall removes it.
   const shouldRemovePonytail = options.removePonytail ?? (removePonytail || !keepPonytail);
-  const shouldRemoveRtk = options.removeRtk ?? removeRtk;
+  let shouldRemoveRtk = options.removeRtk ?? removeRtk;
 
   console.log('\n=== Tersio Uninstall ===\n');
 
-  // A TTY user picks the host; only hosts with tersio on them are offered.
-  const installed = detectHosts().filter((host) => host.installed);
-  let host: HostId = options.host ?? 'omp';
-  try {
-    host = parseHostArg(args) ?? host;
-  } catch (e) {
-    console.error(`[fail] ${(e as Error).message}`);
-    process.exit(1);
-  }
-  if (!options.host && tty() && !confirmed) {
-    if (installed.length === 0) {
-      console.log('Tersio is not installed for any agent on this machine. Nothing to remove.');
+  // A TTY run asks for everything to remove in one list: the agents, then the vendor binaries.
+  const allHosts = detectHosts();
+  const installed = allHosts.filter((entry) => entry.installed);
+  let hosts: HostId[];
+  let shouldRemoveHeadroomBinary = false;
+  if (options.host) {
+    hosts = [options.host];
+  } else if (tty() && !confirmed) {
+    // One plain select: Enter picks the single thing to remove, no Space and no Done row.
+    const pick = await askInteractiveChoice('What should Tersio remove?', [
+      { value: 'agents', label: 'AI agents', hint: 'Oh My Pi, pi, PiG, OpenCode — pick one next' },
+      ...(shouldRemoveRtk ? [] : [{ value: 'rtk', label: 'RTK binary', hint: 'the rtk CLI the hooks call' }]),
+      { value: 'headroom', label: 'Headroom binary', hint: 'uninstalls headroom-ai through uv or pip' },
+    ], 'agents');
+    if (pick.status !== 'selected') {
       closeRL();
       return false;
     }
-    if (installed.length > 1) {
-      const choice = await askInteractiveChoice('Uninstall Tersio from which agent?', hostOptions(installed), host);
-      if (choice.status !== 'selected') {
-        closeRL();
-        return false;
-      }
-      host = choice.value as HostId;
-    } else {
-      host = installed[0].id;
+    hosts = [];
+    if (pick.value === 'rtk') shouldRemoveRtk = true;
+    if (pick.value === 'headroom') shouldRemoveHeadroomBinary = true;
+    if (pick.value === 'agents') {
+      const agentPick = await askInteractiveChoice('Which agent?', allHosts.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        hint: entry.installed ? 'tersio installed' : 'not installed',
+      })), installed[0]?.id ?? allHosts[0].id);
+      if (agentPick.status === 'selected') hosts = [agentPick.value as HostId];
+    }
+    if (hosts.length === 0 && !shouldRemoveRtk && !shouldRemoveHeadroomBinary) {
+      console.log('Nothing selected.');
+      closeRL();
+      return false;
+    }
+  } else {
+    try {
+      hosts = [parseHostArg(args) ?? 'omp'];
+    } catch (e) {
+      console.error(`[fail] ${(e as Error).message}`);
+      process.exit(1);
     }
   }
-  const selected = detectHosts().find((h) => h.id === host) as HostEntry;
+  // Binaries picked without an agent get their own confirmation and their own removal; with a host
+  // the host's dialog already lists them.
+  if (shouldRemoveHeadroomBinary || (shouldRemoveRtk && hosts.length === 0)) {
+    const plan = [
+      ...(shouldRemoveRtk && hosts.length === 0 ? ['the RTK binary'] : []),
+      ...(shouldRemoveHeadroomBinary ? ['the Headroom binary'] : []),
+    ].join(' and ');
+    if (!confirmed && !(await confirmDestructive(`Remove ${plan}?`))) {
+      closeRL();
+      return false;
+    }
+    if (shouldRemoveRtk && hosts.length === 0) await removeUninstallTarget(path.join(BUN_BIN_DIR, RTK_BINARY_NAME), shouldDryRun, false);
+    if (shouldRemoveHeadroomBinary) await removeHeadroomBinary(shouldDryRun);
+  }
+  if (hosts.length === 0) {
+    closeRL();
+    return true;
+  }
+  const results: boolean[] = [];
+  for (const host of hosts) {
+    const selected = allHosts.find((h) => h.id === host) as HostEntry;
   if (host === 'pi') {
     const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed, 'pi');
     if (removed) console.log('\nDone. Restart pi, then /combo lite.');
-    closeRL();
-    return removed;
+    results.push(removed);
+    continue;
   }
   if (host === 'pig') {
     const removed = await removePiLayer(selected, shouldDryRun, shouldRemovePonytail, shouldRemoveRtk, confirmed, 'pig');
     if (removed) console.log('\nDone. Restart pig, then /combo lite.');
-    closeRL();
-    return removed;
+    results.push(removed);
+    continue;
   }
   if (host === 'opencode') {
     const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
     const configPath = path.join(HOME, '.config', 'opencode', 'opencode.json');
     if (!selected.installed && !selected.declared) {
       sayTagged(`  [skip] ${selected.label} — nothing installed (${selected.installCmd})`);
-      closeRL();
-      return false;
+      results.push(false);
+      continue;
     }
     console.log('Will remove:');
     console.log(`  ${dir}`);
     console.log(`  ${path.join(HOME, '.config', 'opencode', 'plugins', 'rtk.ts')} (rtk auto-wrap; reinstall with: rtk init -g --opencode)`);
     console.log(`  the tersio entry in ${configPath}`);
-    if (!confirmed && !(await confirmDestructive('Remove these Tersio files?'))) { closeRL(); return false; }
+    if (!confirmed && !(await confirmDestructive('Remove these Tersio files?'))) { results.push(false); continue; }
     await removeUninstallTarget(dir, shouldDryRun);
     await removeUninstallTarget(path.join(HOME, '.config', 'opencode', 'plugins', 'rtk.ts'), shouldDryRun, false);
     if (!shouldDryRun) {
@@ -244,8 +311,8 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
       } catch { /* config missing or not JSON; nothing to scrub */ }
     }
     console.log('\nDone. Restart OpenCode to drop the plugin.');
-    closeRL();
-    return true;
+    results.push(true);
+    continue;
   }
   if (!selected.installed) sayTagged(`  [note] ${selected.label} has no tersio install; removing what is left behind.`);
 
@@ -256,22 +323,9 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   const ponytailPkgDir = path.join(pluginsDir, 'node_modules', '@dietrichgebert', 'ponytail');
 
   const targets = [
-    // What an install writes now.
-    'caveman',
-    'rtk',
-    'updater',
-    'combo',
-    'commands',
-    'shared',
-    // Legacy: a tree an older build wrote into the agent tree, or a foreign name never shipped here.
-    'caveman-session',
-    'rtk-session',
-    'rtk-filter',
-    'ai-addons-updater',
-    'combo-toggle',
-    'tersio-commands',
-    'lib',
-    'aaa-combo-boot',
+    // What an install writes now: the same shipped set the pi removal covers.
+    ...SHIPPED_TREE_DIRS,
+    ...LEGACY_TREE_DIRS,
     // Foreign to the OMP loader; never shipped here on purpose.
     'opencode',
   ].map((dir) => path.join(extDir, dir));
@@ -290,7 +344,7 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     console.log(`  ${path.join(extDir, 'rtk.ts')} (rtk OMP wiring)`);
   }
 
-  if (!confirmed && !(await confirmDestructive('Remove the listed Tersio files?'))) return false;
+  if (!confirmed && !(await confirmDestructive('Remove the listed Tersio files?'))) { results.push(false); continue; }
 
   // Remove extension directories (independent paths, so concurrently).
   await Promise.all(targets.map((t) => removeUninstallTarget(t, shouldDryRun)));
@@ -362,7 +416,10 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
   await clearSessionDefaults(shouldDryRun);
 
   console.log(`\nDone. Restart ${detectHosts().find((h) => h.id === host)?.label ?? host} for changes to take effect.`);
-  return true;
+  results.push(true);
+  }
+  closeRL();
+  return results.some(Boolean);
 }
 
 export { runUninstall };

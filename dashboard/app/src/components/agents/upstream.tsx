@@ -84,7 +84,7 @@ interface HistoryPoint {
 }
 
 /** The glyph each port carries everywhere else in the project. */
-const GLYPH: Record<string, string> = { Caveman: "🪨", RTK: "🗜️", Ponytail: "🧠", pstack: "🥔" };
+const GLYPH: Record<string, string> = { Caveman: "🪨", RTK: "🗜️", Ponytail: "🧠", pstack: "🥔", Headroom: "🍃" };
 
 const AGENT_NAME: Record<string, string> = { omp: "Oh My Pi", pi: "pi", pig: "PiG", opencode: "OpenCode" };
 

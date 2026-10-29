@@ -443,6 +443,7 @@ export interface AgentStats {
   toolSeries: Array<{ ts: number; tool: string; calls: number; errors: number }>;
   /** What rtk kept out of context in this range, and how much of the bash work it took. */
   rtk: AgentRtk;
+  headroom: AgentHeadroom;
   usageSeries: AgentWindowSeries[];
   windowInsights: AgentWindowInsight[];
   providerHourly: AgentProviderHour[];
@@ -475,6 +476,34 @@ export interface AgentRtk {
   rtkCalls: number;
   missedCalls: number;
   adoptionPct: number;
+}
+
+export interface HeadroomClientRow {
+  client: string;
+  calls: number;
+  tokensSaved: number;
+}
+
+export interface AgentHeadroom {
+  measured: boolean;
+  failure: string;
+  tokensSaved: number;
+  tokensBefore: number;
+  costUsd: number;
+  calls: number;
+  savingsPercent: number;
+  todayTokens: number;
+  last7Tokens: number;
+  last30Tokens: number;
+  byClient: HeadroomClientRow[];
+  /** Headroom's own routing check: is the proxy up, are agents routed. */
+  routing: {
+    measured: boolean;
+    failure: string;
+    proxyUp: boolean;
+    routedAgents: number;
+    failing: Array<{ name: string; status: string; summary: string; hint: string | null }>;
+  };
 }
 
 export type AgentView =
@@ -614,6 +643,117 @@ export function useAgentRequestEntry(file: string | null, entryId: string | null
   return { entry, loading };
 }
 
+/** One dashboard call: its JSON answer, or null when the server does not answer. A refusal still carries its reason. */
+async function apiJson<T>(path: string, body?: unknown): Promise<T | null> {
+  try {
+    const r = await fetch(path, body === undefined
+      ? undefined
+      : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return (await r.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** The canvas node layout, stored tersio-side so a dashboard restart on a new port keeps it. */
+export async function fetchPipelinePositions(): Promise<Record<string, unknown> | null> {
+  const body = await apiJson<{ positions?: Record<string, unknown> }>("/api/pipeline/positions");
+  return body ? body.positions ?? {} : null;
+}
+
+export async function postPipelinePositions(positions: Record<string, unknown>): Promise<boolean> {
+  return (await apiJson<{ ok?: boolean }>("/api/pipeline/positions", { positions }))?.ok === true;
+}
+
+/** Which headroom wrap targets have their binary on this machine. */
+export async function fetchWrapTargets(): Promise<Array<{ name: string; available: boolean }> | null> {
+  const body = await apiJson<{ targets?: Array<{ name: string; available: boolean }> }>("/api/headroom/wrap");
+  return body?.targets ?? null;
+}
+
+/** Upstream headroom surfaces Tersio does not reimplement: the savings dashboard and the memory store. */
+export async function runHeadroomAction(action: "dashboard" | "memory"): Promise<{ ok: boolean; detail?: string; error?: string } | null> {
+  return apiJson("/api/headroom/action", { action });
+}
+
+/** The canvas mirrors the wrap record in browser storage; the server copy stays the source of truth. */
+const WRAP_KEY = "tersio.headroom.wrap.v1";
+
+export function readStoredWraps(): Record<string, true> {
+  try {
+    return JSON.parse(localStorage.getItem(WRAP_KEY) ?? "{}") as Record<string, true>;
+  } catch {
+    return {};
+  }
+}
+
+/** Mirrors the record for the canvas, and tells it to redraw; a private-mode write just skips. */
+export function storeWraps(wraps: Record<string, true>): void {
+  try { localStorage.setItem(WRAP_KEY, JSON.stringify(wraps)); } catch { /* private mode */ }
+  window.dispatchEvent(new Event("tersio:wrap-changed"));
+}
+
+/** The wrap record, stored tersio-side so every browser sees the same switches. */
+export async function fetchHeadroomWraps(): Promise<Record<string, unknown> | null> {
+  const body = await apiJson<{ wraps?: Record<string, unknown> }>("/api/headroom/wraps");
+  return body ? body.wraps ?? {} : null;
+}
+
+export async function postHeadroomWraps(wraps: Record<string, unknown>): Promise<boolean> {
+  return (await apiJson<{ ok?: boolean }>("/api/headroom/wraps", { wraps }))?.ok === true;
+}
+
+/** Runs headroom's documented wrap command for one tool, detached. */
+export async function postHeadroomWrap(name: string, action: "wrap" | "unwrap" = "wrap"): Promise<{ ok: boolean; detail: string; error?: string } | null> {
+  return apiJson("/api/headroom/wrap", { name, action });
+}
+
+/** One vendor row from the scorecard: the installed version against the latest release. */
+export interface VendorRow {
+  source: string;
+  pin: string | null;
+  upstream: string | null;
+}
+
+/** Refreshes the scorecard and returns the row for one vendor tool. */
+export async function checkVendor(tool: "Headroom" | "RTK"): Promise<VendorRow | null> {
+  try {
+    const check = await fetch("/api/upstream/check", { method: "POST", signal: AbortSignal.timeout(120_000) });
+    if (!check.ok) return null;
+    await fetch("/api/upstream");
+    const r = await fetch("/api/upstream");
+    if (!r.ok) return null;
+    const body = (await r.json()) as { card?: { sources?: VendorRow[] } };
+    return body.card?.sources?.find((row) => row.source === tool) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The vendor footer's actions: update in the background, or remove the binary. */
+export async function postVendorAction(tool: "headroom" | "rtk", action: "update" | "uninstall"): Promise<{ ok: boolean; detail: string; error?: string } | null> {
+  return apiJson(`/api/vendor/${action}`, { tool });
+}
+
+export async function installHeadroom(budgetMs = 180_000): Promise<{ present: boolean; error: string | null }> {
+  try {
+    const start = await fetch("/api/headroom/install", { method: "POST" })
+      .then((r) => r.json()) as { ok?: boolean; present?: boolean; error?: string } | null;
+    if (start?.present) return { present: true, error: null };
+    if (start && start.ok === false) return { present: false, error: start.error ?? "the install could not start" };
+    const started = Date.now();
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const job = await fetch("/api/headroom/install").then((r) => r.json()).catch(() => null) as { present?: boolean; code?: number | null; error?: string | null } | null;
+      if (job?.present) return { present: true, error: null };
+      if (job && job.code !== null && job.code !== undefined) return { present: false, error: job.error || "the pip run failed" };
+      if (Date.now() - started > budgetMs) return { present: false, error: "the install is still running — check ~/.tersio/headroom-install.log" };
+    }
+  } catch {
+    return { present: false, error: "the dashboard server refused the install request" };
+  }
+}
+
 export interface HealthReport {
   tersio: string;
   node: string;
@@ -636,6 +776,7 @@ export interface HealthReport {
   opencodeDir: string | null;
   provider: string | null;
   rtk: { present: boolean; version: string | null; path: string };
+  headroom: { present: boolean; version: string | null; path: string };
   home: string;
 }
 

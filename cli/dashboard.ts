@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -11,26 +11,50 @@ import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { isCurrencyCode } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import {
-  OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
+  OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION, execFileP,
 } from './common.ts';
-import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, storedProfile, writePluginSettings } from './profile.ts';
+import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, saveHostDefaults, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
+import { mergeHeadroomWraps } from '../extensions/shared/headroom-wraps.ts';
+import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
 import type { UpdatePrefs } from './dashboard-update.ts';
-import type { BackupSchedule } from './profile.ts';
+import type { BackupSchedule, HostDefaultField } from './profile.ts';
 import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
-import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
-import type { ComboLevel } from '../extensions/shared/types.ts';
+import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
+
+/** The tools headroom can wrap (`headroom wrap --help`), and the binary each one runs under. */
+const WRAP_TARGETS = [
+  'omp', 'claude', 'codex', 'copilot', 'vscode', 'vscode-claude', 'aider', 'openclaude', 'vibe',
+  'grok', 'cursor', 'grok-build', 'cline', 'continue', 'goose', 'openhands', 'openclaw', 'opencode',
+] as const;
+
+
+const WRAP_BINARY: Record<string, string> = {
+  vscode: 'code', 'vscode-claude': 'code', cline: 'code', continue: 'code', 'grok-build': 'grok', copilot: 'gh',
+};
+
+/** Whether a wrap target's binary sits somewhere on PATH (plus the user-script dir pip installs to). */
+async function binaryExists(name: string): Promise<boolean> {
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const extra = path.join(homeDir(), '.local', 'bin');
+  if (!dirs.includes(extra)) dirs.push(extra);
+  for (const dir of dirs) {
+    if (existsSync(path.join(dir, name))) return true;
+  }
+  return false;
+}
 
 export interface DashboardOptions {
   port: number;
@@ -135,12 +159,12 @@ function offsetFrom(url: string): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-function agentJson(range: RangeKey, view: AgentView, offset: number): string {
+export function agentJson(range: RangeKey, view: AgentView, offset: number): string {
   return JSON.stringify({ range, view, offset, agent: agentStats(range, view, offset) });
 }
 
 // Runs outside any agent session, so it reports the persisted defaults.
-async function statusJson(): Promise<string> {
+export async function statusJson(): Promise<string> {
   const profile = await storedProfile();
   return JSON.stringify({
     status: formatCliStatus(profile),
@@ -149,6 +173,7 @@ async function statusJson(): Promise<string> {
     rtk: profile.rtkDefault ? 'on' : 'off',
     ponytail: profile.ponytailDefault,
     pstack: profile.pstackDefault,
+    headroom: profile.headroomDefault,
   });
 }
 
@@ -165,6 +190,71 @@ interface HostJob {
 
 /** The last command run per host, so the guide can stop waiting the moment it exits. */
 const hostJobs = new Map<string, HostJob>();
+
+/** Whether a name is one of headroom's wrapped tools, so a route never passes an arbitrary string to the binary. */
+export function isHeadroomWrapTarget(name: string): boolean {
+  return (WRAP_TARGETS as readonly string[]).includes(name);
+}
+
+/** The two third-party binaries Tersio's footers manage; anything else is a bad request. */
+export function isVendorTool(tool: string): tool is 'headroom' | 'rtk' {
+  return tool === 'headroom' || tool === 'rtk';
+}
+
+/** The one Headroom install job, so the Tools page can poll until the binary appears or the pip run fails. */
+const headroomJob: { startedAt: number; code: number | null; error: string | null } = { startedAt: 0, code: null, error: null };
+/** pip's stderr lands here, so a failed install names its own cause instead of polling forever. */
+function headroomInstallLog(): string {
+  return path.join(tersioHome(), 'headroom-install.log');
+}
+
+function tailOf(file: string, lines = 6): string | null {
+  try {
+    const parts = readFileSync(file, 'utf8').trim().split(/\r?\n/);
+    return parts.slice(-lines).join('\n') || null;
+  } catch { return null; }
+}
+
+/** The state the Tools page polls; `error` is the pip output tail once a run has failed. */
+function headroomInstallState(): { startedAt: number; code: number | null; error: string | null } {
+  if (headroomJob.code !== null && headroomJob.code !== 0 && !headroomJob.error) {
+    headroomJob.error = tailOf(headroomInstallLog()) ?? 'the pip run failed without output';
+  }
+  return { ...headroomJob };
+}
+
+/** Installs Headroom on request: uv first, pip --user as the fallback whose scripts dir the resolver probes. */
+function spawnHeadroomInstall(): boolean {
+  const uv = resolveHostBinary('uv');
+  const cmd = uv ? 'uv' : process.platform === 'win32' ? 'pip' : 'python3';
+  const args = uv
+    ? ['tool', 'install', 'headroom-ai[all]']
+    : process.platform === 'win32'
+      ? ['install', '--user', 'headroom-ai[all]']
+      : ['-m', 'pip', 'install', '--user', 'headroom-ai[all]'];
+  try { mkdirSync(tersioHome(), { recursive: true }); } catch { /* the log is best effort */ }
+  let stderrFd: number | undefined;
+  try { stderrFd = openSync(headroomInstallLog(), 'w'); } catch { stderrFd = undefined; }
+  const child = spawn(cmd, args, { detached: true, stdio: ['ignore', 'ignore', stderrFd ?? 'ignore'] });
+  headroomJob.startedAt = Date.now();
+  headroomJob.code = null;
+  headroomJob.error = null;
+  recordActivity('agent', 'Headroom install started');
+  child.on('exit', (code) => {
+    headroomJob.code = code ?? 0;
+    if (stderrFd !== undefined) closeSync(stderrFd);
+    const ok = headroomJob.code === 0;
+    if (!ok) headroomJob.error = tailOf(headroomInstallLog()) ?? 'the pip run failed without output';
+    recordActivity('agent', `Headroom install ${ok ? 'finished' : 'failed'}`, ok ? undefined : headroomJob.error?.split('\n')[0], ok);
+  });
+  child.on('error', (error) => {
+    headroomJob.code = -1;
+    headroomJob.error = error.message;
+    recordActivity('agent', 'Headroom install failed', error.message, false);
+  });
+  child.unref();
+  return true;
+}
 
 /** The favicon types the mark catalog uses, served as the type the bytes actually are. */
 const MARK_TYPES: Readonly<Record<string, string>> = {
@@ -256,6 +346,13 @@ function rtkVersion(bin: string): string | null {
   }
 }
 
+function headroomVersion(bin: string): string | null {
+  // Headroom prints `headroom, version 0.40.0`; keep the bare version so the UI reads like the agents' rows.
+  const raw = rtkVersion(bin);
+  const m = raw?.match(/version\s+(\S+)/);
+  return m ? m[1] : raw;
+}
+
 function ompDefaultModel(): string | null {
   try {
     const text = readFileSync(path.join(OMP_AGENT_DIR, 'config.yml'), 'utf8');
@@ -266,19 +363,23 @@ function ompDefaultModel(): string | null {
   }
 }
 
-function healthJson(): string {
+/** The config root per agent, for the health report. */
+const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
+  if (id === 'omp') return path.join(homeDir(), '.omp');
+  if (id === 'pi') return path.join(homeDir(), '.pi');
+  if (id === 'pig') return path.join(homeDir(), '.pig');
+  return path.join(homeDir(), '.config', 'opencode');
+};
+
+export function healthJson(): string {
   const rtkBin = resolveRtkBinary();
   const rtkPresent = rtkBin !== null;
+  const headroomBin = resolveHeadroomBinary();
+  const headroomPresent = headroomBin !== null;
   const detectedOmpPath = ompPath();
   const detectedPiPath = piPath();
   const detectedPigPath = pigPath();
   const detectedOpencodePath = opencodePath();
-  const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
-    if (id === 'omp') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.omp');
-    if (id === 'pi') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.pi');
-    if (id === 'pig') return path.join(process.env.HOME || process.env.USERPROFILE || '', '.pig');
-    return path.join(process.env.HOME || process.env.USERPROFILE || '', '.config', 'opencode');
-  };
   return JSON.stringify({
     tersio: PACKAGE_VERSION,
     node: process.version,
@@ -297,12 +398,13 @@ function healthJson(): string {
     opencodeDir: agentDir('opencode'),
     provider: ompDefaultModel(),
     rtk: { present: rtkPresent, version: rtkPresent ? rtkVersion(rtkBin as string) : null, path: rtkBin || 'not found in PATH' },
+    headroom: { present: headroomPresent, version: headroomPresent ? headroomVersion(headroomBin as string) : null, path: headroomBin || 'not found in PATH' },
     home: tersioHomePath(),
   });
 }
 
 function tersioHomePath(): string {
-  return path.join(process.env.HOME || process.env.USERPROFILE || '', '.tersio');
+  return path.join(homeDir(), '.tersio');
 }
 
 interface DoctorRow { label: string; ok: boolean; detail: string; group: string }
@@ -328,7 +430,7 @@ function diagReport(): DoctorReport | null {
 
 // The old report sat loose in the data home; read it once, then keep it in state.json.
 function migratedDiag(): Partial<DoctorReport> | null {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const home = homeDir();
   const old = takeLegacy(path.join(home, '.tersio', 'diag.json'), (raw) => JSON.parse(raw) as Partial<DoctorReport>);
   if (old) patchState({ diag: old });
   return old;
@@ -362,12 +464,14 @@ function ageStr(p: string): string | null {
   }
 }
 
+/** Two-digit padding for the absTime stamp. */
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
 function absTime(p: string): string | null {
   try {
     const d = new Date(statSync(p).mtimeMs);
-    const q = (n: number): string => String(n).padStart(2, '0');
     const h24 = d.getHours();
-    return `${q(d.getMonth() + 1)}-${q(d.getDate())}-${d.getFullYear()}, ${q(h24 % 12 || 12)}:${q(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
+    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}-${d.getFullYear()}, ${pad2(h24 % 12 || 12)}:${pad2(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
   } catch {
     return null;
   }
@@ -383,14 +487,16 @@ function relAge(ms: number): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
+/** Whether an extension file the doctor names exists. */
+const pathExists = (p: string): boolean => existsSync(p);
+
 function computeDoctorRows(): DoctorRow[] {
   const rows: DoctorRow[] = [];
   const rtkBin = resolveRtkBinary();
   const tersioPluginDir = path.join(OMP_PLUGINS_DIR, 'node_modules', ...PACKAGE_NAME.split('/'));
-  const ok = (p: string): boolean => existsSync(p);
   const configPath = path.join(OMP_AGENT_DIR, 'config.yml');
   const ext = (label: string, p: string): void => {
-    rows.push({ label, ok: ok(p), detail: ok(p) ? 'installed' : p, group: 'Extensions' });
+    rows.push({ label, ok: pathExists(p), detail: pathExists(p) ? 'installed' : p, group: 'Extensions' });
   };
   const addon = (label: string, present: boolean, detail: string, group = 'Add-ons'): void => {
     rows.push({ label, ok: present, detail, group });
@@ -406,10 +512,11 @@ function computeDoctorRows(): DoctorRow[] {
   // A listed extension whose file is gone makes the host warn on every load, so surface it here.
   const dangling = explicitEntries
     .filter((entry) => entry.includes(`extensions${path.sep}`) || entry.includes('extensions/'))
-    .filter((entry) => !ok(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
+    .filter((entry) => !pathExists(path.isAbsolute(entry) ? entry : path.resolve(OMP_AGENT_DIR, entry)));
   addon('Extension files present', dangling.length === 0, dangling.length ? dangling.join(', ') : 'ok', 'Extensions');
   ext('Caveman extension', path.join(tersioPluginDir, 'extensions', 'caveman', 'index.ts'));
   ext('pstack extension', path.join(tersioPluginDir, 'extensions', 'pstack', 'index.ts'));
+  ext('Headroom extension', path.join(tersioPluginDir, 'extensions', 'headroom', 'index.ts'));
   ext('RTK extension', path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts'));
   const rule = path.join(tersioPluginDir, 'extensions', 'caveman', 'rule.md');
   const ruleAge = ageStr(rule);
@@ -428,6 +535,9 @@ function computeDoctorRows(): DoctorRow[] {
   const rtkAge = rtkBin ? ageStr(rtkBin) : null;
   const rtkAt = rtkBin ? absTime(rtkBin) : null;
   addon('RTK binary', rtkVer !== null, rtkVer && rtkAge && rtkAt ? `${rtkVer} (updated ${rtkAge} · ${rtkAt})` : rtkBin || 'not found in PATH');
+  // Opt-in and user-owned: the row reports the binary when it exists and stays quiet when it does not.
+  const headroomBin = resolveHeadroomBinary();
+  if (headroomBin) addon('Headroom binary', true, headroomVersion(headroomBin) ?? headroomBin);
   // Ponytail rides inside the plugin now, so the version comes from the vendored copy, not a sibling package.
   const ponytailPkg = path.join(tersioPluginDir, 'extensions', 'ponytail', 'package.json');
   let ponytailVer: string | null = null;
@@ -484,36 +594,62 @@ function setDiagSchedule(schedule: DiagSchedule): DoctorReport {
   return base;
 }
 
-// One field per call, validated against the same sets the CLI uses.
-async function saveDefaults(body: Record<string, unknown>): Promise<
+// One field per call, validated against the same sets the CLI uses. A body with a `host` writes that
+// agent's own section, so one agent's preset never becomes every agent's.
+// Writes serialize: every call re-reads the profile inside the queue, so two overlapping requests
+// (a sidebar drag racing a toggle) can never write whole profiles from stale snapshots.
+let profileWriteQueue: Promise<unknown> = Promise.resolve();
+
+function saveDefaults(body: Record<string, unknown>): Promise<
   { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
 > {
-  const profile = await storedProfile();
+  const run = async (): Promise<
+    { ok: true; profile: Record<string, unknown> } | { ok: false; error: string }
+  > => {
+  const HOST_SCOPES = ['omp', 'pi', 'opencode'] as const;
+  const hostScope = typeof body.host === 'string' && (HOST_SCOPES as readonly string[]).includes(body.host)
+    ? body.host as (typeof HOST_SCOPES)[number]
+    : null;
+  if (body.host !== undefined && hostScope === null) return { ok: false, error: 'unknown host scope' };
+  const profile = await storedProfile(hostScope);
   const events: string[] = [];
+  // A host scope carries only the mode fields the request changed; non-mode fields stay global-only.
+  const changedFields: HostDefaultField[] = [];
   if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
     // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
     Object.assign(profile, applyComboPreset(profile, level));
     events.push(`Combo preset to ${level}`);
+    changedFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
     if (!CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
     profile.cavemanDefault = v;
     events.push(`Caveman to ${v}`);
+    if (!changedFields.includes('cavemanDefault')) changedFields.push('cavemanDefault');
   }
   if (body.ponytailDefault !== undefined) {
     const v = String(body.ponytailDefault);
     if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
     events.push(`Ponytail to ${v}`);
+    if (!changedFields.includes('ponytailDefault')) changedFields.push('ponytailDefault');
   }
   if (body.pstackDefault !== undefined) {
     const v = String(body.pstackDefault);
     if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
     profile.pstackDefault = v;
     events.push(`pstack to ${v}`);
+    changedFields.push('pstackDefault');
+  }
+  if (body.headroomDefault !== undefined) {
+    const v = String(body.headroomDefault);
+    if (!HEADROOM_DEFAULTS.has(v)) return { ok: false, error: 'unknown headroom level' };
+    profile.headroomDefault = v;
+    events.push(`Headroom to ${v}`);
+    changedFields.push('headroomDefault');
   }
   if (body.backupSchedule !== undefined) {
     const v = String(body.backupSchedule);
@@ -524,6 +660,7 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
     profile.rtkDefault = body.rtkDefault;
     events.push(`RTK to ${body.rtkDefault ? 'on' : 'off'}`);
+    changedFields.push('rtkDefault');
   }
   if (body.devTools !== undefined) {
     if (typeof body.devTools !== 'boolean') return { ok: false, error: 'devTools must be true or false' };
@@ -540,8 +677,13 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
     // A drag changes it often, so it is saved without an activity line.
     profile.sidebarWidth = clampSidebarWidth(body.sidebarWidth);
   }
-  await writePluginSettings(profile, {});
-  for (const title of events) recordActivity('mode', title, 'Applies to new sessions.');
+  // A host scope writes only the mode fields the request changed; non-mode fields are global-only and never host-scoped.
+  if (hostScope) {
+    if (changedFields.length > 0) await saveHostDefaults(hostScope, changedFields, profile, {});
+  } else {
+    await writePluginSettings(profile, {});
+  }
+  for (const title of events) recordActivity('mode', title, hostScope ? `Applies to new ${hostScope} sessions.` : 'Applies to new sessions.');
   return {
     ok: true,
     profile: {
@@ -550,14 +692,19 @@ async function saveDefaults(body: Record<string, unknown>): Promise<
       rtkDefault: profile.rtkDefault,
       ponytailDefault: profile.ponytailDefault,
       pstackDefault: profile.pstackDefault,
+      headroomDefault: profile.headroomDefault,
       backupSchedule: profile.backupSchedule,
       devTools: profile.devTools,
       accent: profile.accent,
       sidebarWidth: profile.sidebarWidth,
     },
   };
-}
+  }
 
+  const result = profileWriteQueue.then(run, run);
+  profileWriteQueue = result.catch(() => null);
+  return result;
+}
 function readDiagSchedule(): DiagSchedule {
   return diagReport()?.schedule ?? 'manual';
 }
@@ -581,6 +728,42 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on('end', () => { resolve(body); });
     req.on('error', () => { resolve(''); });
   });
+}
+
+/** One JSON reply: every route answers this shape, so the header is set in one place. */
+export function json(res: Pick<http.ServerResponse, 'writeHead' | 'end'>, code: number, body: unknown): void {
+  // A string here would be serialized twice; the routes that build their own text call jsonText.
+  if (typeof body === 'string') throw new Error('json() takes a value, not text: use jsonText() for a serialized payload');
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+/** A reply whose JSON is already serialized: the big payloads build their own string. */
+function jsonText(res: http.ServerResponse, code: number, text: string): void {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(text);
+}
+
+/** The request body as an object; a missing or malformed one reads as empty, as every route assumed. */
+async function bodyOf(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await readBody(req));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Runs a headroom command and returns its last lines; a failure carries the same tail. */
+async function headroomRun(bin: string, args: string[], timeout: number): Promise<{ ok: boolean; lines: string[] }> {
+  const tail = (text: string): string[] => text.trim().split('\n').filter(Boolean);
+  try {
+    const run = await execFileP(bin, args, { timeout });
+    return { ok: true, lines: tail(`${run.stdout}\n${run.stderr}`) };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return { ok: false, lines: tail(`${err.stdout ?? ''}\n${err.stderr ?? ''}`) };
+  }
 }
 
 function openBrowser(url: string): void {
@@ -636,24 +819,20 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   requireDashboardBundle();
   const server = http.createServer(async (req, res) => {
     if (req.url === '/api/upstream' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ card: await cachedScorecard(), history: await upstreamHistory() }));
+      json(res, 200, { card: await cachedScorecard(), history: await upstreamHistory() });
       return;
     }
     if (req.url === '/api/upstream/check' && req.method === 'POST') {
       try {
         const card = await refreshScorecard();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, card, history: await upstreamHistory() }));
+        json(res, 200, { ok: true, card, history: await upstreamHistory() });
       } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'check failed' }));
+        json(res, 500, { ok: false, error: (error as Error).message || 'check failed' });
       }
       return;
     }
     if (req.url === '/api/data' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      json(res, 200, {
         dir: backupDir(),
         keep: BACKUP_KEEP,
         sources: dataSources(),
@@ -661,49 +840,40 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         schedule: readBackupSchedule(),
         bytes: backupDiskBytes(),
         reset: resetCounts(),
-      }));
+      });
       return;
     }
     if (req.url === '/api/data' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch { body = {}; }
+      const body = await bodyOf(req);
       const action = String(body.action ?? '');
       const name = String(body.name ?? '');
       // A missing SQLite engine, or a locked file, is a 500 with a message rather than a silent no-op.
       try {
         if (action === 'create') {
           const made = createDataBackup();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, name: made.name }));
+          json(res, 200, { ok: true, name: made.name });
           return;
         }
         if (action === 'restore') {
           const ok = restoreDataBackup(name);
-          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          json(res, ok ? 200 : 400, ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' });
           return;
         }
         if (action === 'reset') {
           const done = resetStatistics();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, ...done }));
+          json(res, 200, { ok: true, ...done });
           return;
         }
         if (action === 'delete') {
           const ok = deleteDataBackup(name);
-          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          json(res, ok ? 200 : 400, ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' });
           return;
         }
       } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'backup failed' }));
+        json(res, 500, { ok: false, error: (error as Error).message || 'backup failed' });
         return;
       }
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+      json(res, 400, { ok: false, error: 'unknown action' });
       return;
     }
     if (req.url?.startsWith('/api/mark?') && req.method === 'GET') {
@@ -749,83 +919,277 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     if (req.url?.startsWith('/api/logs') && req.method === 'GET') {
       const raw = new URL(req.url, 'http://127.0.0.1').searchParams.get('limit');
       const limit = Math.min(2000, Math.max(1, Number.parseInt(raw ?? '', 10) || 400));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(readActivity(limit)));
+      json(res, 200, readActivity(limit));
       return;
     }
     if (req.url === '/api/hosts' && req.method === 'GET') {
       // What the guide draws as connected: the host directories an install writes, read from disk.
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(detectHosts().map((host) => ({
+      json(res, 200, detectHosts().map((host) => ({
         id: host.id,
         label: host.label,
         installed: host.installed,
         version: host.version,
-      }))));
+      })));
       return;
     }
     if (req.url === '/api/hosts/action' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify([...hostJobs].map(([host, job]) => ({ host, ...job }))));
+      json(res, 200, [...hostJobs].map(([host, job]) => ({ host, ...job })));
       return;
     }
     if (req.url === '/api/hosts/action' && req.method === 'POST') {
       // Add an agent or turn one off from the guide. The CLI does the work, so the tree on disk and
       // the guide cannot drift apart.
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch {
-        body = {};
-      }
+      const body = await bodyOf(req);
       const host = String(body.host ?? '');
       const action = String(body.action ?? '');
       const known = detectHosts().some((entry) => entry.id === host);
       if (!known || (action !== 'install' && action !== 'uninstall' && action !== 'update')) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown host or action' }));
+        json(res, 400, { ok: false, error: 'unknown host or action' });
         return;
       }
       if (!spawnCli(action, host)) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+        json(res, 500, { ok: false, error: 'cannot find the tersio entry point' });
         return;
       }
-      res.writeHead(202, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, pending: true, host, action }));
+      json(res, 202, { ok: true, pending: true, host, action });
+      return;
+    }
+    if (req.url === '/api/headroom/install' && req.method === 'GET') {
+      json(res, 200, { ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() });
+      return;
+    }
+    // Which headroom wrap targets exist on this machine, so the drawer only offers what can run.
+    if (req.url === '/api/headroom/wrap' && req.method === 'GET') {
+      const bin = resolveHeadroomBinary();
+      const targets = await Promise.all(WRAP_TARGETS.map(async (name) => ({
+        name,
+        available: bin !== null && await binaryExists(WRAP_BINARY[name] ?? name),
+      })));
+      json(res, 200, { ok: bin !== null, targets });
+      return;
+    }
+    // The automated wrap: one documented command per tool, run detached, so nobody copies it by hand.
+    if (req.url === '/api/headroom/wrap' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const name = String(body.name ?? '');
+      const bin = resolveHeadroomBinary();
+      if (!bin || !isHeadroomWrapTarget(name)) {
+        json(res, 400, { ok: false, error: 'unknown wrap target or no headroom binary' });
+        return;
+      }
+      if (body.action === 'unwrap') {
+        // headroom's own undo: it restores whatever the wrap/init edited for that tool.
+        const run = await headroomRun(bin, ['unwrap', name], 120_000);
+        const out = run.lines.slice(-2).join(' · ');
+        json(res, 200, run.ok
+          ? { ok: true, detail: out || `${name}: headroom integration removed` }
+          : { ok: false, error: out || `the ${name} unwrap failed` });
+        return;
+      }
+      // Durable first: headroom's init outlives restarts; a tool without it gets a one-session wrap.
+      const init = await headroomRun(bin, ['init', '-g', name], 120_000);
+      if (init.ok) {
+        json(res, 200, { ok: true, detail: init.lines.slice(-2).join(' · ') || `${name}: durable headroom integration installed` });
+        return;
+      }
+      // Only "no such command" means the tool has no durable install; any other failure is real.
+      if (!/no such command|invalid choice|Usage: headroom init/i.test(init.lines.join('\n'))) {
+        json(res, 200, { ok: false, error: init.lines.slice(-2).join(' · ') || `the ${name} integration failed` });
+        return;
+      }
+      const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
+      child.unref();
+      json(res, 200, { ok: true, detail: `${name} has no init subcommand — headroom wrap set it up instead; the off switch undoes it` });
+      return;
+    }
+    // The wrap record lives tersio-side too, so a second browser sees the same switches. Headroom's
+    // own checks correct it: a wrap undone outside Tersio clears instead of lying.
+    if (req.url === '/api/headroom/wraps' && req.method === 'GET') {
+      const file = path.join(tersioHome(), 'headroom-wraps.json');
+      let stored: Record<string, unknown> = {};
+      try {
+        const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
+        if (raw && typeof raw === 'object') stored = raw as Record<string, unknown>;
+      } catch { /* none yet */ }
+      const bin = resolveHeadroomBinary();
+      let wraps = mergeHeadroomWraps(stored, [], WRAP_TARGETS);
+      const doctor = bin ? readHeadroomDoctor({ binary: bin }) : null;
+      if (doctor?.measured) {
+        wraps = mergeHeadroomWraps(stored, doctor.checks, WRAP_TARGETS);
+        try { writeFileSync(file, `${JSON.stringify(wraps, null, 2)}\n`, 'utf8'); } catch { /* best effort */ }
+      }
+      json(res, 200, { ok: true, wraps });
+      return;
+    }
+    // Upstream surfaces Tersio does not reimplement: its savings dashboard, memory store, and evals.
+    if (req.url === '/api/headroom/action' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const action = String(body.action ?? '');
+      const bin = resolveHeadroomBinary();
+      const args = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : null;
+      if (!bin || !args) {
+        json(res, 400, { ok: false, error: !bin ? 'headroom is not installed' : 'unknown action' });
+        return;
+      }
+      const run = await headroomRun(bin, args, 30_000);
+      const out = run.lines.slice(-6).join('\n');
+      json(res, 200, run.ok ? { ok: true, detail: out || `${action}: done` } : { ok: false, error: out || `the ${action} command failed` });
+      return;
+    }
+    if (req.url === '/api/headroom/wraps' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      if (!body.wraps || typeof body.wraps !== 'object') {
+        json(res, 400, { ok: false, error: 'wraps must be an object' });
+        return;
+      }
+      const file = path.join(tersioHome(), 'headroom-wraps.json');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(body.wraps, null, 2)}\n`, 'utf8');
+      json(res, 200, { ok: true });
+      return;
+    }
+    // The vendor footers: update or remove a third-party binary (headroom, rtk) from its drawer.
+    if (req.url === '/api/vendor/update' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const tool = String(body.tool ?? '');
+      if (!isVendorTool(tool)) {
+        json(res, 400, { ok: false, error: 'unknown tool' });
+        return;
+      }
+      if (tool === 'headroom') {
+        const bin = resolveHeadroomBinary();
+        if (!bin) {
+          // Not installed yet: the update button doubles as the installer.
+          if (!spawnHeadroomInstall()) {
+            json(res, 500, { ok: false, error: 'cannot find the tersio entry point' });
+            return;
+          }
+          json(res, 200, { ok: true, detail: 'headroom installs in the background' });
+          return;
+        }
+        const child = spawn(bin, ['update'], { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'Headroom update started');
+        json(res, 200, { ok: true, detail: 'headroom updates in the background' });
+        return;
+      }
+      if (tool === 'rtk') {
+        const entry = process.argv[1];
+        const host = detectHosts().find((entry) => entry.installed)?.id;
+        if (!entry || !host) {
+          json(res, 400, { ok: false, error: 'no installed agent to refresh rtk through' });
+          return;
+        }
+        const runtime = entry.endsWith('.ts') ? 'bun' : process.execPath;
+        const child = spawn(runtime, [entry, 'install', '--host', host, '--apply-update', '--yes'], { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'RTK update started');
+        json(res, 200, { ok: true, detail: `rtk updates through the ${host} refresh — running in the background` });
+        return;
+      }
+    }
+    if (req.url === '/api/vendor/uninstall' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const tool = String(body.tool ?? '');
+      if (!isVendorTool(tool)) {
+        json(res, 400, { ok: false, error: 'unknown tool' });
+        return;
+      }
+      const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+      dirs.push(path.join(homeDir(), '.local', 'bin'));
+      if (tool === 'headroom') {
+        const viaUv = dirs.some((dir) => existsSync(path.join(dir, 'uv')));
+        const cmd = viaUv ? 'uv' : 'pip3';
+        const args = viaUv ? ['tool', 'uninstall', 'headroom-ai'] : ['uninstall', '-y', 'headroom-ai'];
+        const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+        child.unref();
+        recordActivity('agent', 'Headroom uninstall started');
+        json(res, 200, { ok: true, detail: `uninstalling headroom-ai with ${cmd} in the background` });
+        return;
+      }
+      if (tool === 'rtk') {
+        const found = dirs.map((dir) => path.join(dir, 'rtk')).find((p) => existsSync(p));
+        if (!found) {
+          json(res, 400, { ok: false, error: 'rtk is not installed' });
+          return;
+        }
+        try {
+          existsSync(`${found}.bak`) ? unlinkSync(`${found}.bak`) : undefined;
+          unlinkSync(found);
+          recordActivity('agent', 'RTK uninstalled');
+          json(res, 200, { ok: true, detail: 'the rtk binary is removed — its hooks skip a missing rtk' });
+        } catch (e) {
+          json(res, 500, { ok: false, error: (e as Error).message || 'could not remove the rtk binary' });
+        }
+        return;
+      }
+    }
+    // The canvas node layout lives tersio-side, not in the browser: localStorage is scoped to the
+    // origin, so a dashboard restart on a new port would forget every node the user placed.
+    if (req.url === '/api/pipeline/positions' && req.method === 'GET') {
+      const file = path.join(tersioHome(), 'pipeline-positions.json');
+      let positions: unknown = {};
+      try { positions = JSON.parse(readFileSync(file, 'utf8')) as unknown; } catch { /* none yet */ }
+      json(res, 200, { ok: true, positions: positions && typeof positions === 'object' ? positions : {} });
+      return;
+    }
+    if (req.url === '/api/pipeline/positions' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const stored = body.positions;
+      if (!stored || typeof stored !== 'object') {
+        json(res, 400, { ok: false, error: 'positions must be an object' });
+        return;
+      }
+      const file = path.join(tersioHome(), 'pipeline-positions.json');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, 'utf8');
+      json(res, 200, { ok: true });
+      return;
+    }
+    if (req.url === '/api/headroom/install' && req.method === 'POST') {
+      if (resolveHeadroomBinary()) {
+        json(res, 200, { ok: true, present: true });
+        return;
+      }
+      if (!spawnHeadroomInstall()) {
+        json(res, 500, { ok: false, error: 'cannot start the install here — run: pip install "headroom-ai[all]"' });
+        return;
+      }
+      json(res, 202, { ok: true, pending: true });
       return;
     }
     if (req.url === '/settings' && req.method === 'GET') {
       storedProfile().then((profile) => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        // The per-host sections ride along, so the canvas can show and set one agent's own defaults.
+        let hosts: Record<string, unknown> = {};
+        try {
+          hosts = (JSON.parse(readFileSync(tersioSettingsFile(), 'utf8') ?? '{}') as { hosts?: Record<string, unknown> }).hosts ?? {};
+        } catch { /* no store yet: every host reads the flat defaults */ }
+        json(res, 200, {
           comboDefault: profile.comboDefault,
           cavemanDefault: profile.cavemanDefault,
           rtkDefault: profile.rtkDefault,
           ponytailDefault: profile.ponytailDefault,
           pstackDefault: profile.pstackDefault,
+          headroomDefault: profile.headroomDefault,
+          hosts,
           comboLevel: comboLevelOf(profile),
           backupSchedule: profile.backupSchedule,
           devTools: profile.devTools,
           accent: profile.accent,
           sidebarWidth: profile.sidebarWidth,
           currency: options.currency,
-        }));
+        });
       });
       return;
     }
     if (req.url === '/settings' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch { body = {}; }
+      const body = await bodyOf(req);
       const saved = await saveDefaults(body);
       if (!saved.ok) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: saved.error }));
+        json(res, 400, { ok: false, error: saved.error });
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, ...saved.profile }));
+        json(res, 200, { ok: true, ...saved.profile });
       }
       return;
     }
@@ -836,17 +1200,14 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       } catch { code = null; }
       const saved = await saveDashboardCurrency(code);
       if (saved === null) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown currency' }));
+        json(res, 400, { ok: false, error: 'unknown currency' });
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, currency: saved }));
+        json(res, 200, { ok: true, currency: saved });
       }
       return;
     }
     if (req.url === '/api/update' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(updateView()));
+      json(res, 200, updateView());
       return;
     }
     if (req.url === '/api/update' && req.method === 'POST') {
@@ -854,24 +1215,20 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       try {
         prefs = (JSON.parse(await readBody(req)) as UpdatePrefs) ?? {};
       } catch { prefs = {}; }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(setUpdatePrefs(prefs)));
+      json(res, 200, setUpdatePrefs(prefs));
       return;
     }
     // Both start work and return at once: the page's poll carries the status and the streamed log.
     if (req.url === '/api/update/check' && req.method === 'POST') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(startCheck(true)));
+      json(res, 200, startCheck(true));
       return;
     }
     if (req.url === '/api/update/apply' && req.method === 'POST') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(startApply()));
+      json(res, 200, startApply());
       return;
     }
     if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
+      jsonText(res, 200, agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
       return;
     }
     if (req.url?.startsWith('/api/agent/session')) {
@@ -884,29 +1241,25 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         },
         toolStats: [], truncated: false,
       };
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      json(res, 200, body);
       return;
     }
     if (req.url?.startsWith('/api/agent/entry')) {
       const file = decodeURIComponent(queryParam(req.url, 'file') ?? '');
       const entry = decodeURIComponent(queryParam(req.url, 'entry') ?? '');
       const body = file && entry ? readAgentRequestEntry(file, entry) : emptyRequestEntry();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      json(res, 200, body);
       return;
     }
     if (req.url?.startsWith('/export')) {
       return;
     }
     if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(healthJson());
+      jsonText(res, 200, healthJson());
       return;
     }
     if (req.url === '/status' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(await statusJson());
+      jsonText(res, 200, await statusJson());
       return;
     }
     if (req.url === '/doctor' && req.method === 'POST') {
@@ -917,8 +1270,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       } catch { /* keep manual */ }
       const report = schedule === 'manual' ? getDoctorReport(true) : setDiagSchedule(schedule);
       recordActivity('doctor', schedule === 'manual' ? 'Doctor check' : `Check schedule to ${schedule}`, 'From the dashboard.');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(report));
+      json(res, 200, report);
       return;
     }
     if (req.url === '/doctor/fix' && req.method === 'POST') {
@@ -927,18 +1279,15 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         const failed = await runDoctorRepairs(['extensions', 'registrations', 'ponytail']);
         recordActivity('doctor', 'Doctor repair', failed.length === 0 ? 'Extensions, registrations, and Ponytail checked.' : `${failed.length} step(s) failed.`, failed.length === 0);
         getDoctorReport(true);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: failed.length === 0, failed }));
+        json(res, 200, { ok: failed.length === 0, failed });
       } catch (e) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, failed: ['fix'], error: (e as Error).message }));
+        json(res, 200, { ok: false, failed: ['fix'], error: (e as Error).message });
       }
       return;
     }
     if (req.url === '/doctor' || req.url?.startsWith('/doctor?')) {
       const fresh = (req.url.split('?')[1] ?? '').includes('fresh=1');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(getDoctorReport(fresh)));
+      json(res, 200, getDoctorReport(fresh));
       return;
     }
     const name = (req.url ?? '/').split('?')[0];

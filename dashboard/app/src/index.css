@@ -180,6 +180,7 @@
     --cell-1: rgba(4, 120, 87, .3); --cell-2: rgba(4, 120, 87, .55);
     --cell-3: rgba(4, 120, 87, .8); --cell-4: #047857;
     --danger: #dc2626; --danger-border: rgba(220, 38, 38, .35); --danger-soft: rgba(220, 38, 38, .05);
+    --terminal: #ffffff;
     --success: #15803d;
     --warn-soft: rgba(217, 119, 6, .1); --warn-border: rgba(217, 119, 6, .4);
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.07);
@@ -205,7 +206,15 @@
       --cell-1: rgba(52, 211, 153, .3); --cell-2: rgba(52, 211, 153, .55);
       --cell-3: rgba(52, 211, 153, .8); --cell-4: #34d399;
       --danger: #f87171; --danger-border: rgba(248, 113, 113, .3); --danger-soft: rgba(248, 113, 113, .07);
+      --terminal: #060606;
       --success: #4ade80;
+      --background: #0b0b0d; --foreground: #f4f4f5; --card: #101014; --card-foreground: #f4f4f5;
+      --popover: #101014; --popover-foreground: #f4f4f5; --secondary: #101014; --secondary-foreground: #f4f4f5;
+      --muted: rgba(255, 255, 255, .07); --muted-foreground: #a1a1aa;
+      --border: rgba(255, 255, 255, .09); --input: rgba(255, 255, 255, .14);
+      --primary: #34d399; --primary-foreground: #06110c;
+      --accent: rgba(255, 255, 255, .08); --accent-foreground: #f4f4f5;
+      --ring: rgba(52, 211, 153, .35);
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.55);
     }
   }
@@ -218,6 +227,7 @@
     --cell-1: rgba(52, 211, 153, .3); --cell-2: rgba(52, 211, 153, .55);
     --cell-3: rgba(52, 211, 153, .8); --cell-4: #34d399;
     --danger: #f87171; --danger-border: rgba(248, 113, 113, .3); --danger-soft: rgba(248, 113, 113, .07);
+      --terminal: #060606;
     --success: #4ade80;
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.55);
   }
@@ -231,7 +241,20 @@
   /* A short dash travelling a connector: motion that reads as flow, not decoration. The reduced-motion
      block below disables it, so a still diagram stays a diagram. */
   @keyframes flow { to { stroke-dashoffset: -32; } }
-  .flow-line { stroke-dasharray: 3 29; animation: flow 1.6s linear infinite; }
+  /* Every connector draws as a network cable: a solid wire under a dashed overlay. Where the mode is
+     on, the dash animates as packet traffic; where it is off, the cable sits quiet with no flow. */
+  .flow-line { stroke-dasharray: 7 9; animation: flow 1.2s linear infinite; }
+  .flow-line:not([data-active]) { stroke: var(--dim); stroke-dasharray: 4 8; animation: none; }
+  /* The busy spinner: a comet trail sweeping the ring while its core breathes. */
+  .spinner-ring {
+    background: conic-gradient(from 0deg, transparent 12%, currentColor 88%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+    animation: spinner-sweep .9s cubic-bezier(.45, .15, .55, .85) infinite;
+  }
+  .spinner-core { animation: spinner-breathe .9s ease-in-out infinite; }
+  @keyframes spinner-sweep { to { transform: rotate(360deg); } }
+  @keyframes spinner-breathe { 0%, 100% { opacity: .3; transform: scale(.6); } 50% { opacity: 1; transform: scale(1); } }
   /* A node joining the diagram, and the small motions around a mode or an agent changing state. */
   @keyframes node-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
   .howto-node {
@@ -246,7 +269,7 @@
     overflow: hidden;
     border-radius: 12px;
     border: 1px solid var(--line);
-    background: color-mix(in oklab, var(--bg) 92%, black);
+    background: var(--terminal);
     box-shadow: 0 24px 48px -24px rgb(0 0 0 / .5), inset 0 1px 0 rgb(255 255 255 / .04);
   }
   .terminal-bar {

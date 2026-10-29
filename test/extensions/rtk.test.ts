@@ -538,8 +538,12 @@ async function rewiredCommand(
 ): Promise<{ command: string | null; registered: boolean }> {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-rtk-real-"));
   const prevHome = process.env.HOME;
+  // PiG's own root variables would move the hook out of this fixture home.
+  const pigVars = ["XDG_CONFIG_HOME", "PIG_HOME", "PIG_CODING_AGENT_DIR", "PIG_USE_PI_DIRS"] as const;
+  const prevPig = pigVars.map((name) => process.env[name]);
   try {
     process.env.HOME = home;
+    for (const name of pigVars) delete process.env[name];
     if (!(await wire(realRtk!, { quiet: true }))) return { command: null, registered: false };
 
     const hook = path.join(home, ...hookPath);
@@ -577,6 +581,10 @@ async function rewiredCommand(
     return { command: call?.input.command ?? null, registered: settled !== undefined };
   } finally {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    pigVars.forEach((name, index) => {
+      const value = prevPig[index];
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    });
     rmSync(home, { recursive: true, force: true });
   }
 }

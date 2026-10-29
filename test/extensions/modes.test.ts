@@ -18,9 +18,9 @@ import {
   setSharedComboMode,
 } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry } from "../../extensions/shared/types.ts";
-import { readCavemanDefault } from "../../extensions/shared/plugin-settings.ts";
+import { readCavemanDefault, readPluginSettings } from "../../extensions/shared/plugin-settings.ts";
 import { ruleBodyProblem, ruleDir } from "../../extensions/shared/utils.ts";
-import { cliEnv } from "../helpers/env.ts";
+import { cliEnv, fakeExecutable, fakeRtkBin, hasSqlite, isWindows, withHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/modes", import.meta.url));
@@ -609,7 +609,7 @@ test("/pstack on reaches the prompt body and the footer names the mode", async (
 
   await pi.commands.get("pstack")!("on", ctx);
 
-  expect(statuses.at(-1)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=OFF | 🗜️ rtk=OFF | 🧠 ponytail=OFF | 🥔 pstack=ON");
+  expect(statuses.at(-1)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=OFF | 🗜️ rtk=OFF | 🍃 headroom=OFF | 🧠 ponytail=OFF | 🥔 pstack=ON");
   expect(await pstackInject(pi, ctx)).toContain(BODY);
 });
 
@@ -659,7 +659,7 @@ test("a combo preset leaves pstack where it was, so the level still matches its 
   await combo.commands.get("combo")!("balanced", ctx);
 
   expect(getSharedComboState().pstack).toBe("off");
-  expect(statuses.at(-1)).toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF");
+  expect(statuses.at(-1)).toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF");
 });
 
 test("a combo preset keeps a pstack the session already had", async () => {
@@ -674,20 +674,55 @@ test("a combo preset keeps a pstack the session already had", async () => {
 
   expect(getSharedComboState().pstack).toBe("on");
   expect(getSharedComboState().level).toBe("lite");
-  expect(statuses.at(-1)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=ON");
+  expect(statuses.at(-1)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=LITE | 🥔 pstack=ON");
+});
+
+test("a host section feeds the combo defaults this host starts from", async () => {
+  await withHome(async (home) => {
+    mkdirSync(path.join(home, ".tersio"), { recursive: true });
+    writeFileSync(path.join(home, ".tersio", "settings.json"), JSON.stringify({
+      comboDefault: "lite", cavemanDefault: "lite", rtkDefault: true, ponytailDefault: "lite",
+      hosts: { omp: { comboDefault: "max" } },
+    }), "utf8");
+    resetSharedComboState();
+    const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
+    const notifications: string[] = [];
+    const statuses = new Map<string, string>();
+    comboToggleExtension({
+      zod: { z: {} },
+      setLabel() {},
+      registerCommand() {},
+      registerTool() {},
+      appendEntry() {},
+      on(event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) { handlers.set(event, handler); },
+    } as unknown as ExtensionApi);
+    const ctx = {
+      hasUI: true,
+      notifications,
+      statuses,
+      sessionManager: { getBranch: () => [] },
+      ui: {
+        setStatus(name: string, v: string | undefined) { if (v !== undefined) { statuses.set(name, v); if (name === "tersio") notifications.push(v); } },
+        notify() {},
+      },
+    };
+    await handlers.get("session_start")!({}, ctx);
+    // omp reads its own section: max, not the shared lite.
+    expect(statuses.get("tersio")).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  });
 });
 
 test("deriveLevel maps every preset back to its level, including balanced", () => {
-  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "off" })).toBe("off");
-  expect(deriveLevel({ caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on" })).toBe("lite");
-  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "full", pstack: "on" })).toBe("balanced");
-  expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on" })).toBe("max");
+  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "off", headroom: "off" })).toBe("off");
+  expect(deriveLevel({ caveman: "lite", rtk: "on", ponytail: "lite", pstack: "on", headroom: "off" })).toBe("lite");
+  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "full", pstack: "on", headroom: "off" })).toBe("balanced");
+  expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on", headroom: "off" })).toBe("max");
 });
 
 // pstack is opt-in, so it neither makes nor breaks a preset.
 test("deriveLevel ignores pstack in both directions", () => {
-  expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off" })).toBe("max");
-  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "on" })).toBe("off");
+  expect(deriveLevel({ caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off", headroom: "off" })).toBe("max");
+  expect(deriveLevel({ caveman: "off", rtk: "off", ponytail: "off", pstack: "on", headroom: "off" })).toBe("off");
 });
 
 test("the retired `medium` name still resolves to lite", () => {
@@ -698,13 +733,13 @@ test("the retired `medium` name still resolves to lite", () => {
 });
 
 test("deriveLevel returns custom for mixed modes", () => {
-  expect(deriveLevel({ caveman: "full", rtk: "off", ponytail: "full", pstack: "off" })).toBe("custom");
+  expect(deriveLevel({ caveman: "full", rtk: "off", ponytail: "full", pstack: "off", headroom: "off" })).toBe("custom");
 });
 
 // A hand-changed mode still leaves every preset behind. pstack is not a preset mode, so it never does.
 test("deriveLevel returns custom when a preset mode is changed by hand", () => {
-  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "lite", pstack: "off" })).toBe("custom");
-  expect(deriveLevel({ caveman: "lite", rtk: "off", ponytail: "lite", pstack: "on" })).toBe("custom");
+  expect(deriveLevel({ caveman: "full", rtk: "on", ponytail: "lite", pstack: "off", headroom: "off" })).toBe("custom");
+  expect(deriveLevel({ caveman: "lite", rtk: "off", ponytail: "lite", pstack: "on", headroom: "off" })).toBe("custom");
 });
 
 test("isComboPresetActive is true for presets, false for off", () => {
@@ -737,7 +772,7 @@ function run(...args: string[]) {
 test("combo preset implies caveman, rtk, and ponytail defaults, and leaves pstack off", () => {
   const result = run("install", "--dry-run", "--yes", "--combo-default", "balanced");
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off\)/);
+  expect(result.stdout).toMatch(/Defaults: combo=balanced \(caveman=full · rtk=on · ponytail=full · pstack=off · headroom=off\)/);
 });
 
 test("caveman and rtk flags override the combo preset", () => {
@@ -746,7 +781,7 @@ test("caveman and rtk flags override the combo preset", () => {
     "--combo-default", "max", "--caveman-default", "lite", "--rtk-default", "off",
   );
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toMatch(/Defaults: combo=max \(caveman=lite · rtk=off · ponytail=ultra · pstack=off\)/);
+  expect(result.stdout).toMatch(/Defaults: combo=max \(caveman=lite · rtk=off · ponytail=ultra · pstack=off · headroom=off\)/);
 });
 
 test("ruleDir keeps a self-contained tree and falls back to the package's own extension dir", () => {

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { Plugin } from '@opencode/plugin';
 import cavemanSessionExtension from './caveman/index.ts';
 import pstackSessionExtension from './pstack/index.ts';
+import headroomSessionExtension from './headroom/index.ts';
 import rtkSessionExtension from './rtk/session.ts';
 import rtkFilterExtension, { FILTER_BY_TOOL, MIN_FILTER_BYTES, filterThroughRtk, filterableText, rtkActive } from './rtk/filter.ts';
 import comboToggleExtension from './combo/index.ts';
@@ -126,7 +127,7 @@ const plugin: Plugin.Plugin = {
       },
     };
 
-    for (const extension of [cavemanSessionExtension, pstackSessionExtension, rtkSessionExtension, rtkFilterExtension, comboToggleExtension, tersioCommandsExtension]) extension(host);
+    for (const extension of [cavemanSessionExtension, pstackSessionExtension, headroomSessionExtension, rtkSessionExtension, rtkFilterExtension, comboToggleExtension, tersioCommandsExtension]) extension(host);
 
     // The first hook of an unseen session runs its session_start handlers.
     const sidOf = (value: unknown): string | undefined =>

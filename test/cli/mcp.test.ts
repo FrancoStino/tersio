@@ -32,7 +32,7 @@ describe('the MCP server protocol', () => {
     const { sent, send } = collector();
     await handleMessage(call(2, 'tools/list'), send);
     const answer = sent[0] as { result: { tools: Array<{ name: string }> } };
-    expect(answer.result.tools.map((t) => t.name)).toEqual(['tersio_stats', 'tersio_activity', 'tersio_modes']);
+    expect(answer.result.tools.map((t) => t.name)).toEqual(['tersio_stats', 'tersio_activity', 'tersio_modes', 'tersio_headroom']);
   });
 
   test('a bad range and an unknown tool answer with invalid-params', async () => {
@@ -45,6 +45,14 @@ describe('the MCP server protocol', () => {
     expect(rangeError.error.message).toContain('range must be one of');
     expect(toolError.error.code).toBe(-32602);
     expect(toolError.error.message).toContain('unknown tool');
+  });
+
+  test('tersio_headroom rejects an action it does not pass through', async () => {
+    const { sent, send } = collector();
+    await handleMessage(call(9, 'tools/call', { name: 'tersio_headroom', arguments: { action: 'bogus' } }), send);
+    const answer = sent[0] as { error: { code: number; message: string } };
+    expect(answer.error.code).toBe(-32602);
+    expect(answer.error.message).toContain('action must be');
   });
 
   test('an unknown method answers with method-not-found, and ping answers empty', async () => {

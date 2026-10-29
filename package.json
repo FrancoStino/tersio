@@ -1,7 +1,7 @@
 {
   "name": "@krtclcdy/tersio",
-  "version": "2.25.14",
-  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
+  "version": "2.25.15",
+  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, Headroom compression, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
   "keywords": [
     "token-saving",
     "ai-tools",
@@ -30,12 +30,12 @@
     "extensions": [
       "./extensions/caveman/caveman.ts",
       "./extensions/pstack/pstack.ts",
+      "./extensions/headroom/headroom.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
       "./extensions/timing/timing.ts",
       "./extensions/combo/combo.ts",
-      "./extensions/commands/commands.ts",
-      "./extensions/updater/updater.ts"
+      "./extensions/commands/commands.ts"
     ],
     "skills": [
       "./extensions/ponytail/skills"
@@ -47,6 +47,7 @@
     "extensions": [
       "./extensions/caveman/index.ts",
       "./extensions/pstack/index.ts",
+      "./extensions/headroom/index.ts",
       "./extensions/rtk/session.ts",
       "./extensions/rtk/filter.ts",
       "./extensions/combo/index.ts",
@@ -60,7 +61,7 @@
         "description": "In-session updater for Ponytail, RTK, and Caveman (/tersio update)",
         "default": true,
         "extensions": [
-          "./extensions/updater/index.ts"
+          "./extensions/commands/index.ts"
         ]
       }
     },
@@ -120,6 +121,15 @@
         ],
         "default": "off"
       },
+      "headroomDefault": {
+        "type": "enum",
+        "description": "Session-start default for the opt-in Headroom token-saver; no combo preset turns it on",
+        "values": [
+          "off",
+          "on"
+        ],
+        "default": "off"
+      },
       "currency": {
         "type": "enum",
         "description": "Display currency for usage/dashboard reports (--currency overrides per run)",
@@ -142,6 +152,7 @@
   "files": [
     "dist/**/*.js",
     "dashboard/dist/**/*",
+    "skills/**/*",
     "extensions/**/*.ts",
     "extensions/caveman/rule.md",
     "extensions/caveman/rule-lite.md",
@@ -154,7 +165,7 @@
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "tsc && bun run build:dashboard",
+    "build": "tsc && bun run build:dashboard && node -e \"require('node:fs').cpSync('extensions/ponytail/skills','skills',{recursive:true})\"",
     "build:dashboard": "bun install --cwd dashboard/app --frozen-lockfile && bun run --cwd dashboard/app build",
     "prepublishOnly": "bun run build",
     "check": "tsc --noEmit",

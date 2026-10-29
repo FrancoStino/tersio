@@ -14,7 +14,8 @@ import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
-import { fetchJson, piAgentDir, pigAgentDir, readTextIfExists, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
+import { fetchJson, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
@@ -52,6 +53,8 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // OMP loads the plugin from its plugins dir; pi from its npm dir, per its settings.json.
   const pluginsDir = OMP_PLUGINS_DIR;
   const rtkBin = resolveRtkBinary();
+  // Headroom is the user's own opt-in install, so the row only reports it and never installs.
+  const headroomBin = resolveHeadroomBinary();
   // OpenCode's own binary, when installed: `~/.opencode/bin` first, then PATH.
   const opencodeBin = resolveHostBinary('opencode', path.join(HOME, '.opencode', 'bin'));
   // One source for the installed plugin path, so the doctor follows a package rename.
@@ -64,7 +67,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   // The pstack body is a Tersio fork with no remote, so the check proves it is usable, not current.
   const pstackRule = path.join(tersioPluginDir, 'extensions', 'pstack', 'rule.md');
   const rtkIndex = path.join(tersioPluginDir, 'extensions', 'rtk', 'session.ts');
-  const updaterIndex = path.join(tersioPluginDir, 'extensions', 'updater', 'index.ts');
+  const updaterIndex = path.join(tersioPluginDir, 'extensions', 'shared', 'updater.ts');
 
   // Probes start concurrently and report in fixed order as data settles; each resolves instead of rejecting.
   const hosts = detectHosts();
@@ -165,11 +168,18 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       return err.stdout?.trim() || err.stderr?.trim() || null;
     },
   ) : Promise.resolve(null);
+  const headroomVersionProbe: Promise<string | null> = headroomBin ? execP(headroomBin, ['--version'], { timeout: 5000 }).then(
+    (r) => r.stdout.trim() || r.stderr.trim() || null,
+    (e) => {
+      const err = e as { stdout?: string; stderr?: string };
+      return err.stdout?.trim() || err.stderr?.trim() || null;
+    },
+  ) : Promise.resolve(null);
   // A manager that lost its daemonized process reads stopped, while the orphan still holds the port.
   const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
     ? Promise.resolve(serviceState())
     : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime, headroomVersionRaw], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -195,6 +205,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       rtkVersionProbe,
       probes.ponytailMtime,
       probes.pricesMtime,
+      headroomVersionProbe,
     ]),
     Promise.all([opencodeServiceProbe]),
   ]));
@@ -351,6 +362,24 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   if (rtkBin === null) unused('RTK exec', '· install Tersio to place rtk in ~/.bun/bin');
   else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode'))) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
+  // Headroom is the user's own opt-in install, so the line stays informational: out of the tally either way.
+  const headroomVersion = headroomVersionRaw?.match(/version\s+(\S+)/)?.[1] ?? headroomVersionRaw ?? '';
+  if (headroomBin !== null) {
+    // Its own doctor is the only source that says whether traffic actually flows.
+    const routing = readHeadroomDoctor({ binary: headroomBin });
+    const failing = routing.checks.filter((c) => c.status === 'fail');
+    const warned = routing.checks.filter((c) => c.status === 'warn');
+    const detail = routing.measured
+      ? failing.length > 0
+        ? ` · routing: ${failing[0].name} failing (${failing[0].summary})${failing[0].hint ? ` — ${failing[0].hint}` : ''}`
+        : warned.length > 0
+          ? ` · routing: ${warned.length} warning${warned.length === 1 ? '' : 's'} (${warned[0].summary})`
+          : ' · routing: ok'
+      : ` · routing: ${routing.failure || 'unmeasured'}`;
+    console.log(`  —  Headroom: ${headroomVersion || 'version unavailable'}${detail}`);
+  } else {
+    console.log('  —  Headroom: not installed · optional: pip install "headroom-ai[all]", then /headroom on');
+  }
   const ponytailAge = ponytailMtime ? `(updated ${relTime(Date.now() - ponytailMtime.mtimeMs)} · ${absDate(ponytailMtime.mtimeMs)})` : '';
   check('Ponytail', ponytailPkgText !== null, [PONYTAIL_VERSION, ponytailAge].filter(Boolean).join(' '));
   if (ponytailStale.length > 0) {
@@ -417,8 +446,10 @@ const CAVEMAN_BODIES = ['rule.md', 'rule-lite.md', 'rule-megacave-lite.md', 'rul
 async function ponytailLatestGap(local: string): Promise<string | null> {
   if (!local) return null;
   try {
-    // A short budget on purpose: this row is advisory, and the doctor has a spawn budget above it.
-    const meta = await fetchJson<{ version?: string }>('https://registry.npmjs.org/@dietrichgebert/ponytail/latest', { timeout: 2500 });
+    // Advisory, with a short budget; `TERSIO_PONYTAIL_URL` points it at a stub, as the update check does.
+    const url = process.env.TERSIO_PONYTAIL_URL || 'https://registry.npmjs.org/@dietrichgebert/ponytail/latest';
+    const res = await fetch(url, { signal: AbortSignal.timeout(2500), headers: { accept: 'application/json' } });
+    const meta = (await res.json()) as { version?: string };
     const remote = meta?.version;
     if (!remote || remote === local) return null;
     return `${local} installed, ${remote} is the latest`;

@@ -1,6 +1,7 @@
 import { getSharedComboState, hasModeState, isOmpSubagentPrompt, lastCustomValue, reconcileSharedComboEntries, sessionEntries, setSharedComboListener, setSharedComboMode, systemPromptIncludes } from '../shared/session-state.ts';
 import { injectPromptText, isOmpHost, onHostEvent, sessionChangeEvents, setExtensionLabel, stringArrayToolParams } from '../shared/host.ts';
 import { readRtkDefault } from '../shared/plugin-settings.ts';
+import { hostIdOf } from '../shared/host.ts';
 import { resolveRtkBinary, shimCommand } from '../shared/utils.ts';
 import { announceStatus } from '../shared/status.ts';
 import type { ExtensionApi, ExtensionCtx, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
@@ -34,6 +35,7 @@ Call rtk directly for what the rewrite cannot express: \`rtk read <file> --level
 const RTK_PROXY_PROMPT = ' One layer above the shell: `rtk llm-proxy setup` reports whether the proxy daemon can serve this host, and `rtk llm-proxy start` runs it.';
 
 export default function rtkSessionExtension(pi: ExtensionApi): void {
+  const host = hostIdOf(pi);
   let enabled = DEFAULT_ENABLED;
 
   function fail(text: string) {
@@ -118,7 +120,7 @@ export default function rtkSessionExtension(pi: ExtensionApi): void {
     if (hasModeState(entries)) reconcileSharedComboEntries(entries);
     // Persisted session state wins; a fresh session falls back to the installer/user default (off unless configured).
     const persisted = resolveEnabled(entries);
-    enabled = typeof persisted === 'boolean' ? persisted : enabled || readRtkDefault();
+    enabled = typeof persisted === 'boolean' ? persisted : enabled || readRtkDefault(host);
     setRtkProcessEnabled(enabled);
     announceStatus(ctx);
   }

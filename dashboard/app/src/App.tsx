@@ -3,10 +3,13 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { isFileExport, useFx, useAgentData } from "@/lib/data";
 import type { AgentRequestRow, AgentView } from "@/lib/data";
+import { useStuckPending } from "@/hooks/use-pending";
 import { useDevMode } from "@/lib/dev-mode";
 import { useHashRoute } from "@/lib/route";
 import { useUpdate } from "@/lib/update-watch";
 import { EmptyState } from "@/components/common";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/icon";
 import { Page, PageHeader, PageSkeleton } from "@/components/charts";
 import { Shell, useShortcuts } from "./components/agents/shell";
 import type { ModeState } from "./components/agents/shell";
@@ -120,6 +123,8 @@ function useModeState(): readonly [ModeState | null, () => void, boolean] {
           rtkDefault: d.rtkDefault === true,
           ponytailDefault: typeof d.ponytailDefault === "string" ? d.ponytailDefault : "off",
           pstackDefault: typeof d.pstackDefault === "string" ? d.pstackDefault : "off",
+          headroomDefault: typeof d.headroomDefault === "string" ? d.headroomDefault : "off",
+          hosts: d.hosts && typeof d.hosts === "object" ? d.hosts as ModeState["hosts"] : {},
         });
       })
       .catch(() => { /* no server: the banner keeps its placeholder */ })
@@ -155,7 +160,10 @@ function Dashboard() {
   // The session-start modes the navbar's banner names, reloaded when Settings closes.
   const [modes, reloadModes, modesLoaded] = useModeState();
   // The rail draws its own skeleton until the first data answer, so its items do not pop in.
-  const agentPending = loading && !agent;
+  // A read that hangs (a huge aggregate still crunching server-side) caps after 6s: real items
+  // beat an endless skeleton, and the data lands into the pages when it arrives.
+  const readStuck = useStuckPending(loading && !agent, 6000);
+  const agentPending = loading && !agent && !readStuck;
 
   useShortcuts({ onRange: setRange, onSection: setSection });
   // A new range renumbers the log, so a page held across the switch would point at different rows.
@@ -179,7 +187,27 @@ function Dashboard() {
     if (section === "how-to") return <HowToPage modes={modes} onModesChanged={reloadModes} />;
     if (section === "upstream") return <UpstreamPage />;
     if (section === "logs") return <LogsPage onClose={() => setSection("overview")} />;
-    if (loading && !agent) return <PageSkeleton section={section} />;
+    if (loading && !agent) {
+      // A read that hangs stops holding the page skeleton after the cap: say it is still working and
+      // offer a retry, rather than the empty state pretending the database is missing.
+      if (!readStuck) return <PageSkeleton section={section} />;
+      return (
+        <Page>
+          <PageHeader title={title} description="This page reads the agent databases." />
+          <EmptyState
+            icon="loader"
+            title="Still reading your sessions"
+            desc="The aggregate for this range is still crunching on the dashboard server. A large history can take a while; retry if it seems stuck."
+          />
+          <div className="flex justify-center">
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => window.dispatchEvent(new Event("tersio:reload"))}>
+              <Icon name="refresh-cw" className="size-3.5" />
+              Retry now
+            </Button>
+          </div>
+        </Page>
+      );
+    }
     if (!agent || !agent.available) {
       // A fetch that never answered JSON means the page is newer than the server process, not a missing database.
       if (stale) {

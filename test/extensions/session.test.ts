@@ -522,7 +522,7 @@ test("parent Combo max is inherited by separately instantiated marked children",
   const childCombo = instantiate(comboToggleExtension);
 
   expect(getSharedComboState()).toEqual({
-    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off",
+    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off", headroom: "off",
   });
   expect(instruction(await inject(childCaveman, MARKED_PROMPT))).toMatch(/Caveman ultra active/);
   expect(instruction(await inject(childRtk, MARKED_PROMPT))).toMatch(/RTK guidance active/);
@@ -542,7 +542,7 @@ test("lite maps to Caveman lite, RTK on, and Ponytail lite", async () => {
   const prompt = ["System instructions.", OMP_SUBAGENT_MARKER];
 
   expect(getSharedComboState()).toEqual({
-    level: "lite", caveman: "lite", rtk: "on", ponytail: "lite", pstack: "off",
+    level: "lite", caveman: "lite", rtk: "on", ponytail: "lite", pstack: "off", headroom: "off",
   });
   expect(instruction(await inject(instantiate(cavemanSessionExtension), prompt))).toMatch(/Caveman lite active/);
   expect(instruction(await inject(instantiate(rtkSessionExtension), prompt))).toMatch(/RTK guidance active/);
@@ -557,7 +557,7 @@ test("Combo off gives marked children no inherited guidance", async () => {
   await command(parent, "combo", "off", ctx);
 
   expect(getSharedComboState()).toEqual({
-    level: "off", caveman: "off", rtk: "off", ponytail: "off", pstack: "off",
+    level: "off", caveman: "off", rtk: "off", ponytail: "off", pstack: "off", headroom: "off",
   });
   for (const factory of [cavemanSessionExtension, rtkSessionExtension, comboToggleExtension]) {
     expect(await inject(instantiate(factory), MARKED_PROMPT)).toBe(undefined);
@@ -632,16 +632,16 @@ test("individual Caveman change immediately makes Combo CUSTOM and children inhe
   await command(caveman, "caveman", "lite", context(entries, true));
 
   expect(getSharedComboState()).toEqual({
-    level: "custom", caveman: "lite", rtk: "on", ponytail: "ultra", pstack: "off",
+    level: "custom", caveman: "lite", rtk: "on", ponytail: "ultra", pstack: "off", headroom: "off",
   });
-  expect(status(comboCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(comboCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   expect(instruction(await inject(instantiate(cavemanSessionExtension), MARKED_PROMPT))).toMatch(/Caveman lite active/);
   expect(instruction(await inject(instantiate(rtkSessionExtension), MARKED_PROMPT))).toMatch(/RTK guidance active/);
   expect(instruction(await inject(instantiate(comboToggleExtension), MARKED_PROMPT))).toMatch(/level: ultra/);
 
   await command(caveman, "caveman", "ultra", context(entries, true));
   expect(getSharedComboState().level).toBe("max");
-  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
 });
 
 test("individual RTK change returns Combo to its preset when values realign", async () => {
@@ -655,14 +655,14 @@ test("individual RTK change returns Combo to its preset when values realign", as
   await command(rtk, "rtk", "off", context(entries, true));
 
   expect(getSharedComboState()).toEqual({
-    level: "custom", caveman: "ultra", rtk: "off", ponytail: "ultra", pstack: "off",
+    level: "custom", caveman: "ultra", rtk: "off", ponytail: "ultra", pstack: "off", headroom: "off",
   });
-  expect(status(comboCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=ULTRA | 🗜️ rtk=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(comboCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=ULTRA | 🗜️ rtk=OFF | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   expect(await inject(instantiate(rtkSessionExtension), MARKED_PROMPT)).toBe(undefined);
 
   await command(rtk, "rtk", "on", context(entries, true));
   expect(getSharedComboState().level).toBe("max");
-  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
 });
 
 test("individually matching preset values activates Combo", async () => {
@@ -680,9 +680,9 @@ test("individually matching preset values activates Combo", async () => {
   await command(rtk, "rtk", "on", context(entries, true));
   // The three preset modes now match max, so the level reads max even though pstack is on beside it.
   expect(getSharedComboState()).toEqual({
-    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on",
+    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "on", headroom: "off",
   });
-  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=ON");
+  expect(status(comboCtx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=ON");
 });
 
 test("Combo status restores the preset indicator when persisted modes realign", async () => {
@@ -696,17 +696,17 @@ test("Combo status restores the preset indicator when persisted modes realign", 
   await command(combo, "combo", "status", ctx);
 
   expect(getSharedComboState()).toEqual({
-    level: "custom", caveman: "ultra", rtk: "on", ponytail: "lite", pstack: "off",
+    level: "custom", caveman: "ultra", rtk: "on", ponytail: "lite", pstack: "off", headroom: "off",
   });
-  expect(status(ctx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=LITE | 🥔 pstack=OFF");
   expect(instruction(await inject(instantiate(comboToggleExtension), MARKED_PROMPT))).toMatch(/level: lite/);
 
   entries.push({ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } });
   await command(combo, "combo", "status", ctx);
   expect(getSharedComboState()).toEqual({
-    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off",
+    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off", headroom: "off",
   });
-  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
 });
 
 test("redundant trailing entries do not drop a matching preset (#21)", async () => {
@@ -721,9 +721,9 @@ test("redundant trailing entries do not drop a matching preset (#21)", async () 
   entries.push({ type: "custom", customType: "rtk-mode", data: { enabled: true } });
   await command(combo, "combo", "status", ctx);
   expect(getSharedComboState()).toEqual({
-    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off",
+    level: "max", caveman: "ultra", rtk: "on", ponytail: "ultra", pstack: "off", headroom: "off",
   });
-  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   resetSharedComboState();
 });
 
@@ -733,15 +733,15 @@ test("mode commands confirm the session-wide active set", async () => {
   const combo = instantiate(comboToggleExtension, entries);
   const ctx = context(entries, true);
   await command(combo, "combo", "max", ctx);
-  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   const caveman = instantiate(cavemanSessionExtension, entries);
   const cavemanCtx = context(entries, true);
   await command(caveman, "caveman", "full", cavemanCtx);
-  expect(status(cavemanCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(cavemanCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   const rtk = instantiate(rtkSessionExtension, entries);
   const rtkCtx = context(entries, true);
   await command(rtk, "rtk", "off", rtkCtx);
-  expect(status(rtkCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=FULL | 🗜️ rtk=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(rtkCtx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=FULL | 🗜️ rtk=OFF | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
   resetSharedComboState();
 });
 
@@ -752,11 +752,11 @@ test("Combo status names the preset, and a later mode entry moves it to CUSTOM",
   const ctx = context(entries, true);
 
   await command(combo, "combo", "lite", ctx);
-  expect(status(ctx.notifications)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=LITE | 🥔 pstack=OFF");
 
   entries.push({ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } });
   await command(combo, "combo", "status", ctx);
-  expect(status(ctx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(status(ctx.notifications)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
 });
 
 test("Combo does not duplicate existing Ponytail guidance", async () => {
@@ -973,7 +973,7 @@ test("/combo max syncs sibling mirrors with no reload", async () => {
 
   expect(reloaded()).toBe(0);
   expect(notifications.filter((n) => n.startsWith("🧩 COMBO"))).toContain(
-    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
+    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   );
   const cave = (await caveman.handlers.get("before_agent_start")!(MAIN_PROMPT, ctx)) as { systemPrompt: string[] };
   expect(cave.systemPrompt.join("\n")).toMatch(/Caveman ultra/);
@@ -1136,7 +1136,7 @@ test("a combo change is persisted before the host is told about it", async () =>
   ]);
   const notices = order.slice(4);
   expect(notices).toEqual([
-    "setstatus:🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF",
+    "setstatus:🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF",
   ]);
 });
 
@@ -1393,7 +1393,7 @@ test("restore skips a corrupt latest rtk-mode entry and uses the older valid one
   const { handlers, notifications } = harness(entries);
   await handlers.get("session_start")!({}, restoreContext(entries, notifications));
   // The corrupt trailing entry is skipped, so the branch restores rtk=on.
-  expect(notifications.at(-1)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=OFF | 🗜️ rtk=ON | 🧠 ponytail=OFF | 🥔 pstack=OFF");
+  expect(notifications.at(-1)).toBe("🧩 COMBO CUSTOM: 🪨 caveman=OFF | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=OFF | 🥔 pstack=OFF");
 });
 
 const withHome = (run: (home: string) => Promise<void>): Promise<void> =>
@@ -1686,7 +1686,7 @@ test("a new session announces the status", async () => {
   const pi2 = statusInstantiate(comboToggleExtension, entries);
   const resumed = statusContext(entries);
   await statusFire(pi2, "session_start", resumed);
-  expect(statuses(resumed.notifications)).toEqual(["🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF"]);
+  expect(statuses(resumed.notifications)).toEqual(["🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF"]);
 });
 
 test("every session event announces the status, and an unchanged state stays silent", async () => {
@@ -1701,7 +1701,7 @@ test("every session event announces the status, and an unchanged state stays sil
     const worker = statusInstantiate(comboToggleExtension, entries);
     await statusFire(worker, event, fresh);
     expect(statuses(fresh.notifications), `${event} announces`).toEqual([
-      "🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF",
+      "🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF",
     ]);
 
     // A second restore of the same state repaints nothing new on the bar.
@@ -1720,7 +1720,7 @@ test("a /new session switch restores the configured defaults", async () => {
   const pi = statusInstantiate(comboToggleExtension, entries);
   const fresh = statusContext(entries);
   await statusFire(pi, "session_switch", fresh);
-  expect(statuses(fresh.notifications)).toEqual(["🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF"]);
+  expect(statuses(fresh.notifications)).toEqual(["🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF"]);
 });
 
 test("a subagent session announces the inherited status", async () => {
@@ -1735,7 +1735,7 @@ test("a subagent session announces the inherited status", async () => {
     const ctx = statusContext([], false);
     await statusFire(worker, "session_start", ctx);
     expect(statuses(ctx.notifications)).toEqual([
-      "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
+      "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
     ]);
   }
 });
@@ -1752,7 +1752,7 @@ test("the status survives compaction and still matches the live state", async ()
   await statusFire(worker, "session_compact", afterCompact);
 
   expect(statuses(afterCompact.notifications)).toEqual([
-    "🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🧠 ponytail=LITE | 🥔 pstack=OFF",
+    "🧩 COMBO LITE: 🪨 caveman=LITE | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=LITE | 🥔 pstack=OFF",
   ]);
   expect(formatStatus(getSharedComboState())).toBe(statuses(afterCompact.notifications)[0]);
 });
@@ -1771,7 +1771,7 @@ test("persisted entries win over the configured default", async () => {
 
   // HOME points at a missing dir, so any default read here is "off".
   expect(statuses(ctx.notifications)).toEqual([
-    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
+    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   ]);
 });
 
@@ -1782,14 +1782,14 @@ test("a mode command reports the new state, and /tersio status agrees", async ()
   const ctx = statusContext(entries);
   await combo.commands.get("combo")!("max", ctx);
   expect(statuses(ctx.notifications)).toEqual([
-    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
+    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   ]);
 
   const tersio = statusInstantiate(tersioCommandsExtension, entries);
   const asked = statusContext(entries);
   await tersio.commands.get("tersio")!("status", asked);
   expect(statuses(asked.notifications)).toEqual([
-    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
+    "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   ]);
 });
 
@@ -1820,11 +1820,11 @@ test("a marked subagent prompt still injects guidance and stays consistent with 
   const worker = statusInstantiate(cavemanSessionExtension);
   const injected = await worker.handlers.get("before_agent_start")!({ systemPrompt: prompt }, undefined) as { systemPrompt?: string[] };
   expect(injected?.systemPrompt?.at(-1)).toMatch(/Caveman ultra active/);
-  expect(formatStatus(getSharedComboState())).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
+  expect(formatStatus(getSharedComboState())).toBe("🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF");
 });
 test("the combo line names every mode, so every other surface keeps its text", () => {
-  expect(formatStatus({ level: "balanced", caveman: "full", rtk: "on", ponytail: "full", pstack: "off" }))
-    .toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🧠 ponytail=FULL | 🥔 pstack=OFF");
+  expect(formatStatus({ level: "balanced", caveman: "full", rtk: "on", ponytail: "full", pstack: "off", headroom: "off" }))
+    .toBe("🧩 COMBO BALANCED: 🪨 caveman=FULL | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=FULL | 🥔 pstack=OFF");
 });
 
 const tersioDir = fs.mkdtempSync(path.join(os.tmpdir(), "tersio-router-"));

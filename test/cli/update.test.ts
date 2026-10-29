@@ -24,7 +24,7 @@ vi.mock("../../extensions/shared/utils.ts", async (importOriginal) => {
     },
   };
 });
-const updaterPath = path.join(root, "extensions", "updater", "index.ts");
+const updaterPath = path.join(root, "extensions", "shared", "updater.ts");
 const updaterUrl = new URL("file:///" + updaterPath.replace(/\\/g, "/"));
 
 const { parseChecksum, runAddonUpdate } = await import(updaterUrl.href);

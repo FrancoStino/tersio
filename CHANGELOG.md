@@ -1,13 +1,26 @@
-## Unreleased
+## v2.25.15
 
 ### Added
- - **PiG host support.** `tersio install --host pig` writes the extension tree into `~/.pig/agent/extensions` and wires rtk, the session modes, and Ponytail for it; doctor, uninstall, the upstream scorecard, and the Quick start page know the host, which draws with its own mark. Thanks to @trun9ko33, who sent it in #77.
- - A **`tersio mcp`** command. It starts a small server that any MCP-capable app can talk to, so an agent can answer "what did my sessions cost", read what Tersio changed, and switch modes, without opening the dashboard: a Combo preset in one call, or any single mode (caveman, rtk, ponytail, pstack) overriding its piece of the preset. Connect it by adding the `tersio` entry under `mcpServers` in the client's MCP settings; there is no port, token, or process to keep alive.
+ - **PiG (Pi-in-go) support.** `tersio install --host pig` sets Tersio up for PiG the same way it does for the other agents: its extensions, RTK, the session modes, and Ponytail. The doctor, uninstall, the upstream check, and the Quick start page know the host too. Thanks to @trun9ko33 (#77).
+ - **Headroom mode.** [Headroom](https://github.com/headroomlabs-ai/headroom) shrinks what an agent reads and writes. Turn it on with `/headroom on`, see it in the status line, and the Combo presets leave it alone. A missing binary is named, never installed silently.
+ - **Headroom in the dashboard.** An Install button when it is missing, a card with the savings it records, and a session-start switch in Settings.
+ - **`tersio_headroom` on the MCP server** reports those savings, and can also ask Headroom for its memory, its evals, or its dashboard.
+ - **Per-agent session defaults.** An install for one agent can save its own preset, so each agent starts the way you set it.
+ - A `--headroom-default on|off` flag.
+ - **Uninstall asks what to remove.** One Enter-driven list: your agents, the RTK binary, or the Headroom binary. Removing Headroom unwraps its agents first.
+ - **Headroom lifecycle.** `tersio update` refreshes it, turning the mode off unwraps, and the switch state is shared by every browser and corrected from Headroom's own check.
+ - **The installer asks about Headroom** right after the preset.
+ - **A fullscreen Quick start canvas.** Drag nodes anywhere, snap them to each other, and the layout is remembered on the machine.
+ - **Node options open in place.** Mode dialogs, agent drawers, and for Headroom a switch per supported tool with a footer that updates or removes it. The Modes tab is gone; its rows live here.
+ - **Headroom on the upstream check**, so `tersio upstream` says when it is behind. A failed install shows the reason instead of spinning.
+ - A slow read says "Still reading your sessions" with a retry instead of waiting forever, and the sidebar keeps every item visible, dimmed while loading.
+ - The developer switch survives a refresh.
+ - **`tersio mcp`** lets an MCP client read usage, see what changed, and set modes without opening the dashboard.
 
 ### Fixed
- - The update check now names the Caveman rule's release version on both sides of a jump, the one installed and the one offered, instead of a code fingerprint. It reads the same record the doctor and the dashboard use.
- - The update check no longer reports the bundled Ponytail as missing. It looked for the separate package an older install carried, so every update claimed to reinstall it and listed it as a change even when nothing changed.
- - A new session started with `/new` on Oh My Pi showed `COMBO OFF` instead of the configured defaults. OMP emits a session switch there, not a session start, and only the start restored the defaults. A switch to a session without mode state now restores them too. Thanks to @FrancoStino, who sent the fix in #74.
+ - The updater no longer ships as an extension, so pi starts again.
+ - The update check names the Caveman rule's version, and no longer claims Ponytail is missing.
+ - `/new` on Oh My Pi starts with your defaults again. Thanks to @FrancoStino (#74).
 
 ## v2.25.14
 

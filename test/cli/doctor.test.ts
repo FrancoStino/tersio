@@ -5,11 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cliEnv, fakeExecutable, isWindows } from "../helpers/env.ts";
+import { registryUrl } from "../helpers/registry.ts";
 import { fileContains } from "../../extensions/shared/utils.ts";
-import { PI_PONYTAIL_FILES, TREE_FILES, sourcePath, treeFileText, treeFilesFor } from "../../cli/manifest.ts";
+import { PI_PONYTAIL_FILES, PONYTAIL_VERSION, TREE_FILES, sourcePath, treeFileText, treeFilesFor } from "../../cli/manifest.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const installer = path.join(root, "dist", "tersio.js");
+
+// The Ponytail feed is advisory, and a live answer would add a row these counts do not expect.
+const doctorEnv = (home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv =>
+  cliEnv(home, { TERSIO_PONYTAIL_URL: registryUrl(PONYTAIL_VERSION), ...extra });
 
 // Empty home keeps probes MISSING; the seeded cache is ignored by doctor but used by install/update.
 function missingHome(): string {
@@ -39,7 +44,7 @@ test("doctor reports MISSING components against an empty home", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -66,7 +71,7 @@ test("doctor names both hosts with the command that installs each", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -97,7 +102,7 @@ test("doctor reports each host that has tersio installed", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -119,7 +124,7 @@ test("doctor counts a pi declaration without a package directory as missing", ()
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -136,7 +141,7 @@ test("doctor --fix dry-run previews repairs without writing", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -164,7 +169,7 @@ test("doctor --fix dry-run previews debris removal", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -178,7 +183,7 @@ test("doctor --fix dry-run previews debris removal", () => {
 test("doctor --fix repairs missing extension files in an empty home", () => {
   const home = missingHome();
   try {
-    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-lite.md", "caveman/rule-megacave-lite.md", "caveman/rule-megacave-ultra.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "updater/index.ts"];
+    const missing = ["caveman/index.ts", "caveman/rule.md", "caveman/rule-lite.md", "caveman/rule-megacave-lite.md", "caveman/rule-megacave-ultra.md", "caveman/rule-ultra.md", "caveman/rule-megacave.md", "rtk/session.ts", "combo/index.ts", "commands/index.ts", "shared/updater.ts"];
     for (const rel of missing) {
       expect(resultFileMissing(home, rel)).toBe(true);
     }
@@ -186,7 +191,7 @@ test("doctor --fix repairs missing extension files in an empty home", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -208,7 +213,7 @@ test("doctor names a half-written tree that still has its entry points", () => {
   const home = missingHome();
   try {
     const ext = extDir(home);
-    for (const rel of ["caveman/index.ts", "rtk/session.ts", "updater/index.ts"]) {
+    for (const rel of ["caveman/index.ts", "rtk/session.ts", "shared/updater.ts"]) {
       mkdirSync(path.join(ext, path.dirname(rel)), { recursive: true });
       writeFileSync(path.join(ext, rel), "export default {}\n", "utf8");
     }
@@ -216,7 +221,7 @@ test("doctor names a half-written tree that still has its entry points", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -238,7 +243,7 @@ test("doctor --fix fills the gap and confirms the whole tree", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -259,7 +264,7 @@ test("doctor --fix repairs config.yml registrations in an empty home", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -285,7 +290,7 @@ test("doctor --fix removes manifest-loaded combo and Ponytail registrations", ()
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
     expect(repair.status, repair.stderr).toBe(0);
     expect(readFileSync(path.join(agentDir, "config.yml"), "utf8")).not.toMatch(/combo\/index\.ts|pi-extension/);
@@ -301,7 +306,7 @@ test("doctor --fix rejects an invalid scope", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status).toBe(1);
@@ -324,7 +329,7 @@ test("doctor reports the rtk binary version", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: binDir }),
+      env: doctorEnv(home, { PATH: binDir }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -347,7 +352,7 @@ test("doctor --fix leaves an existing fetched rule.md alone and writes no .bak",
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -371,7 +376,7 @@ test("doctor --fix extensions writes this build's plugin manifest", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -396,7 +401,7 @@ test("doctor warns that rtk_run needs an exec-capable host", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: binDir }),
+      env: doctorEnv(home, { PATH: binDir }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -420,7 +425,7 @@ test("doctor --fix removes a foreign opencode tree from pi", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 60000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(path.join(ext, "opencode"))).toBe(false);
@@ -437,13 +442,29 @@ test("doctor does not count the exec row when rtk is absent", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
     // The exec question is meaningless without a binary, and a missing pstack tree is one warning, not five.
     expect(result.stdout).toMatch(/—  RTK exec: not installed/);
     expect(result.stdout).toMatch(/Summary: 9 checks — ✅ 3 ok, ⚠️ 1 warn, ❌ 5 missing/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("doctor warns when the ponytail feed reports a newer version", () => {
+  const home = missingHome();
+  try {
+    const result = spawnSync(process.execPath, [installer, "doctor"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home, { PATH: path.join(home, "empty-bin"), TERSIO_PONYTAIL_URL: registryUrl("99.0.0") }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Ponytail version: warn [\d.]+ installed, 99\.0\.0 is the latest/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -456,7 +477,7 @@ test("doctor names the missing pstack tree, not just the rule", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 15000,
-      env: cliEnv(home, { PATH: path.join(home, "empty-bin") }),
+      env: doctorEnv(home, { PATH: path.join(home, "empty-bin") }),
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -514,7 +535,7 @@ function runDoctor(home: string, bin: string): { status: number; stdout: string 
     cwd: root,
     encoding: "utf8",
     timeout: 30000,
-    env: cliEnv(home, { PATH: bin }),
+    env: doctorEnv(home, { PATH: bin }),
   });
 }
 
@@ -742,7 +763,7 @@ test("doctor --fix removes a stale tersio-commands extension", () => {
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home),
+      env: doctorEnv(home),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(existsSync(path.join(stale, "index.ts")), "the stale extension must not load again").toBe(false);
@@ -846,7 +867,7 @@ test.skipIf(isWindows())("doctor --fix service previews the orphaned pid without
       cwd: root,
       encoding: "utf8",
       timeout: 30000,
-      env: cliEnv(home, { PATH: bin }),
+      env: doctorEnv(home, { PATH: bin }),
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/would stop the orphaned serve process \(pid 4242\)/);

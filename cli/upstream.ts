@@ -1,4 +1,4 @@
-// Upstream scorecard: how faithfully Tersio's four sources track their upstreams, and how current they are.
+// Upstream scorecard: how faithfully Tersio's five sources track their upstreams, and how current they are.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, promises as fs, readdirSync } from 'node:fs';
@@ -10,10 +10,12 @@ import { readState } from '../extensions/shared/state.ts';
 import { detectHosts, hostExtensionsDir } from './hosts.ts';
 import { EXT_DIR, PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_DIR, PONYTAIL_PKG, PONYTAIL_VERSION, shippedOmpManifest, sourcePath, treeFileText, treeFilesFor } from './manifest.ts';
 import { textTable } from './common.ts';
-import { adaptCavemanFull } from '../extensions/updater/index.ts';
+import { adaptCavemanFull } from '../extensions/shared/updater.ts';
 import {
   RTK_RELEASE_API,
   RTK_REPO,
+  HEADROOM_RELEASE_API,
+  HEADROOM_REPO,
   fetchJson,
   httpsGet,
   httpsGetBuffer,
@@ -21,6 +23,7 @@ import {
   piAgentDir,
   pigAgentDir,
   readTextIfExists,
+  resolveHeadroomBinary,
   resolveRtkBinary,
   shimCommand,
   tersioHome,
@@ -804,6 +807,57 @@ async function checkRtk(): Promise<SourceRow> {
   };
 }
 
+/** Headroom prints `headroom, version 0.40.0`; its releases tag `v<version>`, so both sides read `0.40.0`. */
+function normalizeHeadroomVersion(value: string | undefined): string {
+  return String(value || '').replace(/^headroom,\s*version\s*/i, '').replace(/^v/i, '').trim();
+}
+
+/** Headroom: the binary's own version is the fact; the release feed is the drift. Same contract as RTK. */
+async function checkHeadroom(): Promise<SourceRow> {
+  const bin = resolveHeadroomBinary();
+  let local: string | null = null;
+  if (bin) {
+    try {
+      const shim = shimCommand(bin, ['--version']);
+      local = normalizeHeadroomVersion(execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true })) || null;
+    } catch { local = null; }
+  }
+  let latest: string | null = null;
+  let failure: FetchFailure | null = null;
+  try {
+    const token = githubToken();
+    const release = await fetchJson<{ tag_name?: string }>(HEADROOM_RELEASE_API, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+    latest = normalizeHeadroomVersion(release.tag_name) || null;
+  } catch (e) { failure = classifyFetch(e, 'the Headroom release feed'); }
+  const behind = local && latest && local !== latest;
+  return {
+    source: 'Headroom',
+    pin: local ?? 'not installed',
+    upstream: latest ?? 'unknown',
+    tracked: local === null ? 0 : 1,
+    matched: local === null ? 0 : 1,
+    drift: behind ? 1 : 0,
+    added: 0,
+    removed: 0,
+    ceiling: 0,
+    measured: failure === null,
+    status: failure ? failure.status : 'ok',
+    kind: 'version',
+    link: local ? releaseUrl(HEADROOM_REPO, local) : '',
+    // Headroom is the user's opt-in install, so an absent binary is not a gap of ours; the pin and note say so.
+    gaps: [],
+    moved: [],
+    appeared: [],
+    gone: [],
+    uncarried: 0,
+    uncarriedMoved: 0,
+    pinnedAt: null,
+    candidate: behind ? latest : null,
+    preview: [],
+    note: failure ? failure.reason : behind ? `installed ${local} is behind ${latest}` : local === null ? 'binary not on PATH' : '',
+  };
+}
+
 /**
  * The extension entries an installed package manifest loads, or null when the host keeps none.
  * A host can carry every file and still never load one, because the manifest is what names them.
@@ -924,13 +978,14 @@ async function rowOrFailure(label: string, probe: () => Promise<SourceRow>): Pro
 
 async function collect(): Promise<Scorecard> {
   const hosts = await checkHosts();
-  const [caveman, pstack, ponytail, rtk] = await Promise.all([
+  const [caveman, pstack, ponytail, rtk, headroom] = await Promise.all([
     rowOrFailure('Caveman', checkCaveman),
     rowOrFailure('pstack', checkPstack),
     rowOrFailure('Ponytail', () => checkPonytail(hosts)),
     rowOrFailure('RTK', checkRtk),
+    rowOrFailure('Headroom', checkHeadroom),
   ]);
-  const sources = [caveman, pstack, rtk, ponytail];
+  const sources = [caveman, pstack, rtk, headroom, ponytail];
   const card: Scorecard = {
     version: PACKAGE_VERSION,
     checkedAt: Date.now(),

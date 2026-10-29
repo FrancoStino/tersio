@@ -44,6 +44,17 @@ export function readPluginSettings(): Record<string, unknown> {
   return readSettingsFile() ?? legacyOmpSettings() ?? {};
 }
 
+/** Which agent a session runs on; the settings readers scope the per-host layer with it. */
+export type HostScope = 'omp' | 'pi' | 'pig' | 'opencode';
+
+/** The `hosts.<id>` section of the store, or nothing: the flat keys stay the shared fallback. */
+function hostDefaults(host?: HostScope | null): Record<string, unknown> {
+  if (!host) return {};
+  const hosts = readPluginSettings().hosts;
+  const section = (hosts as Record<string, unknown> | undefined)?.[host];
+  return section && typeof section === 'object' && !Array.isArray(section) ? section as Record<string, unknown> : {};
+}
+
 const COMBO_LEVELS = new Set(['off', 'lite', 'balanced', 'max']);
 // A settings file written before the rename still names the preset `medium`.
 const RETIRED_COMBO_LEVELS = new Set(['medium']);
@@ -51,34 +62,45 @@ const CAVEMAN_MODES = new Set(['off', 'lite', 'full', 'ultra', 'megacave', 'mega
 const PONYTAIL_MODES = new Set(['off', 'lite', 'full', 'ultra']);
 // Opt-in only: no combo preset writes this, so it never reaches a user who did not ask for it.
 const PSTACK_MODES = new Set(['off', 'on']);
+// Same opt-in contract as pstack: the binary is the user's own install, the mode only tracks it.
+const HEADROOM_MODES = new Set(['off', 'on']);
 
-function readStringDefault(key: string, valid: Set<string>): string {
+function readStringDefault(key: string, valid: Set<string>, host?: HostScope | null): string {
+  // A host's own section wins, so one agent can run lite while another runs balanced.
+  const scoped = hostDefaults(host)[key];
+  if (typeof scoped === 'string' && valid.has(scoped)) return scoped;
   const raw = readPluginSettings()[key];
   return typeof raw === 'string' && valid.has(raw) ? raw : 'off';
 }
 
-export function readComboDefault(): string {
-  const raw = readStringDefault('comboDefault', COMBO_LEVELS);
+export function readComboDefault(host?: HostScope | null): string {
+  const raw = readStringDefault('comboDefault', COMBO_LEVELS, host);
   if (raw !== 'off') return raw;
-  const stored = readPluginSettings().comboDefault;
+  const stored = hostDefaults(host).comboDefault ?? readPluginSettings().comboDefault;
   return typeof stored === 'string' && RETIRED_COMBO_LEVELS.has(stored) ? 'lite' : raw;
 }
 
-export function readCavemanDefault(): string {
-  return readStringDefault('cavemanDefault', CAVEMAN_MODES);
+export function readCavemanDefault(host?: HostScope | null): string {
+  return readStringDefault('cavemanDefault', CAVEMAN_MODES, host);
 }
 
-export function readRtkDefault(): boolean {
+export function readRtkDefault(host?: HostScope | null): boolean {
+  const scoped = hostDefaults(host).rtkDefault;
+  if (typeof scoped === 'boolean') return scoped;
   const raw = readPluginSettings().rtkDefault;
   return typeof raw === 'boolean' ? raw : false;
 }
 
-export function readPonytailDefault(): string {
-  return readStringDefault('ponytailDefault', PONYTAIL_MODES);
+export function readPonytailDefault(host?: HostScope | null): string {
+  return readStringDefault('ponytailDefault', PONYTAIL_MODES, host);
 }
 
-export function readPstackDefault(): string {
-  return readStringDefault('pstackDefault', PSTACK_MODES);
+export function readPstackDefault(host?: HostScope | null): string {
+  return readStringDefault('pstackDefault', PSTACK_MODES, host);
+}
+
+export function readHeadroomDefault(host?: HostScope | null): string {
+  return readStringDefault('headroomDefault', HEADROOM_MODES, host);
 }
 
 export function isComboSetupComplete(): boolean {
@@ -92,15 +114,16 @@ const COMBO_MODE_DEFAULTS = {
   max: { cavemanDefault: 'ultra', rtkDefault: true, ponytailDefault: 'ultra' },
 } as const;
 
-export function saveComboSetup(level: string): boolean {
+export function saveComboSetup(level: string, host?: HostScope | null): boolean {
   if (!(level in COMBO_MODE_DEFAULTS)) return false;
   const file = tersioSettingsFile();
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify({
-    ...readPluginSettings(),
-    comboDefault: level,
-    ...COMBO_MODE_DEFAULTS[level as keyof typeof COMBO_MODE_DEFAULTS],
-    comboSetupComplete: true,
-  }, null, 2)}\n`, 'utf8');
+  const patch = { comboDefault: level, ...COMBO_MODE_DEFAULTS[level as keyof typeof COMBO_MODE_DEFAULTS] };
+  const stored = readPluginSettings();
+  // A host scope writes its own section, so this agent's preset never becomes every agent's.
+  const next = host
+    ? { ...stored, hosts: { ...(stored.hosts as Record<string, unknown> | undefined), [host]: { ...hostDefaults(host), ...patch } } }
+    : { ...stored, ...patch };
+  writeFileSync(file, `${JSON.stringify({ ...next, comboSetupComplete: true }, null, 2)}\n`, 'utf8');
   return true;
 }

@@ -8,12 +8,13 @@ import {
   args, assumeYes, dryRun, execP, parseJsonObject, verbose,
 } from './common.ts';
 import { askInteractiveChoice, closeRL, execNetwork, sayTagged, tty } from './interactive.ts';
-import { readTextIfExists, resolveRtkBinary, tersioDataPath } from '../extensions/shared/utils.ts';
+import { readTextIfExists, resolveHeadroomBinary, resolveRtkBinary, tersioDataPath } from '../extensions/shared/utils.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { refreshPrices } from '../extensions/shared/pricing.ts';
 import {
   CAVEMAN_BODY_PATHS,
   CAVEMAN_RAW,
+  HEADROOM_RELEASE_API,
   RTK_RELEASE_API,
   TERSIO_RELEASE_API,
   cavemanRelease,
@@ -130,11 +131,7 @@ function realOrResolved(target: string): string {
   try { return realpathSync(resolved); } catch { return resolved; }
 }
 
-/**
- * The package manager that installed the running CLI. `bun install -g` writes to `~/.bun`, npm to its
- * own prefix, and each keeps its own copy, so updating the wrong one leaves the old CLI in place and the
- * update prompt comes back on the next run.
- */
+/** The package manager that installed the running CLI; each keeps its own copy, so updating the wrong one leaves the old CLI in place. */
 export function installerManager(self = process.argv[1] ?? '', home = HOME): { cmd: string; args: (target: string) => string[]; label: string } {
   // `home` is a seam for tests: a runner has no installed copy, so the symlink there must be judged by the same rule.
   const bunRoot = path.join(realOrResolved(home), '.bun', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/'));
@@ -157,11 +154,18 @@ interface UpdatePlan {
   cliSource: 'npm' | 'github' | null;
   npm: string | null;
   rtk: [string | null, string | null];
+  headroom: [string | null, string | null];
   ruleLocal: string | null;
   // The rule bodies at the newest release; the tag names them, the hashes only decide staleness.
   rule: { tag: string; hashes: string } | null;
   // Bundled with tersio: only the local copy is probed. Missing marks stale; present is never stale on its own.
   ponytail: string | null;
+}
+
+/** `headroom, version 0.42.0` and its release tags `v0.42.0` read the same version. */
+function normalizeHeadroom(value: string | undefined): string | null {
+  const normalized = String(value ?? '').replace(/^headroom,\s*version\s*/i, '').replace(/^v/i, '').trim();
+  return normalized || null;
 }
 
 /** The tag and the two upstream bodies at the newest release, so the plan compares against a published version. */
@@ -183,9 +187,12 @@ async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePla
   // rule.md ships with the release; only the tracked bodies can go stale.
   const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
   const controller = new AbortController();
-  const [rtkLocal, rtkRelease, ruleLocal, ruleRemote, ponytailLocalText] = await Promise.all([
+  const headroomBin = resolveHeadroomBinary();
+  const [rtkLocal, rtkRelease, headroomLocal, headroomRelease, ruleLocal, ruleRemote, ponytailLocalText] = await Promise.all([
     settle(rtkBin ? execP(rtkBin, ['--version'], { timeout: 5000 }).then((r) => normalizeRtkVersion(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
     settle(httpsGet(RTK_RELEASE_API, { signal: controller.signal }).then((text) => normalizeRtkVersion((JSON.parse(text) as RtkRelease).tag_name) || null), 1500),
+    settle(headroomBin ? execP(headroomBin, ['--version'], { timeout: 5000 }).then((r) => normalizeHeadroom(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
+    settle(httpsGet(HEADROOM_RELEASE_API, { signal: controller.signal }).then((text) => normalizeHeadroom((JSON.parse(text) as { tag_name?: string }).tag_name) || null), 1500),
     Promise.all([readTextIfExists(tersioRule('rule-ultra.md')), readTextIfExists(tersioRule('rule-megacave.md'))])
       .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null)),
     settle(cavemanRemoteRule(controller.signal), 1500),
@@ -197,6 +204,7 @@ async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePla
     cliSource: release?.source ?? null,
     npm: release?.npm ?? null,
     rtk: [rtkLocal, rtkRelease],
+    headroom: [headroomLocal, headroomRelease],
     ruleLocal,
     rule: ruleRemote,
     ponytail: ponytailLocalText ? parseJsonObject<{ version?: string }>(ponytailLocalText)?.version ?? null : null,
@@ -222,6 +230,7 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
     status.push(`npm serves ${plan.npm}; the release feed has ${plan.cli}`);
   }
   push('RTK', plan.rtk[0], plan.rtk[1]);
+  push('Headroom', plan.headroom[0], plan.headroom[1]);
   // The rule body carries no version, so the tag recorded at pull time names it; the pin covers a fresh install.
   const ruleCurrent = (readState().cavemanUpstream?.tag ?? CAVEMAN_PIN).replace(/^v/, '');
   if (plan.ruleLocal && plan.rule && plan.ruleLocal === plan.rule.hashes) status.push(`Caveman rule: ${ruleCurrent} (up to date)`);
@@ -238,30 +247,42 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
   return { stale, status };
 }
 
-async function runLatestUpdate(): Promise<void> {
+/** The agent an update refreshes; `null` when no prompt is needed, else the same menu the install flow shows. */
+export async function askUpdateHost(): Promise<string | null> {
+  if (!tty() || assumeYes) return null;
+  try {
+    if (parseHostArg(args)) return null;
+  } catch {
+    // The caller's parse reports the bad flag; the menu never invents a host over it.
+    return null;
+  }
+  const installed = detectHosts();
+  // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
+  const initial = installed.find((host) => host.installed)?.id ?? 'omp';
+  const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
+  if (choice.status !== 'selected') {
+    closeRL();
+    process.exit(130);
+  }
+  return choice.value;
+}
+
+async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
   const forwardedArgs = ['--yes'];
   if (dryRun) forwardedArgs.push('--dry-run');
   if (verbose) forwardedArgs.push('--verbose');
-  let pinned: string | undefined;
+  let pinned: string | undefined = hostOverride ?? undefined;
   try {
-    pinned = parseHostArg(args);
+    pinned = pinned ?? parseHostArg(args);
   } catch (e) {
     console.error(`[fail] ${(e as Error).message}`);
     process.exitCode = 1;
     return;
   }
   // A bare `tersio update` asks which agent to refresh: `--host` pins it, and --yes keeps the default for scripts.
-  if (!pinned && tty() && !assumeYes) {
-    const installed = detectHosts();
-    // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
-    const initial = installed.find((host) => host.installed)?.id ?? 'omp';
-    const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
-    if (choice.status !== 'selected') {
-      closeRL();
-      process.exitCode = 130;
-      return;
-    }
-    pinned = choice.value;
+  if (!pinned) {
+    const chosen = await askUpdateHost();
+    if (chosen !== null) pinned = chosen;
   }
   if (pinned) forwardedArgs.push('--host', pinned);
 

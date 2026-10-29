@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { cn } from "cn";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarSeparator, SidebarTrigger, SidebarRail,
+  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarTrigger, SidebarRail,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/charts";
@@ -60,7 +60,7 @@ export function ThemeToggle() {
   );
 }
 
-/** The five session-start mode fields the banner reads. */
+/** The six session-start mode fields the banner reads, plus the per-host sections the folders write. */
 export interface ModeState {
   comboDefault: string;
   /** The level the banner may claim: `custom` once the three modes stop matching the preset. */
@@ -69,17 +69,20 @@ export interface ModeState {
   rtkDefault: boolean;
   ponytailDefault: string;
   pstackDefault: string;
+  headroomDefault: string;
+  hosts?: Record<string, Record<string, string | boolean>>;
 }
 
-/** One glyph and one short name per mode, in the order the combo names them; pstack trails the three. */
+/** One glyph and one short name per mode, in the order the combo names them; the opt-in modes trail the three. */
 const MODE_GLYPHS = [
   { key: "caveman", glyph: "🪨", label: "caveman", level: (m: ModeState) => (m.cavemanDefault ?? "off").toUpperCase() },
   { key: "rtk", glyph: "🗜️", label: "rtk", level: (m: ModeState) => (m.rtkDefault ? "ON" : "OFF") },
+  { key: "headroom", glyph: "🍃", label: "headroom", level: (m: ModeState) => (m.headroomDefault ?? "off").toUpperCase() },
   { key: "ponytail", glyph: "🧠", label: "ponytail", level: (m: ModeState) => (m.ponytailDefault ?? "off").toUpperCase() },
   { key: "pstack", glyph: "🥔", label: "pstack", level: (m: ModeState) => (m.pstackDefault ?? "off").toUpperCase() },
 ] as const;
 
-/** The combo preset this machine starts sessions with and the modes under it; a click opens Settings. */
+/** The combo preset this machine starts sessions with and the modes under it; a click opens the Quick start. */
 export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null; onOpen: () => void; loading?: boolean }) {
   const level = modes?.comboLevel ?? modes?.comboDefault ?? "off";
   const on = level !== "off";
@@ -132,7 +135,7 @@ export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null
     <button
       type="button"
       onClick={onOpen}
-      title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open Settings to change it.`}
+      title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open the Quick start to change it.`}
       className={cn(
         "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-track",
         on ? "border-ink/25 bg-panel" : "border-line bg-panel/60",
@@ -268,16 +271,18 @@ export function AppSidebar({
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {NAV.map((group, index) => {
-          const items = group.items.filter((item) => (agentAvailable || !item.agentOnly) && (dev || !item.devOnly));
+        {NAV.map((group) => {
+          // Every item stays visible: an item whose agent data is still missing renders dimmed and
+          // unclickable instead of vanishing, so the rail never degrades to bare labels and lines.
+          const items = group.items.filter((item) => dev || !item.devOnly);
           // A pending read draws the full count this rail would have, so no item arrives late.
           const pending = group.items.filter((item) => dev || !item.devOnly);
-          if (items.length === 0 && pending.length === 0) return null;
+          if (items.length === 0) return null;
           return (
             <Fragment key={group.heading}>
-              {/* One hairline between sections, drawn by the rail's own separator. */}
-              {index > 0 ? <SidebarSeparator className="my-1" /> : null}
-              <SidebarGroup>
+              {/* Group headings and spacing carry the rhythm; no hairlines, which render as red lines
+                  under some browser themes. */}
+              <SidebarGroup className="pb-1">
                 <SidebarGroupLabel className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
                   {group.heading}
                 </SidebarGroupLabel>
@@ -293,22 +298,29 @@ export function AppSidebar({
                           <Skeleton className="h-3 w-20 group-data-[collapsible=icon]:hidden" />
                         </div>
                       </SidebarMenuItem>
-                    )) : items.map((item) => (
-                      <SidebarMenuItem key={item.id}>
-                        <SidebarMenuButton
-                          isActive={section === item.id}
-                          tooltip={item.label}
-                          onClick={() => onSection(item.id)}
-                          className="mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink"
-                        >
-                          <Icon name={item.icon} className="size-4" />
-                          <span className="truncate">{item.label}</span>
-                          <kbd className="mono ml-auto hidden shrink-0 text-[10px] opacity-70 group-data-[collapsible=offcanvas]:inline">
-                            G {item.hotkey.toUpperCase()}
-                          </kbd>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
+                    )) : items.map((item) => {
+                      const dimmed = !agentAvailable && item.agentOnly;
+                      return (
+                        <SidebarMenuItem key={item.id}>
+                          <SidebarMenuButton
+                            isActive={!dimmed && section === item.id}
+                            tooltip={dimmed ? `${item.label} — waiting for agent data` : item.label}
+                            disabled={dimmed}
+                            onClick={() => { if (!dimmed) onSection(item.id); }}
+                            className={cn(
+                              "mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink",
+                              dimmed && "cursor-default opacity-40 hover:bg-transparent",
+                            )}
+                          >
+                            <Icon name={item.icon} className="size-4" />
+                            <span className="truncate">{item.label}</span>
+                            <kbd className="mono ml-auto hidden shrink-0 text-[10px] opacity-70 group-data-[collapsible=offcanvas]:inline">
+                              G {item.hotkey.toUpperCase()}
+                            </kbd>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      );
+                    })}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
@@ -339,14 +351,14 @@ export function Topbar({
   modes,
   modesLoaded,
   onShare,
-  onOpenSettings,
+  onQuickStart,
 }: {
   range: AgentRange;
   onRange: (range: AgentRange) => void;
   modes: ModeState | null;
   modesLoaded: boolean;
   onShare: () => void;
-  onOpenSettings: () => void;
+  onQuickStart: () => void;
 }) {
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
@@ -371,20 +383,28 @@ export function Topbar({
         className="grid size-8 shrink-0 place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft sm:hidden"
       />
       {/* The rail's own header carries the expand/collapse control; the banner names the modes. */}
-      <ModeBanner modes={modes} onOpen={onOpenSettings} loading={!modesLoaded} />
+      <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
       {/* The right group never shrinks: it holds the three buttons a narrow viewport still needs,
           and the banner truncates instead. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        <RangePicker range={range} onPick={onRange} />
-        <button
-          type="button"
-          onClick={onShare}
-          aria-label="Share usage"
-          title="Share usage"
-          className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft"
-        >
-          <Icon name="share-2" className="size-4" />
-        </button>
+        {modesLoaded ? (
+          <RangePicker range={range} onPick={onRange} />
+        ) : (
+          <Skeleton className="h-7 w-44 rounded-lg" />
+        )}
+        {modesLoaded ? (
+          <button
+            type="button"
+            onClick={onShare}
+            aria-label="Share usage"
+            title="Share usage"
+            className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft"
+          >
+            <Icon name="share-2" className="size-4" />
+          </button>
+        ) : (
+          <Skeleton className="size-8 rounded-lg" />
+        )}
         <ThemeToggle />
       </div>
     </header>
@@ -468,7 +488,7 @@ export function Shell({
           modes={modes}
           modesLoaded={modesLoaded}
           onShare={onShare}
-          onOpenSettings={onSettings}
+          onQuickStart={() => onSection("how-to")}
         />
         <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
       </SidebarInset>

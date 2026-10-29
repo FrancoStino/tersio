@@ -10,6 +10,8 @@ const STORAGE_KEY = "tersio-dev";
 const listeners = new Set<() => void>();
 let current = false;
 let hydrated = false;
+/** Bumped on every local flip, so a slow hydrate answer never clobbers a newer toggle. */
+let localWrites = 0;
 
 function emit(): void {
   for (const listener of listeners) listener();
@@ -33,6 +35,9 @@ function snapshot(): boolean {
 /** Read the saved value once: the server when there is one, else the browser store. */
 function hydrate(): void {
   hydrated = true;
+  // A flip that lands while this read is in flight is newer than the answer: the ticket only lets the
+  // response apply when nothing was set locally since the read started, or the toggle would snap back.
+  const ticket = localWrites;
   if (isFileExport() || typeof fetch !== "function") {
     current = localStorage.getItem(STORAGE_KEY) === "1";
     emit();
@@ -41,6 +46,7 @@ function hydrate(): void {
   fetch("/settings")
     .then((res) => (res.ok ? res.json() : null))
     .then((data: { devTools?: unknown } | null) => {
+      if (ticket !== localWrites) return;
       if (typeof data?.devTools === "boolean") {
         current = data.devTools;
         emit();
@@ -50,6 +56,7 @@ function hydrate(): void {
 }
 
 export function setDevMode(on: boolean): void {
+  localWrites += 1;
   current = on;
   emit();
   // The browser copy is the export fallback, and it makes the next paint correct before the round trip.

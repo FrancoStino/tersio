@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { adaptCavemanFull } from "../../extensions/updater/index.ts";
+import { adaptCavemanFull } from "../../extensions/shared/updater.ts";
 
 process.env.HOME = new URL("../definitely-missing-home/updater", import.meta.url).pathname;
 process.env.TERSIO_HOME = process.env.HOME;
