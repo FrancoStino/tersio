@@ -22,6 +22,7 @@ export const DEFAULT_RANGE: AgentRange = "24h";
 
 /** The rail's drag handle; browser storage bridges a reload, tersio settings bridge a new port. */
 const SIDEBAR_WIDTH_KEY = "tersio-sidebar-width";
+const SIDEBAR_OPEN_KEY = "tersio-sidebar-open";
 const clampSidebarWidth = (px: number): number => Math.min(420, Math.max(180, Math.round(px)));
 
 const RANGE_TEXT: Record<AgentRange, string> = {
@@ -257,7 +258,7 @@ export function AppSidebar({
       {/* The brand lives in the topbar, which spans the rail; this spacer keeps nav rows below that bar. */}
       <SidebarHeader className="h-12 shrink-0" />
       <SidebarContent>
-        {NAV.map((group) => {
+        {NAV.map((group, groupIndex) => {
           // Every item stays visible: an item whose agent data is still missing renders dimmed and
           // unclickable instead of vanishing, so the rail never degrades to bare labels and lines.
           const items = group.items.filter((item) => dev || !item.devOnly);
@@ -268,7 +269,12 @@ export function AppSidebar({
             <Fragment key={group.heading}>
               {/* Group headings and spacing carry the rhythm; no hairlines, which render as red lines
                   under some browser themes. */}
-              <SidebarGroup className="pb-1">
+              <SidebarGroup
+                className={cn(
+                  "pb-1",
+                  groupIndex > 0 && "group-data-[collapsible=icon]:mt-2 group-data-[collapsible=icon]:border-t group-data-[collapsible=icon]:border-line group-data-[collapsible=icon]:pt-2",
+                )}
+              >
                 <SidebarGroupLabel className="mono text-[10px] uppercase tracking-[0.16em] text-dim">
                   {group.heading}
                 </SidebarGroupLabel>
@@ -374,25 +380,30 @@ export function Topbar({
           isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-1 px-0" : "-ml-3 w-(--sidebar-width) pl-4 pr-3",
         )}
       >
-        <img
-          src="brand.webp"
-          alt=""
-          width="24"
-          height="24"
-          className={cn("shrink-0 rounded-[8px]", state === "collapsed" && !isMobile ? "size-5" : "size-6")}
-        />
-        <span
-          className={cn(
-            "min-w-0 truncate text-sm font-semibold tracking-tight",
-            (state === "collapsed" || isMobile) && "hidden",
-          )}
-        >
-          Tersio <span className="font-normal text-dim">Dashboard</span>
-        </span>
-        <SidebarTrigger
-          className={cn("size-8 shrink-0 text-dim hover:text-ink", state === "collapsed" && "[&_svg]:!size-5", state !== "collapsed" && "ml-auto")}
-          aria-label="Toggle navigation"
-        />
+        {state === "collapsed" && !isMobile ? (
+          // The rail shows the mark; hovering swaps it for the expand control, the way Loom's rail behaves.
+          <div className="group/rail relative grid size-8 shrink-0 place-items-center">
+            <img
+              src="brand.webp"
+              alt=""
+              width="24"
+              height="24"
+              className="size-5 rounded-[8px] transition-opacity duration-150 group-hover/rail:opacity-0"
+            />
+            <SidebarTrigger
+              className="absolute inset-0 size-8 text-dim opacity-0 transition-opacity duration-150 hover:text-ink group-hover/rail:opacity-100 focus-visible:opacity-100 [&_svg]:!size-5"
+              aria-label="Expand navigation"
+            />
+          </div>
+        ) : (
+          <>
+            <img src="brand.webp" alt="" width="24" height="24" className="size-6 shrink-0 rounded-[8px]" />
+            <span className={cn("min-w-0 truncate text-sm font-semibold tracking-tight", isMobile && "hidden")}>
+              Tersio <span className="font-normal text-dim">Dashboard</span>
+            </span>
+            <SidebarTrigger className="ml-auto size-8 shrink-0 text-dim hover:text-ink" aria-label="Collapse navigation" />
+          </>
+        )}
       </div>
       {/* The banner names the modes; the rail's nav rows start below this bar. */}
       <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
@@ -449,12 +460,20 @@ export function Shell({
   onShare: () => void;
   children: React.ReactNode;
 }) {
-  // Narrow windows collapse to the icon rail on their own; crossing the breakpoint resets the choice.
-  const [open, setOpen] = useState<boolean>(() => (typeof window === "undefined" ? true : !window.matchMedia("(max-width: 1023px)").matches));
+  // The rail keeps its last choice; a narrow window collapses on its own, and crossing the breakpoint reapplies it.
+  const [open, setOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem(SIDEBAR_OPEN_KEY);
+    if (stored === "0" || stored === "1") return stored === "1";
+    return !window.matchMedia("(max-width: 1023px)").matches;
+  });
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 1023px)");
-    const apply = (): void => setOpen(!mq.matches);
-    apply();
+    let first = true;
+    const apply = (): void => {
+      if (first) { first = false; return; }
+      setOpen(!mq.matches);
+    };
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
@@ -463,17 +482,32 @@ export function Shell({
     return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : 216;
   });
 
-  // The width lives in tersio settings, because the dashboard binds a new origin each run.
+  // The width and the open state live in tersio settings, because the dashboard binds a new origin each run.
   useEffect(() => {
     void fetch("/settings")
       .then((response) => (response.ok ? response.json() : null))
-      .then((saved: { sidebarWidth?: unknown } | null) => {
-        if (typeof saved?.sidebarWidth !== "number") return;
-        const next = clampSidebarWidth(saved.sidebarWidth);
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
-        setSidebarWidth(next);
+      .then((saved: { sidebarWidth?: unknown; sidebarOpen?: unknown } | null) => {
+        if (typeof saved?.sidebarWidth === "number") {
+          const next = clampSidebarWidth(saved.sidebarWidth);
+          localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+          setSidebarWidth(next);
+        }
+        if (typeof saved?.sidebarOpen === "boolean") {
+          localStorage.setItem(SIDEBAR_OPEN_KEY, saved.sidebarOpen ? "1" : "0");
+          setOpen(saved.sidebarOpen);
+        }
       })
-      .catch(() => { /* an exported file keeps the stored width */ });
+      .catch(() => { /* an exported file keeps the stored layout */ });
+  }, []);
+
+  const persistOpen = useCallback((next: boolean): void => {
+    setOpen(next);
+    localStorage.setItem(SIDEBAR_OPEN_KEY, next ? "1" : "0");
+    void fetch("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sidebarOpen: next }),
+    }).catch(() => { /* the page keeps the choice for this run */ });
   }, []);
 
   const resizeSidebar = useCallback((next: number, final: boolean): void => {
@@ -489,7 +523,7 @@ export function Shell({
   }, []);
 
   return (
-    <SidebarProvider open={open} onOpenChange={setOpen} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+    <SidebarProvider open={open} onOpenChange={persistOpen} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       <AppSidebar
         section={section}
         onSection={onSection}

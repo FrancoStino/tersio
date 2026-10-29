@@ -37,6 +37,7 @@ interface Profile {
   accent: string;
   /** The rail's expanded width in px, from the dashboard's drag handle. */
   sidebarWidth: number;
+  sidebarOpen: boolean;
   // Empty means the built-in default.
   subagentMarkers: string[];
 }
@@ -57,6 +58,7 @@ function defaultProfile(): Profile {
     devTools: false,
     accent: 'emerald',
     sidebarWidth: 216,
+    sidebarOpen: true,
     subagentMarkers: [],
   };
 }
@@ -79,6 +81,7 @@ interface StoredSettings {
   devTools?: unknown;
   accent?: unknown;
   sidebarWidth?: unknown;
+  sidebarOpen?: unknown;
   subagentMarkers?: unknown;
 }
 
@@ -111,6 +114,7 @@ function applyStored(base: Profile, stored: StoredSettings): void {
   if (typeof stored.devTools === 'boolean') base.devTools = stored.devTools;
   if (typeof stored.accent === 'string' && ACCENT_DEFAULTS.has(stored.accent)) base.accent = stored.accent;
   if (typeof stored.sidebarWidth === 'number') base.sidebarWidth = clampSidebarWidth(stored.sidebarWidth);
+  if (typeof stored.sidebarOpen === 'boolean') base.sidebarOpen = stored.sidebarOpen;
   if (Array.isArray(stored.subagentMarkers)) {
     // An empty marker would match every turn.
     base.subagentMarkers = stored.subagentMarkers.filter((m): m is string => typeof m === 'string' && m.trim() !== '');
@@ -187,6 +191,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
     devTools: profile.devTools,
     accent: profile.accent,
     sidebarWidth: profile.sidebarWidth,
+    sidebarOpen: profile.sidebarOpen,
     ...(profile.subagentMarkers.length > 0 ? { subagentMarkers: profile.subagentMarkers } : {}),
   };
   if (options.dryRun) {
