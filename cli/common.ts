@@ -125,13 +125,17 @@ if (legacyScope !== null && legacyScope !== 'user') {
 
 // `medium` is the retired name for `lite`, so a scripted flag written before the rename still lands.
 // It is accepted by the parser and mapped after, because parseEnum exits on an unknown value.
-const rawComboFlag = parseEnum(flagValue('--combo-default'), new Set([...COMBO_DEFAULTS, ...COMBO_RETIRED]), '--combo-default');
+/** `inherit` clears this agent's override, so it parses before the value sets do. */
+function parseModeFlag(flag: string, valid: Set<string>): string | undefined {
+  return flagValue(flag)?.trim().toLowerCase() === 'inherit' ? 'inherit' : parseEnum(flagValue(flag), valid, flag);
+}
+const rawComboFlag = parseModeFlag('--combo-default', new Set([...COMBO_DEFAULTS, ...COMBO_RETIRED]));
 const comboDefaultFlag = rawComboFlag && COMBO_RETIRED.has(rawComboFlag) ? 'lite' : rawComboFlag;
-const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEFAULTS, '--caveman-default');
-const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
-const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');
-const headroomDefaultFlag = parseEnum(flagValue('--headroom-default'), HEADROOM_DEFAULTS, '--headroom-default');
-const rtkDefaultFlag = parseEnum(flagValue('--rtk-default'), RTK_DEFAULTS, '--rtk-default');
+const cavemanDefaultFlag = parseModeFlag('--caveman-default', CAVEMAN_DEFAULTS);
+const ponytailDefaultFlag = parseModeFlag('--ponytail-default', PONYTAIL_DEFAULTS);
+const pstackDefaultFlag = parseModeFlag('--pstack-default', PSTACK_DEFAULTS);
+const headroomDefaultFlag = parseModeFlag('--headroom-default', HEADROOM_DEFAULTS);
+const rtkDefaultFlag = parseModeFlag('--rtk-default', RTK_DEFAULTS);
 
 const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag]
   .some((flag) => flag !== undefined);

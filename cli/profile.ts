@@ -170,15 +170,18 @@ async function mirrorPonytailDefault(mode: string, options: WriteOptions): Promi
 async function writePluginSettings(profile: Profile, options: WriteOptions): Promise<void> {
   const file = tersioSettingsFile();
   const before = parseStored(await readTextIfExists(file));
+  const stored = before ?? {};
+  // A host section may hold `inherit`; the shared store never does, so its stored value stands.
+  const mode = (key: HostDefaultField, value: unknown): Record<string, unknown> => (String(value) === 'inherit' ? {} : { [key]: value });
   const values = {
-    ...(parseStored(await readTextIfExists(file)) ?? {}),
-    comboDefault: profile.comboDefault,
+    ...stored,
+    ...mode('comboDefault', profile.comboDefault),
     comboSetupComplete: true,
-    cavemanDefault: profile.cavemanDefault,
-    rtkDefault: profile.rtkDefault,
-    ponytailDefault: profile.ponytailDefault,
-    pstackDefault: profile.pstackDefault,
-    headroomDefault: profile.headroomDefault,
+    ...mode('cavemanDefault', profile.cavemanDefault),
+    ...mode('rtkDefault', profile.rtkDefault),
+    ...mode('ponytailDefault', profile.ponytailDefault),
+    ...mode('pstackDefault', profile.pstackDefault),
+    ...mode('headroomDefault', profile.headroomDefault),
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     devTools: profile.devTools,
@@ -216,6 +219,10 @@ export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostD
   }
   const hosts = { ...((before.hosts as Record<string, Record<string, unknown>> | undefined) ?? {}) };
   const merged: Record<string, string | boolean> = { ...((hosts[host] as Record<string, string | boolean> | undefined) ?? {}), ...section };
+  for (const field of [...new Set(fields)]) {
+    // `inherit` is a removal, not a value this section stores.
+    if (profile[field] === 'inherit') delete merged[field];
+  }
   for (const key of Object.keys(merged)) {
     if (merged[key] === flat[key]) delete merged[key];
   }
@@ -234,6 +241,32 @@ export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostD
 
 function formatProfile(profile: Profile): string {
   return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault}) · currency=${profile.currency}`;
+}
+
+/** The mode keys a harness exposes, in the order the status line prints them. */
+export const CONFIG_KEYS = ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'] as const;
+type ConfigKey = (typeof CONFIG_KEYS)[number];
+const CONFIG_SETS: Partial<Record<ConfigKey, Set<string>>> = {
+  comboDefault: new Set(Object.keys(COMBO_PRESET_MODES)),
+  cavemanDefault: CAVEMAN_DEFAULTS,
+  ponytailDefault: PONYTAIL_DEFAULTS,
+  pstackDefault: PSTACK_DEFAULTS,
+  headroomDefault: HEADROOM_DEFAULTS,
+};
+
+/** Each mode's effective value and its source: this agent's section, the shared store, the default, or an invalid raw value. */
+export function configEntries(host: HostId | null): Array<{ key: ConfigKey; value: string | boolean; source: 'override' | 'inherited' | 'default' | 'invalid' }> {
+  const stored = parseStored(readTextIfExistsSync(tersioSettingsFile())) ?? {};
+  const flat = stored as Record<string, unknown>;
+  const own = (host ? (stored.hosts as Record<string, Record<string, unknown>> | undefined)?.[host] : undefined) ?? {};
+  const effective = storedProfileSync(host) as unknown as Record<string, string | boolean>;
+  return CONFIG_KEYS.map((key) => {
+    const overridden = own[key] !== undefined && own[key] !== 'inherit';
+    const inherited = flat[key] !== undefined && flat[key] !== 'inherit';
+    const raw = overridden ? own[key] : inherited ? flat[key] : undefined;
+    const valid = raw === undefined || (CONFIG_SETS[key] ? CONFIG_SETS[key]!.has(String(raw)) : typeof raw === 'boolean');
+    return { key, value: effective[key], source: raw === undefined ? 'default' : !valid ? 'invalid' : overridden ? 'override' : 'inherited' };
+  });
 }
 
 export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };

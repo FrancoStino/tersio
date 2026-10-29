@@ -117,7 +117,8 @@ Three tools become available: `tersio_stats` (requests, errors, tokens, cache ra
 | Command | Purpose |
 |---|---|
 | `tersio install` | Install (user scope: all OMP sessions) |
-| `tersio update` | Refresh the CLI, extensions, and add-ons (RTK binary, Caveman rule, Ponytail). A terminal asks which agent; `--host` pins it and `--yes` keeps Oh My Pi |
+| `tersio update` | Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail); `--host` limits it to one agent |
+| `tersio doctor` (Defaults row) | `tersio doctor` prints the shared defaults and each agent's overrides, so a value's source is visible without reading the store |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
 | `tersio mcp` | Start the Tersio MCP server on stdio (see [MCP](#-mcp)) |
@@ -155,7 +156,7 @@ Shared, and identical for every host:
 
 | What | Path |
 |---|---|
-| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, headroom, and the display currency |
+| Session-start defaults | `~/.tersio/settings.json` — combo, caveman, rtk, ponytail, pstack, headroom, and the display currency. A `hosts.<agent>` section holds only overrides; `inherit` returns a field to the shared value |
 | RTK binary | `~/.bun/bin/rtk` (`rtk.exe` on Windows). The runtime resolves `PATH` first, then this managed path. |
 | Usage ledger and price cache | `~/.tersio/` — local only, nothing leaves the machine |
 | Session state | `~/.tersio/state.json` — reset watermark, update check and cadence, rtk heads, and the doctor report |

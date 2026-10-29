@@ -8,6 +8,7 @@ import {
   BUN_BIN_DIR, OMP_BIN,
   execP, parseJsonObject, relTime, shimCommand,
 } from './common.ts';
+import { configEntries } from './profile.ts';
 import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, pigPonytailPackageDir, piTersioSource, pigTersioSource } from './hosts.ts';
 import type { DetectedHost } from './hosts.ts';
 import { GENERATED_TREE_FILES } from './manifest.ts';
@@ -263,6 +264,14 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     // One line per host, omp style: kind and version, no path echo.
     const kind = host.via === 'tree' ? 'extensions' : 'package';
     check(host.label, true, `${kind} ${PACKAGE_NAME}${host.version ? ` ${host.version}` : ''}`);
+  }
+
+  // Session defaults come from tersio's store; naming the source keeps a harness from reading as a second default.
+  const short = (key: string): string => key.replace('Default', '');
+  console.log(`  Defaults: ${configEntries(null).map((row) => `${short(row.key)}=${row.value}`).join(' · ')}`);
+  for (const host of hosts.filter((entry) => entry.installed)) {
+    const overrides = configEntries(host.id).filter((row) => row.source === 'override' || row.source === 'invalid');
+    if (overrides.length > 0) console.log(`  ${host.label} overrides: ${overrides.map((row) => `${short(row.key)}=${row.value}${row.source === 'invalid' ? ' (invalid)' : ''}`).join(' · ')}`);
   }
 
   // A version apart means omp can load a tree of two releases.
