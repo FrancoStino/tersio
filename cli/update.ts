@@ -131,11 +131,7 @@ function realOrResolved(target: string): string {
   try { return realpathSync(resolved); } catch { return resolved; }
 }
 
-/**
- * The package manager that installed the running CLI. `bun install -g` writes to `~/.bun`, npm to its
- * own prefix, and each keeps its own copy, so updating the wrong one leaves the old CLI in place and the
- * update prompt comes back on the next run.
- */
+/** The package manager that installed the running CLI; each keeps its own copy, so updating the wrong one leaves the old CLI in place. */
 export function installerManager(self = process.argv[1] ?? '', home = HOME): { cmd: string; args: (target: string) => string[]; label: string } {
   // `home` is a seam for tests: a runner has no installed copy, so the symlink there must be judged by the same rule.
   const bunRoot = path.join(realOrResolved(home), '.bun', 'install', 'global', 'node_modules', ...PACKAGE_NAME.split('/'));
@@ -251,10 +247,7 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
   return { stale, status };
 }
 
-/**
- * The agent an update refreshes. `null` when no prompt is needed (scripted run or `--host` pinned);
- * a terminal gets the same menu the install flow shows, and cancel exits like it does there.
- */
+/** The agent an update refreshes; `null` when no prompt is needed, else the same menu the install flow shows. */
 export async function askUpdateHost(): Promise<string | null> {
   if (!tty() || assumeYes) return null;
   try {

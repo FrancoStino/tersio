@@ -1,6 +1,4 @@
-// Headroom's durable savings, read through its own CLI so the ledger schema stays upstream's business.
-// Mirrors rtk-gain.ts: measured=false plus a failure string, never a zero that reads as data.
-// Sync by contract: readAgentStats is sync, and the 5s memo keeps a poll from shelling out each render.
+// Headroom's savings read through its own CLI: measured=false plus a failure, never a zero that reads as data, and a memo so a poll does not shell out each render.
 
 import { execFileSync } from 'node:child_process';
 import { resolveHeadroomBinary, shimCommand } from './utils.ts';
@@ -167,10 +165,7 @@ function runProbe<T>(probe: 'savings' | 'doctor', binary: string, budgetMs: numb
   }
 }
 
-/**
- * Headroom's own routing check: proxy reachable, agents routed, wrap marker present. It exits 2 when a
- * check fails and still prints the JSON, so a non-zero exit is a reading, not a failure to read.
- */
+/** Headroom's routing check; it exits 2 on a failing check and still prints JSON, so a non-zero exit is a reading. */
 export function readHeadroomDoctor(options: HeadroomGainOptions = {}): HeadroomDoctor {
   const binary = options.binary !== undefined ? options.binary : resolveHeadroomBinary();
   if (!binary) return { measured: false, failure: 'headroom binary not found in PATH', exitCode: null, version: null, checks: [] };

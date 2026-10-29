@@ -203,11 +203,7 @@ async function writePluginSettings(profile: Profile, options: WriteOptions): Pro
 /** The mode fields a host section can carry. */
 export type HostDefaultField = 'comboDefault' | 'cavemanDefault' | 'rtkDefault' | 'ponytailDefault' | 'pstackDefault' | 'headroomDefault';
 
-/**
- * A per-host layer over the shared defaults: a host's own section wins, the flat keys stay the fallback.
- * Only the fields the request actually chose land in the section, and one equal to the shared fallback is
- * dropped — so a later shared change still reaches the agent, and an emptied section rejoins the shared store.
- */
+/** A host's own section wins over the shared defaults, and only the fields the request chose land in it, so a later shared change still reaches the agent. */
 export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostDefaultField>, profile: Profile, options: WriteOptions): Promise<void> {
   const file = tersioSettingsFile();
   const before = parseStored(await readTextIfExists(file)) ?? {};

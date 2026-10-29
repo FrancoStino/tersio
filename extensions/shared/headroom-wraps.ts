@@ -3,11 +3,7 @@
 /** One check row from `headroom doctor --json`. */
 export type HeadroomDoctorCheck = { name: string; status: string; summary: string };
 
-/**
- * The stored record, corrected by what headroom's own checks report. A pass names the config it
- * routed; a warn or fail means that tool is not routed, so a wrap undone outside Tersio clears.
- * `skip` keeps the stored flag because headroom could not tell.
- */
+/** The stored record corrected by headroom's checks: a pass adds, a warn or fail clears, and a skip keeps the flag. */
 export function mergeHeadroomWraps(
   stored: Record<string, unknown>,
   checks: HeadroomDoctorCheck[],

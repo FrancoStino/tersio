@@ -100,10 +100,7 @@ export interface Alignment {
   horizontal: GuideLine[];
 }
 
-/**
- * Figma-style snapping: the dragged node's edges and center snap to every other node's edges and
- * center within the threshold, winning over the pixel grid, and reports the guide lines to draw.
- */
+/** Figma-style snapping: edges and centers snap to the other nodes within the threshold and return the guide lines. */
 export function alignDrag(id: string, next: Box, boxes: ReadonlyArray<readonly [string, Box]>): Alignment {
   const pick = (axis: "x" | "y"): { delta: number; line: GuideLine } | null => {
     const size = axis === "x" ? next.w : next.h;
@@ -137,11 +134,7 @@ export function alignDrag(id: string, next: Box, boxes: ReadonlyArray<readonly [
   };
 }
 
-/**
- * The connector between two nodes. When a card actually sits between the two ports, the whole curve
- * arcs around it — both control points lift to the clearer side — so long links stay smooth instead
- * of kinking through a card. Boxes off to the side or beyond the endpoints never deflect.
- */
+/** The connector arcs around any card that sits between its ports, so long links stay smooth. */
 export function edgePath(s: Box, t: Box, others: ReadonlyArray<Box>): string {
   const ports = edgePorts(s, t);
   const sp = portPoint(s, ports.from);

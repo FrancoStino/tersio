@@ -23,10 +23,7 @@ interface UninstallOptions {
 
 // The pi tree mirrors the OMP one. Ponytail and rtk stay: a package and a shared binary are not ours to delete.
 
-/**
- * Every extension dir an install writes, shared by both hosts. A removal that misses one leaves an
- * extension importing a shared file the same removal deleted, and the agent refuses to start.
- */
+/** Every extension dir an install writes; a removal that misses one strands an extension on a shared file it deleted. */
 export const SHIPPED_TREE_DIRS = ['caveman', 'combo', 'commands', 'headroom', 'pstack', 'rtk', 'shared', 'timing'] as const;
 
 /** A tree an older build wrote, or a foreign name that was never shipped here. */

@@ -1,6 +1,4 @@
-// The pipeline canvas, laid out the way a workflow tool lays it out: an infinite pan/zoom viewport,
-// free-floating node cards the user drags wherever they want, and bezier connectors that follow.
-// Node positions persist tersio-side (with a localStorage cache), so a restart on a new port keeps the layout.
+// The pipeline canvas: an infinite pan/zoom viewport of draggable node cards with bezier connectors, laid out in positions tersio stores so a restart keeps them.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";

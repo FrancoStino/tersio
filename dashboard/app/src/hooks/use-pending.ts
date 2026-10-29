@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * True once `pending` has lasted past `delay`. A local read usually answers in a few milliseconds,
- * and a skeleton that appears for one frame reads as a flicker, not as progress.
- */
+/** True once `pending` has lasted past `delay`, so a one-frame read never flashes a skeleton. */
 export function usePending(pending: boolean, delay = 150): boolean {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -17,10 +14,7 @@ export function usePending(pending: boolean, delay = 150): boolean {
   return shown;
 }
 
-/**
- * True once `pending` has held past `ms`. A read that hangs (a huge aggregate still crunching on the
- * server) should not hold a skeleton up forever: after the cap the UI degrades to its real controls.
- */
+/** True once `pending` has held past `ms`, so a hung read degrades to the real controls instead of a permanent skeleton. */
 export function useStuckPending(pending: boolean, ms = 6000): boolean {
   const [stuck, setStuck] = useState(false);
   useEffect(() => {

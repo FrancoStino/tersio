@@ -1,10 +1,6 @@
 import { cn } from "cn"
 
-/**
- * A comet ring around a pulsing core: the trail sweeps the circumference while the core breathes,
- * so a wait reads as active work rather than a frozen icon. Color follows `text-*`, size follows
- * `size-*`, same as the icon it replaced.
- */
+/** A comet ring around a pulsing core, so a wait reads as active work; color and size follow `text-*` and `size-*`. */
 function Spinner({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span data-slot="spinner" role="status" aria-label="Loading" className={cn("relative inline-block size-4 shrink-0", className)} {...props}>
