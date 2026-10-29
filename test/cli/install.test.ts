@@ -21,6 +21,7 @@ import {
   removeExtensionFromConfig,
 } from "../../cli/common.ts";
 import { GENERATED_TREE_FILES, TREE_FILES, sourcePath, treeFilesFor } from "../../cli/manifest.ts";
+import { PACKAGE_VERSION } from "../../cli/common.ts";
 import {
   readCavemanDefault,
   readComboDefault,
@@ -1603,9 +1604,13 @@ test.skipIf(process.platform === "win32")("a terminal install asks about Headroo
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-install-headroom-"));
   try {
     // A real (non-dry) install into a temp home: the plugin step is fast, and the prompts run first.
-    // A fake headroom on PATH makes the prompt the enable-only variant, which writes no binary.
+    // A fake headroom on PATH makes the prompt the enable-only variant, which writes no binary, and a
+    // seeded plugin copy keeps the self-register step off the registry.
     const binDir = path.join(home, "bin");
     fakeExecutable(binDir, "headroom", "exit 0", "exit /b 0");
+    const installed = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(path.join(installed, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: PACKAGE_VERSION }), "utf8");
     const result = spawnSync("python3", ["-c", INSTALL_PTY_PY, process.execPath, installer, "install", "--host", "omp"], {
       cwd: root,
       encoding: "utf8",
