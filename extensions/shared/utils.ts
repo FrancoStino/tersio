@@ -214,8 +214,11 @@ export function pigAgentDir(): string {
   if (process.env.PIG_USE_PI_DIRS === '1') return piAgentDir();
   const override = process.env.PIG_CODING_AGENT_DIR;
   if (override) return override;
+  // PiG resolves its root in this order: PIG_HOME, XDG_CONFIG_HOME/pig, then ~/.pig.
   const pigHome = process.env.PIG_HOME;
   if (pigHome) return path.join(pigHome, 'agent');
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg) return path.join(xdg, 'pig', 'agent');
   return path.join(homeDir(), '.pig', 'agent');
 }
 
