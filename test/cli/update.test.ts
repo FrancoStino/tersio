@@ -251,7 +251,7 @@ test("update refreshes the globally installed CLI before delegating", () => {
 
     const result = spawnSync(
       process.execPath,
-      [installer, "update"],
+      [installer, "update", "--host", "pi"],
       {
         cwd: root,
         encoding: "utf8",
@@ -291,7 +291,7 @@ test("update dry-run previews the global CLI refresh without running npm -g", ()
 
     const result = spawnSync(
       process.execPath,
-      [installer, "update", "--dry-run"],
+      [installer, "update", "--dry-run", "--host", "pi"],
       {
         cwd: root,
         encoding: "utf8",
@@ -350,7 +350,7 @@ test("update refreshes the manager that installed this copy", () => {
   }
 });
 
-test("update delegates to the latest package non-interactively", () => {
+test("update installs the CLI and leaves the agents alone", () => {
   const fakeBin = mkdtempSync(path.join(os.tmpdir(), "omp-update-test-"));
   const npm = path.join(fakeBin, process.platform === "win32" ? "npm.cmd" : "npm");
 
@@ -379,7 +379,9 @@ test("update delegates to the latest package non-interactively", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/\[dry-run\] would delegate: npm exec --yes --prefer-online --package=@krtclcdy\/tersio@latest -- tersio --apply-update --yes --dry-run/);
+    expect(result.stdout).toMatch(/\[dry-run\] would run: npm install -g @krtclcdy\/tersio/);
+    expect(result.stdout).not.toMatch(/--apply-update/);
+    expect(result.stdout, "the hint names the opt-in").toMatch(/tersio update --host <agent>/);
     expect(result.stdout).not.toMatch(/fake-npm exec/);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
@@ -405,14 +407,14 @@ test("update aborts before the global install when the payload fails its smoke c
 
     const result = spawnSync(
       process.execPath,
-      [installer, "update"],
+      [installer, "update", "--host", "omp"],
       {
         cwd: root,
         encoding: "utf8",
         env: {
           ...process.env,
           ...deadPricesEnv(),
-          ...deadRegistry,
+          TERSIO_UPDATE_URL: registryUrl("9.9.9"),
           ...deadReleases,
           PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
           HOME: home,
@@ -464,7 +466,7 @@ test("update pins the resolved version instead of trusting @latest", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Tersio: .* → 9\.9\.9/);
     expect(result.stdout).toMatch(/\[dry-run\] would run: npm install -g @krtclcdy\/tersio@9\.9\.9/);
-    expect(result.stdout).toMatch(/--package=@krtclcdy\/tersio@9\.9\.9/);
+    expect(result.stdout).toMatch(/would run: npm install -g @krtclcdy\/tersio@9\.9\.9/);
     expect(result.stdout).not.toMatch(/@latest/);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
@@ -492,7 +494,7 @@ test("a piped update asks nothing and forwards no host", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).not.toMatch(/Update which agent\?/);
-    expect(result.stdout).not.toMatch(/--host/);
+    expect(result.stdout).not.toMatch(/--apply-update/);
   } finally {
     rmSync(fakeBin, { recursive: true, force: true });
   }
@@ -527,60 +529,4 @@ test("the delegated form parses --host instead of taking it for a command", () =
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-});
-
-// The prompt is Clack's, so only a real terminal proves it appears. Select the second row (pi) with
-// an arrow key and Enter, then read what the delegated command was told.
-const PROMPT_PY = [
-  "import os, pty, select, fcntl, termios, struct, time, sys",
-  "argv = sys.argv[1:]",
-  "pid, fd = pty.fork()",
-  "if pid == 0:",
-  '    os.environ["TERM"] = "xterm-256color"',
-  "    os.execvp(argv[0], argv)",
-  "fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 140, 0, 0))",
-  "buf = b''",
-  "def pump(seconds):",
-  "    global buf",
-  "    end = time.time() + seconds",
-  "    while time.time() < end:",
-  "        r, _, _ = select.select([fd], [], [], 0.1)",
-  "        if not r: continue",
-  "        try: d = os.read(fd, 65536)",
-  "        except OSError: return False",
-  "        if not d: return False",
-  "        buf += d",
-  "    return True",
-  "pump(4)",
-  "os.write(fd, b'\\x1b[B')",
-  "time.sleep(0.4)",
-  "os.write(fd, b'\\r')",
-  "pump(6)",
-  "try: os.write(fd, b'\\x03')",
-  "except OSError: pass",
-  "sys.stdout.write(buf.decode('utf8', 'replace'))",
-].join("\n");
-
-describe.skipIf(process.platform === "win32")("the update host prompt", () => {
-  test("a terminal asks which agent, and the choice is forwarded", () => {
-    // An empty HOME: no agent has Tersio, so the menu opens on OMP and one Down lands on pi.
-    const home = mkdtempSync(path.join(os.tmpdir(), "tersio-update-prompt-"));
-    try {
-      const result = spawnSync("python3", ["-c", PROMPT_PY, process.execPath, installer, "update", "--dry-run"], {
-        cwd: root,
-        encoding: "utf8",
-        timeout: 30000,
-        env: { ...cliEnv(home), ...deadRegistry, ...deadReleases, TERM: "xterm-256color" },
-      });
-
-      expect(result.error, "python3 with pty is available").toBeUndefined();
-      const screen = result.stdout;
-      expect(screen, `prompt shown; screen:\n${screen}`).toMatch(/Update which agent\?/);
-      // The menu names the agents and their state, not just the ids.
-      expect(screen).toMatch(/Oh My Pi/);
-      expect(screen).toMatch(/--host pi/);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  }, 40000);
 });

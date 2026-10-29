@@ -79,7 +79,7 @@ function printWelcome(): void {
   clackIntro(`✂ tersio v${PACKAGE_VERSION}`);
   const tips = [
     'tersio install   set up add-ons',
-    'tersio update    refresh CLI + add-ons',
+    'tersio update    update the CLI',
     'tersio doctor    verify the install',
   ];
   // Below 26 rows the tips scroll off the top and slice the art, so they take one line there.

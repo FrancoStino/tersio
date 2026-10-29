@@ -247,26 +247,6 @@ function planLines(plan: UpdatePlan): { stale: string[]; status: string[] } {
   return { stale, status };
 }
 
-/** The agent an update refreshes; `null` when no prompt is needed, else the same menu the install flow shows. */
-export async function askUpdateHost(): Promise<string | null> {
-  if (!tty() || assumeYes) return null;
-  try {
-    if (parseHostArg(args)) return null;
-  } catch {
-    // The caller's parse reports the bad flag; the menu never invents a host over it.
-    return null;
-  }
-  const installed = detectHosts();
-  // Open on an agent that has Tersio on it, so Enter keeps a real install instead of adding another.
-  const initial = installed.find((host) => host.installed)?.id ?? 'omp';
-  const choice = await askInteractiveChoice('Update which agent?', hostOptions(installed), initial);
-  if (choice.status !== 'selected') {
-    closeRL();
-    process.exit(130);
-  }
-  return choice.value;
-}
-
 async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
   const forwardedArgs = ['--yes'];
   if (dryRun) forwardedArgs.push('--dry-run');
@@ -279,11 +259,7 @@ async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  // A bare `tersio update` asks which agent to refresh: `--host` pins it, and --yes keeps the default for scripts.
-  if (!pinned) {
-    const chosen = await askUpdateHost();
-    if (chosen !== null) pinned = chosen;
-  }
+  // `--host` is the only way an update touches an agent; a bare run stops at the CLI.
   if (pinned) forwardedArgs.push('--host', pinned);
 
   const npmCommand = IS_WINDOWS ? process.env.ComSpec || 'cmd.exe' : 'npm';
@@ -297,18 +273,24 @@ async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
 
   const plan = await probeUpdatePlan(release);
   const { stale, status } = planLines(plan);
+  const newerTarget = plan.cli ?? plan.npm;
+  const cliStale = newerTarget !== null && newerThan(newerTarget, PACKAGE_VERSION);
+  const addonStale = stale.filter((line) => !line.startsWith('Tersio'));
   if (dryRun) {
     console.log(`tersio update (dry-run):\n  ${status.join('\n  ')}`);
     sayTagged(`  [dry-run] would run: ${manager.label} install -g ${PACKAGE_NAME}${target}`);
-    sayTagged(`  [dry-run] would delegate: npm exec --yes --prefer-online --package=${PACKAGE_NAME}${target} -- tersio --apply-update ${forwardedArgs.join(' ')}`);
+    if (pinned) sayTagged(`  [dry-run] would delegate: npm exec --yes --prefer-online --package=${PACKAGE_NAME}${target} -- tersio --apply-update ${forwardedArgs.join(' ')}`);
+    else sayTagged('  [dry-run] the CLI is the target; extensions and add-ons refresh per agent: tersio update --host <agent>');
     return;
   }
   console.log(`Checking for updates:\n  ${status.join('\n  ')}`);
-  if (stale.length === 0) {
-    console.log(`tersio ${PACKAGE_VERSION} — up to date`);
+  if (!pinned && !cliStale) {
+    console.log(addonStale.length > 0
+      ? `tersio ${PACKAGE_VERSION} — the CLI is up to date; extensions and add-ons refresh per agent: tersio update --host <agent>`
+      : `tersio ${PACKAGE_VERSION} — up to date`);
     return;
   }
-  console.log(`Updating ${stale.join(', ')}`);
+  if (!pinned) console.log(`Updating Tersio`);
 
   // A checkout runs its own entry: the published CLI cannot carry unshipped changes, and the global
   // install would replace the tree this copy lives in.
@@ -358,6 +340,15 @@ async function runLatestUpdate(hostOverride?: string | null): Promise<void> {
   } catch (e) {
     sayTagged(`  [warn] Global CLI update skipped: ${(e as Error).message}`);
     sayTagged(`  [hint] Manual: ${manager.label} install -g ${PACKAGE_NAME}${target}`);
+  }
+
+  // No host: the global install above is the whole run, and the add-ons stay as they are.
+  if (!pinned) {
+    console.log(`Done — tersio ${plan.cli ?? PACKAGE_VERSION} updated. Extensions and add-ons refresh per agent: tersio update --host <agent>.`);
+    try {
+      await refreshPrices();
+    } catch { /* pricing is best-effort; update already succeeded */ }
+    return;
   }
 
   const npmArgs = [
