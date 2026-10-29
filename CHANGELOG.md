@@ -1,4 +1,4 @@
-## Unreleased
+## v2.25.16
 
 ### Added
  - **`inherit` is a first-class value.** A `hosts.<agent>` section stores only real overrides, `inherit` returns a field to the shared store, and `tersio doctor` prints the shared defaults plus each agent's overrides.
