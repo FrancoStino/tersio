@@ -159,12 +159,12 @@ function offsetFrom(url: string): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-function agentJson(range: RangeKey, view: AgentView, offset: number): string {
+export function agentJson(range: RangeKey, view: AgentView, offset: number): string {
   return JSON.stringify({ range, view, offset, agent: agentStats(range, view, offset) });
 }
 
 // Runs outside any agent session, so it reports the persisted defaults.
-async function statusJson(): Promise<string> {
+export async function statusJson(): Promise<string> {
   const profile = await storedProfile();
   return JSON.stringify({
     status: formatCliStatus(profile),
@@ -371,7 +371,7 @@ const agentDir = (id: 'omp' | 'pi' | 'pig' | 'opencode'): string | null => {
   return path.join(homeDir(), '.config', 'opencode');
 };
 
-function healthJson(): string {
+export function healthJson(): string {
   const rtkBin = resolveRtkBinary();
   const rtkPresent = rtkBin !== null;
   const headroomBin = resolveHeadroomBinary();
