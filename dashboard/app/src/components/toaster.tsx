@@ -1,6 +1,6 @@
-// Toast notifications: bottom-left stack (clear of a right-side drawer), accent icon, title + description. A plain toast
+// Toast notifications: bottom-right stack, moving bottom-left only while a right-side drawer is open. Accent icon, title + description. A plain toast
 // dismisses itself; one carrying actions stays until the operator picks or closes it.
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "./icon";
 
@@ -41,6 +41,15 @@ let nextId = 1;
 
 export function ToasterProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<Item[]>([]);
+  // A right-side drawer would cover the default corner, so the stack moves left while one is mounted.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => {
+    const sync = (): void => setDrawerOpen(document.querySelector("[data-slot=drawer-popup]") !== null);
+    const observer = new MutationObserver(sync);
+    observer.observe(document.body, { childList: true, subtree: true });
+    sync();
+    return () => observer.disconnect();
+  }, []);
 
   const push = useCallback<PushToast>((title, desc, icon = "check") => {
     const key = `simple-${nextId++}`;
@@ -66,7 +75,7 @@ export function ToasterProvider({ children }: { children: React.ReactNode }) {
           {children}
           {items.length > 0 && (
             <div
-              className="fixed bottom-4 left-4 z-100 flex w-[min(452px,calc(100vw-32px))] flex-col gap-2 overflow-visible border-0 bg-transparent p-0"
+              className={`fixed bottom-4 ${drawerOpen ? "left-4" : "right-4"} z-100 w-[min(452px,calc(100vw-32px))] flex-col gap-2 overflow-visible border-0 bg-transparent p-0`}
               role="status"
               aria-live="polite"
             >

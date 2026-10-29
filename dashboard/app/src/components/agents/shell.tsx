@@ -371,7 +371,7 @@ export function Topbar({
       <div
         className={cn(
           "flex h-full shrink-0 items-center gap-2.5",
-          isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-0 px-0" : "w-(--sidebar-width) min-w-0",
+          isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-0 px-0" : "-ml-3 w-(--sidebar-width) pr-3",
         )}
       >
         <img src="brand.webp" alt="" width="24" height="24" className={cn("size-6 shrink-0 rounded-[8px]", state === "collapsed" && !isMobile && "hidden")} />

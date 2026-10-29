@@ -402,9 +402,9 @@ export function PipelineCanvas({
         onPointerUp={() => { panDrag.current = null; setPanning(false); }}
         onPointerCancel={() => { panDrag.current = null; setPanning(false); }}
         onWheel={(event) => {
-          // A bare wheel belongs to the page; the canvas only takes it with the zoom modifier.
-          if (!event.ctrlKey && !event.metaKey) return;
+          // The canvas owns the wheel: a bare wheel does nothing, and the page behind it never scrolls.
           event.preventDefault();
+          if (!event.ctrlKey && !event.metaKey) return;
           const rect = event.currentTarget.getBoundingClientRect();
           const px = event.clientX - rect.left;
           const py = event.clientY - rect.top;
