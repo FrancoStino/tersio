@@ -1,3 +1,14 @@
+## Unreleased
+
+### Fixed
+ - The drawer's **Headroom dashboard** button opens Headroom's own savings view in a new tab. The link is a plain navigation to a Tersio route that probes the proxy and redirects, so a popup blocker cannot swallow it; when nothing answers it starts a proxy Tersio owns, and closing that tab stops that proxy only while it has served no traffic. A proxy you started yourself, one that has served requests, or one that cannot report is never touched.
+ - The install flow offers Headroom only for the agents it can route (OMP and OpenCode). pi and PiG get a note instead of a prompt, and their own section starts with the mode off.
+
+### Changed
+ - `tersio update` updates the Tersio CLI and stops there. Extensions and add-ons refresh per agent with `tersio update --host <agent>`, and the closing line says so.
+ - The install confirmation reads "Are you sure you want to install Tersio into <agent>?" for every host.
+ - A scripted install prints one line about the optional Headroom mode, because it cannot prompt.
+
 ## v2.25.16
 
 ### Added
