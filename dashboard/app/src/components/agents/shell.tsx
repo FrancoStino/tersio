@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { cn } from "cn";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarTrigger, SidebarRail,
+  SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarTrigger, SidebarRail, useSidebar,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Segmented } from "@/components/charts";
@@ -225,7 +225,7 @@ function SidebarAction({ icon, label, onClick }: { icon: string; label: string; 
       type="button"
       onClick={onClick}
       title={label}
-      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-dim transition-[background,color] duration-200 hover:bg-track hover:text-ink group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+      className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] text-dim transition-[background,color] duration-200 hover:bg-track hover:text-ink group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0"
     >
       <Icon name={icon} className="size-4 shrink-0" />
       <span className="group-data-[collapsible=icon]:hidden">{label}</span>
@@ -250,26 +250,12 @@ export function AppSidebar({
 }) {
   // A hidden developer page must not keep its slot in the rail, and the hotkey map follows it.
   const dev = useDevMode();
-  // z-50 keeps the rail header above the inset's sticky one, so the trigger stays clickable where the two overlap.
+  // z-30 keeps the rail under the fixed topbar, which paints the brand over the rail's top strip.
   return (
-    <Sidebar collapsible="icon" className="z-50 border-r border-line bg-panel text-ink">
-      <SidebarHeader className="h-12 shrink-0 justify-center border-b border-line p-0 px-2 group-data-[collapsible=icon]:px-0">
-        <div className="flex h-8 w-full items-center gap-2.5 px-1.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          {/* The mark hides with the rail: a 24 pixel mark beside the trigger overflows the 48
-              pixel strip and leaves the trigger hanging outside the rail. */}
-          <img
-            src="brand.webp"
-            alt=""
-            width="24"
-            height="24"
-            className="size-6 shrink-0 rounded-[8px] group-data-[collapsible=icon]:hidden"
-          />
-          <span className="min-w-0 truncate text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Tersio <span className="font-normal text-dim">Dashboard</span>
-          </span>
-          <SidebarTrigger className="ml-auto shrink-0 text-dim hover:text-ink group-data-[collapsible=icon]:ml-0" aria-label="Toggle navigation" />
-        </div>
-      </SidebarHeader>
+    // The rail merges with the page bg and starts below the fixed topbar, like the OMP stats reference.
+    <Sidebar collapsible="icon" className="z-30 bg-transparent text-ink">
+      {/* The brand lives in the topbar, which spans the rail; this spacer keeps nav rows below that bar. */}
+      <SidebarHeader className="h-12 shrink-0" />
       <SidebarContent>
         {NAV.map((group) => {
           // Every item stays visible: an item whose agent data is still missing renders dimmed and
@@ -309,6 +295,8 @@ export function AppSidebar({
                             onClick={() => { if (!dimmed) onSection(item.id); }}
                             className={cn(
                               "mono text-[13px] text-dim hover:bg-track hover:text-ink data-[active]:bg-track data-[active]:font-bold data-[active]:text-ink",
+                              // The collapsed rail is 64px while the button is 32px, so it centers instead of hugging the left.
+                              "group-data-[collapsible=icon]:mx-auto",
                               dimmed && "cursor-default opacity-40 hover:bg-transparent",
                             )}
                           >
@@ -368,21 +356,39 @@ export function Topbar({
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  const { state, isMobile } = useSidebar();
   return (
     <header
       className={cn(
-        // The rule always shows, lining up with the rail header's; below `sm` the row wraps rather than clipping the modes.
-        "sticky top-0 z-40 flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line px-3 py-1.5 backdrop-blur-md transition-[background] duration-200 sm:h-12 sm:flex-nowrap sm:gap-2 sm:py-0",
-        scrolled ? "bg-panel/85" : "bg-transparent",
+        // Fixed across the whole window like the OMP stats reference: the brand section sits over the
+        // rail, so bar and sidebar share one surface and one color.
+        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 border-b px-3 transition-[border-color] duration-200",
+        "bar-veil",
+        scrolled ? "border-line" : "border-transparent",
       )}
     >
-      {/* On a phone the rail is a sheet, and its own header lives inside the sheet, so the topbar
-          carries the trigger that opens it. From `sm` up the rail header keeps its own. */}
-      <SidebarTrigger
-        aria-label="Toggle navigation"
-        className="grid size-8 shrink-0 place-items-center rounded-lg border border-line text-ink transition-[background] duration-200 hover:bg-accent-soft sm:hidden"
-      />
-      {/* The rail's own header carries the expand/collapse control; the banner names the modes. */}
+      {/* The brand section spans the rail's width, so the nav rows below it line up under the wordmark. */}
+      <div
+        className={cn(
+          "flex h-full shrink-0 items-center gap-2.5",
+          isMobile ? "w-auto" : state === "collapsed" ? "-ml-3 w-16 justify-center gap-0 px-0" : "w-(--sidebar-width) min-w-0",
+        )}
+      >
+        <img src="brand.webp" alt="" width="24" height="24" className={cn("size-6 shrink-0 rounded-[8px]", state === "collapsed" && !isMobile && "hidden")} />
+        <span
+          className={cn(
+            "min-w-0 truncate text-sm font-semibold tracking-tight",
+            (state === "collapsed" || isMobile) && "hidden",
+          )}
+        >
+          Tersio <span className="font-normal text-dim">Dashboard</span>
+        </span>
+        <SidebarTrigger
+          className={cn("size-8 shrink-0 text-dim hover:text-ink", state !== "collapsed" && "ml-auto")}
+          aria-label="Toggle navigation"
+        />
+      </div>
+      {/* The banner names the modes; the rail's nav rows start below this bar. */}
       <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
       {/* The right group never shrinks: it holds the three buttons a narrow viewport still needs,
           and the banner truncates instead. */}
@@ -437,6 +443,15 @@ export function Shell({
   onShare: () => void;
   children: React.ReactNode;
 }) {
+  // Narrow windows collapse to the icon rail on their own; crossing the breakpoint resets the choice.
+  const [open, setOpen] = useState<boolean>(() => (typeof window === "undefined" ? true : !window.matchMedia("(max-width: 1023px)").matches));
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const apply = (): void => setOpen(!mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : 216;
@@ -468,7 +483,7 @@ export function Shell({
   }, []);
 
   return (
-    <SidebarProvider defaultOpen style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+    <SidebarProvider open={open} onOpenChange={setOpen} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
       <AppSidebar
         section={section}
         onSection={onSection}
@@ -477,21 +492,24 @@ export function Shell({
         onSettings={onSettings}
         onResize={resizeSidebar}
       />
-      <SidebarInset className="min-w-0 bg-transparent">
-        <div
-          className="pointer-events-none fixed inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_70%_at_50%_0%,black_30%,transparent_75%)]"
-          aria-hidden="true"
-        />
-        <Topbar
-          range={range}
-          onRange={onRange}
-          modes={modes}
-          modesLoaded={modesLoaded}
-          onShare={onShare}
-          onQuickStart={() => onSection("how-to")}
-        />
-        <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
+      <SidebarInset className="min-w-0 bg-transparent px-2 pb-2 pt-14">
+        {/* The whole content side sits in one huge card below the fixed topbar; the rail merges with that bg. */}
+        <div className="shine relative min-h-[calc(100dvh-4rem)] overflow-clip rounded-xl border border-line bg-panel">
+          <div
+            className="pointer-events-none absolute inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_70%_at_50%_0%,black_30%,transparent_75%)]"
+            aria-hidden="true"
+          />
+          <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
+        </div>
       </SidebarInset>
+      <Topbar
+        range={range}
+        onRange={onRange}
+        modes={modes}
+        modesLoaded={modesLoaded}
+        onShare={onShare}
+        onQuickStart={() => onSection("how-to")}
+      />
     </SidebarProvider>
   );
 }

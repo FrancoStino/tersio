@@ -115,7 +115,7 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
 
   return (
     // Fullscreen like a workflow tool: the canvas is the page, the chrome floats on top of it.
-    <div className="relative h-[calc(100dvh-3rem)] w-full">
+    <div className="relative h-[calc(100dvh-4.25rem)] w-full overflow-hidden">
       {pipelinePending ? null : (
         <div className="pointer-events-none absolute left-4 top-3 z-10 max-w-xl">
           <h1 className="font-display text-lg leading-tight font-bold tracking-tight">Quick start</h1>
