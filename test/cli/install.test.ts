@@ -276,6 +276,12 @@ test("package manifest declares always-on extensions plus updater feature and se
   expect(currency.default).toBe("USD");
 });
 
+test("--combo-default inherit clears an agent's mode overrides", () => {
+  const result = run("install", "--host", "pi", "--combo-default", "inherit", "--dry-run", "--verbose");
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/Defaults for pi: combo=inherit \(caveman=inherit · rtk=inherit · ponytail=inherit/);
+});
+
 test("installer accepts --ponytail-default override and reports it", () => {
   const result = run("install", "--dry-run", "--yes", "--ponytail-default", "full");
   expect(result.status, result.stderr).toBe(0);

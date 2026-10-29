@@ -615,7 +615,11 @@ function saveDefaults(body: Record<string, unknown>): Promise<
   const events: string[] = [];
   // A host scope carries only the mode fields the request changed; non-mode fields stay global-only.
   const changedFields: HostDefaultField[] = [];
-  if (body.comboDefault !== undefined) {
+  if (String(body.comboDefault) === 'inherit') {
+    Object.assign(profile as unknown as Record<string, unknown>, { comboDefault: 'inherit', cavemanDefault: 'inherit', rtkDefault: 'inherit', ponytailDefault: 'inherit' });
+    events.push('Combo back to the shared defaults');
+    changedFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
+  } else if (body.comboDefault !== undefined) {
     const level = normalizeComboLevel(body.comboDefault);
     // A preset level only: `custom` is what the three modes say, never a level to write.
     if (!level || !Object.hasOwn(COMBO_PRESET_MODES, level)) return { ok: false, error: 'unknown combo level' };
@@ -625,28 +629,28 @@ function saveDefaults(body: Record<string, unknown>): Promise<
   }
   if (body.cavemanDefault !== undefined) {
     const v = String(body.cavemanDefault);
-    if (!CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
+    if (v !== 'inherit' && !CAVEMAN_DEFAULTS.has(v)) return { ok: false, error: 'unknown caveman level' };
     profile.cavemanDefault = v;
     events.push(`Caveman to ${v}`);
     if (!changedFields.includes('cavemanDefault')) changedFields.push('cavemanDefault');
   }
   if (body.ponytailDefault !== undefined) {
     const v = String(body.ponytailDefault);
-    if (!PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
+    if (v !== 'inherit' && !PONYTAIL_DEFAULTS.has(v)) return { ok: false, error: 'unknown ponytail level' };
     profile.ponytailDefault = v;
     events.push(`Ponytail to ${v}`);
     if (!changedFields.includes('ponytailDefault')) changedFields.push('ponytailDefault');
   }
   if (body.pstackDefault !== undefined) {
     const v = String(body.pstackDefault);
-    if (!PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
+    if (v !== 'inherit' && !PSTACK_DEFAULTS.has(v)) return { ok: false, error: 'unknown pstack level' };
     profile.pstackDefault = v;
     events.push(`pstack to ${v}`);
     changedFields.push('pstackDefault');
   }
   if (body.headroomDefault !== undefined) {
     const v = String(body.headroomDefault);
-    if (!HEADROOM_DEFAULTS.has(v)) return { ok: false, error: 'unknown headroom level' };
+    if (v !== 'inherit' && !HEADROOM_DEFAULTS.has(v)) return { ok: false, error: 'unknown headroom level' };
     profile.headroomDefault = v;
     events.push(`Headroom to ${v}`);
     changedFields.push('headroomDefault');
@@ -657,9 +661,9 @@ function saveDefaults(body: Record<string, unknown>): Promise<
     profile.backupSchedule = v as BackupSchedule;
   }
   if (body.rtkDefault !== undefined) {
-    if (typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true or false' };
-    profile.rtkDefault = body.rtkDefault;
-    events.push(`RTK to ${body.rtkDefault ? 'on' : 'off'}`);
+    if (body.rtkDefault !== 'inherit' && typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true, false, or inherit' };
+    (profile as unknown as Record<string, unknown>).rtkDefault = body.rtkDefault;
+    events.push(body.rtkDefault === 'inherit' ? 'RTK back to the shared default' : `RTK to ${body.rtkDefault ? 'on' : 'off'}`);
     changedFields.push('rtkDefault');
   }
   if (body.devTools !== undefined) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, config, flagValue, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
@@ -9,8 +9,6 @@ import { runInstall } from './cli/install.ts';
 import { runDoctor } from './cli/doctor.ts';
 import { preferBun, runMcpServer } from './cli/mcp.ts';
 import { runLatestUpdate } from './cli/update.ts';
-import { runConfig } from './cli/profile.ts';
-import type { HostId } from './cli/hosts.ts';
 import { runUninstall } from './cli/uninstall.ts';
 import { runUpstream } from './cli/upstream.ts';
 import { runDashboard } from './cli/dashboard.ts';
@@ -21,7 +19,6 @@ function printHelp(): void {
 Commands:
   install      Install the add-ons for one agent (--host omp|pi|opencode|pig, or ask at a terminal)
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
-  config       Show each session default's effective value and source (--host <agent>, or a key name)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
   dashboard     Open the Dashboard (localhost only)
   mcp           Start the Tersio MCP server on stdio, for any MCP client
@@ -67,23 +64,6 @@ async function main(): Promise<void> {
     console.error(`Unknown command: ${commandArg}`);
     printHelp();
     process.exitCode = 1;
-    closeRL();
-    return;
-  }
-
-  if (config) {
-    const hostArg = flagValue('--host');
-    const knownHosts = ['omp', 'pi', 'opencode', 'pig'];
-    if (hostArg && !knownHosts.includes(hostArg)) {
-      console.error(`[fail] Unknown host: ${hostArg}. Use one of ${knownHosts.join(', ')}.`);
-      process.exitCode = 1;
-      closeRL();
-      return;
-    }
-    const at = args.indexOf('config');
-    const next = at >= 0 ? args[at + 1] : undefined;
-    const key = next && !next.startsWith('-') ? next : null;
-    runConfig((hostArg as HostId | undefined) ?? null, key);
     closeRL();
     return;
   }

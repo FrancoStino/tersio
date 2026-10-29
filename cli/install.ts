@@ -525,22 +525,26 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
     }
   }
 
-  // Explicit flags always win over the Combo preset.
-  if (comboDefaultFlag !== undefined) profile.comboDefault = comboDefaultFlag;
+  // Explicit flags always win over the Combo preset; `inherit` hands those fields back to the shared store.
+  const mutable = profile as unknown as Record<string, unknown>;
+  if (comboDefaultFlag !== undefined) mutable.comboDefault = comboDefaultFlag;
   // A stored per-mode choice survives installs and updates; only a chosen preset rewrites it. pstack stays opt-in, so a preset never touches it.
-  if (comboChosen) {
+  if (comboDefaultFlag === 'inherit') {
+    Object.assign(mutable, { cavemanDefault: 'inherit', rtkDefault: 'inherit', ponytailDefault: 'inherit' });
+  } else if (comboChosen) {
     const preset = COMBO_PRESET_MODES[profile.comboDefault] ?? COMBO_PRESET_MODES.off;
     profile.cavemanDefault = preset.caveman;
     profile.rtkDefault = preset.rtk;
     profile.ponytailDefault = preset.ponytail;
   }
-  if (cavemanDefaultFlag !== undefined) profile.cavemanDefault = cavemanDefaultFlag;
-  if (rtkDefaultFlag !== undefined) profile.rtkDefault = rtkDefaultFlag === 'on';
-  if (ponytailDefaultFlag !== undefined) profile.ponytailDefault = ponytailDefaultFlag;
+  if (cavemanDefaultFlag !== undefined) mutable.cavemanDefault = cavemanDefaultFlag;
+  if (rtkDefaultFlag !== undefined) mutable.rtkDefault = rtkDefaultFlag === 'on' ? true : rtkDefaultFlag === 'off' ? false : 'inherit';
+  if (ponytailDefaultFlag !== undefined) mutable.ponytailDefault = ponytailDefaultFlag;
   if (pstackDefaultFlag !== undefined) profile.pstackDefault = pstackDefaultFlag;
   if (headroomDefaultFlag !== undefined) profile.headroomDefault = headroomDefaultFlag;
 
-  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults${opts.host ? ` for ${opts.host}` : ''}: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
+  const rtkLabel = mutable.rtkDefault === 'inherit' ? 'inherit' : profile.rtkDefault ? 'on' : 'off';
+  if ((!opts.quiet && verbose) || dryRun) console.log(`  Defaults${opts.host ? ` for ${opts.host}` : ''}: combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${rtkLabel} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault})`);
   // Only a run that actually chose (a preset pick or a per-mode flag) may write a host's own section, and only the fields it chose.
   const chosenFields: HostDefaultField[] = [];
   if (comboChosen) chosenFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
@@ -593,27 +597,23 @@ async function maybeInstallHeadroom(profile: Profile): Promise<boolean> {
   return true;
 }
 
-/** OMP reads plugin skills only from user skill roots, so the bundled Ponytail skills join skills.customDirectories. */
+/** OMP's plugin manifest has no skills field, so the bundled skills join the user roots it does scan. */
 async function stepOmpSkills(packageRoot: string, options: InstallOptions): Promise<void> {
   const skillsDir = path.join(packageRoot, 'skills');
-  if (!existsSync(skillsDir)) {
-    if (verbose && !options.quiet) sayTagged('  [skip] bundled skills are not on disk yet');
-    return;
-  }
+  if (!existsSync(skillsDir)) return;
   const settingsPath = path.join(OMP_AGENT_DIR, 'settings.json');
   const before = parseJsonObject<Record<string, unknown>>(await readTextIfExists(settingsPath)) ?? {};
   const skills = { ...((before.skills as Record<string, unknown> | undefined) ?? {}) };
   const dirs = Array.isArray(skills.customDirectories) ? [...(skills.customDirectories as string[])] : [];
-  const existing = dirs.findIndex((dir) => typeof dir === 'string' && dir.includes('tersio') && dir.endsWith('skills'));
-  if (existing >= 0 && dirs[existing] === skillsDir) return;
-  if (existing >= 0) dirs[existing] = skillsDir; else dirs.push(skillsDir);
-  const next = { ...before, skills: { ...skills, customDirectories: dirs } };
+  const at = dirs.findIndex((dir) => typeof dir === 'string' && dir.includes('tersio') && dir.endsWith('skills'));
+  if (at >= 0 && dirs[at] === skillsDir) return;
+  if (at >= 0) dirs[at] = skillsDir; else dirs.push(skillsDir);
   if (options.dryRun) {
     if (verbose && !options.quiet) sayTagged(`  [dry-run] would register ${skillsDir} as an OMP skill directory`);
     return;
   }
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-  await writeIfChanged(settingsPath, `${JSON.stringify(next, null, 2)}\n`, options);
+  await writeIfChanged(settingsPath, `${JSON.stringify({ ...before, skills: { ...skills, customDirectories: dirs } }, null, 2)}\n`, options);
   if (!options.quiet) sayTagged(`  Skills — registered ${skillsDir} for /skill commands`);
 }
 

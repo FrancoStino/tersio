@@ -77,7 +77,7 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-const COMMANDS: Record<string, true> = { install: true, update: true, config: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([
   '--host', '--port', '--export', '--currency', '--scope', '--write',
@@ -89,7 +89,6 @@ const command = commandArg?.toLowerCase() || null;
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
 const update = command === 'update';
-const config = command === 'config';
 const showVersion = command === 'version' || args.includes('--version') || args.includes('-v');
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
 const applyUpdate = args.includes('--apply-update');
@@ -126,13 +125,17 @@ if (legacyScope !== null && legacyScope !== 'user') {
 
 // `medium` is the retired name for `lite`, so a scripted flag written before the rename still lands.
 // It is accepted by the parser and mapped after, because parseEnum exits on an unknown value.
-const rawComboFlag = parseEnum(flagValue('--combo-default'), new Set([...COMBO_DEFAULTS, ...COMBO_RETIRED]), '--combo-default');
+/** `inherit` clears this agent's override, so it parses before the value sets do. */
+function parseModeFlag(flag: string, valid: Set<string>): string | undefined {
+  return flagValue(flag)?.trim().toLowerCase() === 'inherit' ? 'inherit' : parseEnum(flagValue(flag), valid, flag);
+}
+const rawComboFlag = parseModeFlag('--combo-default', new Set([...COMBO_DEFAULTS, ...COMBO_RETIRED]));
 const comboDefaultFlag = rawComboFlag && COMBO_RETIRED.has(rawComboFlag) ? 'lite' : rawComboFlag;
-const cavemanDefaultFlag = parseEnum(flagValue('--caveman-default'), CAVEMAN_DEFAULTS, '--caveman-default');
-const ponytailDefaultFlag = parseEnum(flagValue('--ponytail-default'), PONYTAIL_DEFAULTS, '--ponytail-default');
-const pstackDefaultFlag = parseEnum(flagValue('--pstack-default'), PSTACK_DEFAULTS, '--pstack-default');
-const headroomDefaultFlag = parseEnum(flagValue('--headroom-default'), HEADROOM_DEFAULTS, '--headroom-default');
-const rtkDefaultFlag = parseEnum(flagValue('--rtk-default'), RTK_DEFAULTS, '--rtk-default');
+const cavemanDefaultFlag = parseModeFlag('--caveman-default', CAVEMAN_DEFAULTS);
+const ponytailDefaultFlag = parseModeFlag('--ponytail-default', PONYTAIL_DEFAULTS);
+const pstackDefaultFlag = parseModeFlag('--pstack-default', PSTACK_DEFAULTS);
+const headroomDefaultFlag = parseModeFlag('--headroom-default', HEADROOM_DEFAULTS);
+const rtkDefaultFlag = parseModeFlag('--rtk-default', RTK_DEFAULTS);
 
 const profileFlagsGiven = [comboDefaultFlag, cavemanDefaultFlag, rtkDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag]
   .some((flag) => flag !== undefined);
@@ -408,7 +411,7 @@ export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, HEADROOM_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
-  parseEnum, flagValue, COMMANDS, commandArg, command, config, unknownCommand, mcp,
+  parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand, mcp,
   install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,

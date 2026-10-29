@@ -118,7 +118,7 @@ Three tools become available: `tersio_stats` (requests, errors, tokens, cache ra
 |---|---|
 | `tersio install` | Install (user scope: all OMP sessions) |
 | `tersio update` | Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail); `--host` limits it to one agent |
-| `tersio config [key] [--host <agent>]` | Print each session default's effective value and where it came from: inherited from the shared store, overridden in that agent, or the safe default |
+| `tersio doctor` (Defaults row) | `tersio doctor` prints the shared defaults and each agent's overrides, so a value's source is visible without reading the store |
 | `tersio doctor` | Check OMP, extension, Ponytail, RTK, and OpenCode service health (`--fix` repairs, `--fix=<scope>` one scope, `--dry-run` previews) |
 | `tersio dashboard` | Open the Dashboard (`--open`, `--export <file>`, `--port <n>`, `--currency <code>`; serves localhost only) |
 | `tersio mcp` | Start the Tersio MCP server on stdio (see [MCP](#-mcp)) |

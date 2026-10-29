@@ -1,7 +1,7 @@
 ## Unreleased
 
 ### Added
- - **`inherit` is a first-class value.** A `hosts.<agent>` section stores only real overrides, `inherit` returns a field to the shared store, and `tersio config [key] --host <agent>` prints each effective value with its source.
+ - **`inherit` is a first-class value.** A `hosts.<agent>` section stores only real overrides, `inherit` returns a field to the shared store, and `tersio doctor` prints the shared defaults plus each agent's overrides.
  - **The OMP plugin manifest defaults every mode setting to `inherit`**, so `omp plugin config get` follows Tersio's store instead of reporting a second, contradictory default.
 
 ### Fixed
