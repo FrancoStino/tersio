@@ -552,11 +552,7 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
   return { profile, choseDefaults: comboChosen || profileFlagsGiven, chosenFields };
 }
 
-/**
- * The optional Headroom prompt, asked once per interactive install after the combo preset. It checks
- * on demand — an existing binary skips the install and offers enable only — and prefers uv over pip.
- * The answer never lands in the shared store: the enable rides the host section this install writes.
- */
+/** The optional Headroom prompt, asked once per interactive install after the combo preset; its enable rides the host section this install writes. */
 async function maybeInstallHeadroom(profile: Profile): Promise<boolean> {
   if (!tty() || dryRun || applyUpdate || assumeYes) return false;
   if (resolveHeadroomBinary() !== null) {
@@ -909,30 +905,23 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     if (hostExplicit && !chosenFields.includes('headroomDefault')) chosenFields.push('headroomDefault');
     if (!hostExplicit) profile.headroomDefault = 'on';
   }
-  // Headroom's durable install for the agent this run targets. headroom ships init for
-  // claude/codex/copilot/openclaw; a host without one gets the wrap hint instead of a silent no-op.
-  // The update lifecycle refreshes the user's own Headroom install alongside the add-ons.
-  if (applyUpdate && !dryRun) {
-    const headroomBin = resolveHeadroomBinary();
-    if (headroomBin) {
-      try {
-        await execP(headroomBin, ['update'], { timeout: 300_000 });
-        sayTagged('  Headroom — updated to the latest release');
-      } catch {
-        sayTagged('  [warn] Headroom update failed — run: headroom update');
-      }
+  // The lifecycle refreshes the user's own Headroom install; an enabled mode also wires the host durably.
+  const headroomBin = resolveHeadroomBinary();
+  if (headroomBin && applyUpdate && !dryRun) {
+    try {
+      await execP(headroomBin, ['update'], { timeout: 300_000 });
+      sayTagged('  Headroom — updated to the latest release');
+    } catch {
+      sayTagged('  [warn] Headroom update failed — run: headroom update');
     }
   }
-  if ((headroomEnabled || profile.headroomDefault === 'on') && !dryRun) {
-    const headroomBin = resolveHeadroomBinary();
-    if (headroomBin) {
-      try {
-        const shim = shimCommand(headroomBin, ['init', '-g', targetHost]);
-        await execP(shim.cmd, shim.args, { timeout: 120_000 });
-        if (!quiet) sayTagged(`  Headroom — durable integration installed for ${targetHost}`);
-      } catch {
-        if (!quiet) sayTagged(`  Headroom — no durable install for ${targetHost}; wrap it per session: headroom wrap ${targetHost}`);
-      }
+  if (headroomBin && (headroomEnabled || profile.headroomDefault === 'on') && !dryRun) {
+    try {
+      const shim = shimCommand(headroomBin, ['init', '-g', targetHost]);
+      await execP(shim.cmd, shim.args, { timeout: 120_000 });
+      if (!quiet) sayTagged(`  Headroom — durable integration installed for ${targetHost}`);
+    } catch {
+      if (!quiet) sayTagged(`  Headroom — no durable install for ${targetHost}; wrap it per session: headroom wrap ${targetHost}`);
     }
   }
 
