@@ -17,7 +17,7 @@ import type { InstallOptions, WriteOptions } from './common.ts';
 import {
   askInteractiveChoice, askInteractiveConfirm, closeRL, execNetwork, tty, withInteractiveSpinner, withInteractiveTask, sayTagged } from './interactive.ts';
 import { printWelcome } from './banner.ts';
-import { checkForUpdate, askUpdateHost, runLatestUpdate } from './update.ts';
+import { checkForUpdate, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
 import { runDoctor } from './doctor.ts';
 import { runDashboard } from './dashboard.ts';
@@ -557,8 +557,23 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
 }
 
 /** The optional Headroom prompt, asked once per interactive install after the combo preset; its enable rides the host section this install writes. */
-async function maybeInstallHeadroom(profile: Profile): Promise<boolean> {
-  if (!tty() || dryRun || applyUpdate || assumeYes) return false;
+/** The hosts Headroom can integrate with today; asking about the others would promise nothing. */
+const HEADROOM_HOSTS: readonly HostId[] = ['omp', 'opencode'];
+
+async function maybeInstallHeadroom(profile: Profile, quiet: boolean, host: HostId): Promise<boolean> {
+  if (!HEADROOM_HOSTS.includes(host)) {
+    if (!quiet && !dryRun && !applyUpdate) {
+      sayTagged(`  [note] Headroom has no ${hostEntry(host).label} integration yet — it is offered for OMP and OpenCode`);
+    }
+    return false;
+  }
+  if (!tty() || dryRun || applyUpdate || assumeYes) {
+    // No prompt to answer, but a fresh install still gets one line about the optional mode.
+    if (!quiet && !dryRun && !applyUpdate && profile.headroomDefault !== 'on') {
+      sayTagged('  [note] Headroom is optional: enable it later with /headroom on, or from the dashboard');
+    }
+    return false;
+  }
   if (resolveHeadroomBinary() !== null) {
     const answer = await askInteractiveConfirm('Headroom is already installed — enable it for new sessions? (optional)');
     if (answer.status !== 'confirmed' || !answer.value) return false;
@@ -617,6 +632,28 @@ async function stepOmpSkills(packageRoot: string, options: InstallOptions): Prom
   if (!options.quiet) sayTagged(`  Skills — registered ${skillsDir} for /skill commands`);
 }
 
+/** The Headroom half of a run: refresh the binary on --apply-update, then wire a supported host when the mode is on. */
+async function lifecycleHeadroom(host: HostId, enabled: boolean, profile: Profile, quiet: boolean): Promise<void> {
+  const bin = resolveHeadroomBinary();
+  if (!bin) return;
+  if (applyUpdate && !dryRun) {
+    try {
+      await execP(bin, ['update'], { timeout: 300_000 });
+      sayTagged('  Headroom — updated to the latest release');
+    } catch {
+      sayTagged('  [warn] Headroom update failed — run: headroom update');
+    }
+  }
+  if (dryRun || !HEADROOM_HOSTS.includes(host) || (!enabled && profile.headroomDefault !== 'on')) return;
+  try {
+    const shim = shimCommand(bin, ['init', '-g', host]);
+    await execP(shim.cmd, shim.args, { timeout: 120_000 });
+    if (!quiet) sayTagged(`  Headroom — durable integration installed for ${host}`);
+  } catch {
+    if (!quiet) sayTagged(`  Headroom — no durable install for ${host}; wrap it per session: headroom wrap ${host}`);
+  }
+}
+
 let updatePromptDone = false;
 
 // Bare `tersio` at a terminal picks a command; scripts and flags install.
@@ -642,8 +679,8 @@ async function runCommandMenu(): Promise<void> {
   // and the install row says up front that the optional Headroom step comes with it.
   const updateLabel = typeof newer === 'string' ? `Update (${newer} available)` : 'Update';
   const updateHint = typeof newer === 'string'
-    ? `CLI ${PACKAGE_VERSION} → ${newer}, then refresh add-ons (RTK, Caveman rule, Ponytail)`
-    : 'CLI version check, then refresh add-ons (RTK, Caveman rule, Ponytail)';
+    ? `CLI ${PACKAGE_VERSION} → ${newer}; add-ons refresh per agent with --host`
+    : 'download the newest CLI; add-ons refresh per agent with --host';
   const choice = await askInteractiveChoice(`Tersio — what next?\n${formatCliStatus(storedProfileSync())}`, [
     { value: 'install', label: 'Install plugin (Headroom optional)', hint: 'user scope + combo defaults; the Headroom install is offered next' },
     { value: 'update', label: updateLabel, hint: updateHint },
@@ -663,14 +700,14 @@ async function runCommandMenu(): Promise<void> {
       // Version check already ran above, so report it and offer the refresh here — no second "update" quiz.
       if (typeof newer === 'string') console.log(`  tersio ${newer} available (installed ${PACKAGE_VERSION})`);
       else console.log(`  tersio ${PACKAGE_VERSION} is the latest`);
-      // The agent comes first, the same order the install flow uses; the confirm then names it.
-      const host = await askUpdateHost();
-      // A pinned `--host` skips the menu but still decides the target, so the label must read it too.
-      const target = host ?? parseHostArg(args) ?? null;
-      const label = target === null ? 'all agents' : detectHosts().find((entry) => entry.id === target)?.label ?? target;
-      const go = await askInteractiveConfirm(`Update now — CLI + RTK, Caveman rule, Ponytail (${label})?`);
+      // The CLI is the target; `--host` is the only way this run also touches an agent.
+      const pinned = (() => {
+        try { return parseHostArg(args) ?? null; } catch { return null; }
+      })();
+      const label = pinned === null ? '' : ` + ${detectHosts().find((entry) => entry.id === pinned)?.label ?? pinned}'s extensions and add-ons`;
+      const go = await askInteractiveConfirm(`Update now — tersio CLI${label}?`);
       if (go.status === 'confirmed' && go.value) {
-        await runLatestUpdate(target);
+        await runLatestUpdate(pinned);
       } else if (go.status === 'cancelled') {
         closeRL();
         process.exit(130);
@@ -924,30 +961,16 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   const { profile, choseDefaults, chosenFields } = await resolveProfile({ quiet, host: hostExplicit ? targetHost : null });
   // The optional Headroom prompt comes right after the combo preset. With a chosen host the enable rides
   // that agent's own section; a bare install has no section to ride, so the shared default carries it.
-  const headroomEnabled = await maybeInstallHeadroom(profile);
+  const headroomEnabled = await maybeInstallHeadroom(profile, quiet, targetHost);
   if (headroomEnabled) {
     if (hostExplicit && !chosenFields.includes('headroomDefault')) chosenFields.push('headroomDefault');
     if (!hostExplicit) profile.headroomDefault = 'on';
+  } else if (hostExplicit && !HEADROOM_HOSTS.includes(targetHost)) {
+    // The mode injects a promise the host cannot route, so its own section starts off.
+    profile.headroomDefault = 'off';
+    if (!chosenFields.includes('headroomDefault')) chosenFields.push('headroomDefault');
   }
-  // The lifecycle refreshes the user's own Headroom install; an enabled mode also wires the host durably.
-  const headroomBin = resolveHeadroomBinary();
-  if (headroomBin && applyUpdate && !dryRun) {
-    try {
-      await execP(headroomBin, ['update'], { timeout: 300_000 });
-      sayTagged('  Headroom — updated to the latest release');
-    } catch {
-      sayTagged('  [warn] Headroom update failed — run: headroom update');
-    }
-  }
-  if (headroomBin && (headroomEnabled || profile.headroomDefault === 'on') && !dryRun) {
-    try {
-      const shim = shimCommand(headroomBin, ['init', '-g', targetHost]);
-      await execP(shim.cmd, shim.args, { timeout: 120_000 });
-      if (!quiet) sayTagged(`  Headroom — durable integration installed for ${targetHost}`);
-    } catch {
-      if (!quiet) sayTagged(`  Headroom — no durable install for ${targetHost}; wrap it per session: headroom wrap ${targetHost}`);
-    }
-  }
+  await lifecycleHeadroom(targetHost, headroomEnabled, profile, quiet);
 
   const userDir = OMP_AGENT_DIR;
   const userExtDir = path.join(userDir, 'extensions');
@@ -969,7 +992,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     console.log(`  ${where}`);
     console.log('  caveman · rtk · ponytail session modes');
     console.log(`  session defaults → ${tersioSettingsFile()}`);
-    const go = await askInteractiveConfirm(`Install Tersio into ${target.label}?`);
+    const go = await askInteractiveConfirm(`Are you sure you want to install Tersio into ${target.label}?`);
     if (go.status !== 'confirmed' || !go.value) {
       closeRL();
       console.log('\nAborted. Nothing was changed.');
@@ -1005,6 +1028,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (targetHost === 'opencode') {
     await capture('opencode tree', () => stepOpencode(installOptions));
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'opencode'));
+    await capture('headroom', () => lifecycleHeadroom(targetHost, headroomEnabled, profile, quiet));
     await capture('settings', async () => {
       await writePluginSettings(profile, installOptions);
       if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
