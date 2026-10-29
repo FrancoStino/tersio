@@ -28,7 +28,7 @@ Tersio installs into Oh My Pi, pi, or OpenCode, and cuts those costs:
 | 🗜️ **RTK** | Condensed shell output, every signal kept. A failing test still names the test, the assertion, and the line. |
 | 🧠 **Ponytail** | Leaner code. YAGNI: no feature, option, or abstraction nobody asked for, and the shortest diff that still works. |
 | 🥔 **pstack** | Rigor mode. It applies a design principle when the moment fits, and owns the approach, the check, and the design. Opt-in, on its own switch. |
-| 🍃 **Headroom** | Compression below the shell layer: [Headroom](https://github.com/headroomlabs-ai/headroom) shrinks tool outputs, file reads, and history through a local proxy, keeping originals recoverable. Tersio tracks the mode and reads its savings; the binary stays yours to install. Opt-in, on its own switch. |
+| 🍃 **Headroom** | [Headroom](https://github.com/headroomlabs-ai/headroom) shrinks tool output, file reads, and history. Opt-in; Tersio reads its savings and never turns it on for you. |
 | 🧩 **Combo** | One command sets Caveman, RTK, and Ponytail, at three strengths. |
 | 📊 **Dashboard** | What you spent, per model and per day. |
 
@@ -110,7 +110,7 @@ Add this entry under `mcpServers` in the client's MCP settings:
 
 That is the whole setup. No extra command, no port, no token, and no process to keep alive.
 
-Three tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack, headroom — overriding its piece of the preset), and `tersio_headroom` (the savings Headroom's own ledger records).
+Three tools become available: `tersio_stats` (requests, errors, tokens, cache rate, and cost for a range, in your display currency), `tersio_activity` (what Tersio changed, newest first), `tersio_modes` (read the session-start defaults, or set them: a Combo preset, or any single mode — caveman, rtk, ponytail, pstack, headroom — overriding its piece of the preset), and `tersio_headroom` (the savings Headroom's own ledger records, or `action: memory`, `evals`, and `dashboard` for the upstream commands Tersio does not reimplement).
 
 ## 🖥️ CLI
 
@@ -138,16 +138,16 @@ It is display-only — it never enters the model context, so it costs the sessio
 
 | Command | Purpose |
 |---|---|
-| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail (start here): lite = caveman lite · rtk on · ponytail lite, balanced = full/on/full, max = ultra/on/ultra, and off disables those three; per-mode tweaks drop to `custom`. pstack and headroom are separate and no preset changes them. |
-| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | Terse replies at six levels. `full`, `ultra`, and `megacave-full` ship upstream's bodies byte for byte; `lite`, `megacave-lite`, and `megacave-ultra` are Tersio's own, for registers upstream defines but no longer ships, and each names its upstream row. Legacy `wenyan` spellings still resolve: `wenyan`/`wenyan-full` → `megacave-full`, `wenyan-lite` → `megacave-lite`, `wenyan-ultra` → `megacave-ultra`. |
-| `/rtk on\|off\|status` | Controls RTK session guidance, `rtk_run`, and the automatic hook through shared `RTK_DISABLED` state. Exact bytes bypass RTK. |
-| `/ponytail off\|lite\|full\|ultra\|status` | Minimal code using upstream Ponytail modes, one body at four levels. Review runs as its own skill. |
-| `/pstack on\|off\|status` | Rigor mode, forked from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Opt-in: set it on its own, since no preset turns it on; `normal mode` clears it. |
-| `/headroom on\|off\|status` | Tracks the [Headroom](https://github.com/headroomlabs-ai/headroom) compression layer. Opt-in, and the binary is never installed for you: turning it on without one prints the install command, and with one it injects a short block on how to recover compressed detail. The dashboard's Tools page shows the savings Headroom's own ledger records. |
-| `/tersio status` | Active modes + combo level; state persists and propagates to subagents. |
-| `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons, preview with dry-run |
-| `/tersio dashboard` | Open the Dashboard. |
-| `/tersio help` | This table |
+| `/combo off\|lite\|balanced\|max\|status` | One preset for caveman, RTK, and Ponytail. pstack and headroom stay separate. |
+| `/caveman lite\|full\|ultra\|megacave-lite\|megacave-full\|megacave-ultra\|off\|status` | [Caveman](https://github.com/JuliusBrussee/caveman) reply levels. Legacy `wenyan` names still work. |
+| `/rtk on\|off\|status` | [RTK](https://github.com/rtk-ai/rtk) shell output. Exact bytes skip it. |
+| `/ponytail off\|lite\|full\|ultra\|status` | [Ponytail](https://github.com/DietrichGebert/ponytail) code levels. |
+| `/pstack on\|off\|status` | [pstack](https://github.com/cursor/plugins/tree/main/pstack) rigor mode. Opt-in; `normal mode` clears it. |
+| `/headroom on\|off\|status` | [Headroom](https://github.com/headroomlabs-ai/headroom) compression. Opt-in; Tersio reads its savings and never installs it silently. |
+| `/tersio status` | Active modes and combo level. |
+| `/tersio update <ponytail\|rtk\|caveman\|all> [--dry-run]` | Update add-ons. |
+| `/tersio dashboard` | Open the dashboard. |
+| `/tersio help` | This table. |
 
 ## 🗂️ Files and backups
 
@@ -165,20 +165,21 @@ Shared, and identical for every host:
 | Price sources | The host's own reported cost first, then `prices.local.json`, then the LiteLLM cache, then a default table the report labels a guess. A recorded zero is a real zero. A model counts as host-priced only when every message carried a cost. |
 | Data snapshots | `~/.tersio/backups/` — one `.snap` file per snapshot, checked against its own hash, six kept |
 
-Per host, written by `tersio install --host <omp|pi|opencode>`:
+Per host, written by `tersio install --host <omp|pi|opencode|pig>`:
 
 | Host | Extensions | Ponytail |
 |---|---|---|
-| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/` — loaded from the plugin manifest, so the agent tree keeps only rtk's `extensions/rtk.ts` wiring | vendored at `extensions/ponytail/`, so **Settings → Plugins** lists one row |
-| pi | `~/.pi/agent/extensions/{caveman,pstack,rtk,combo,commands,updater}/` — pi auto-discovers `<agent-dir>/extensions`, so there is nothing to register | `~/.pi/agent/ponytail/`, a local package written from Tersio's vendored copy |
-| OpenCode | `~/.config/opencode/plugins/tersio/` — registered in `opencode.json` plugins, so there is nothing else to register | bundled with Tersio; no separate package |
+| Oh My Pi | `~/.omp/plugins/node_modules/@krtclcdy/tersio/extensions/`, loaded from the plugin manifest | vendored at `extensions/ponytail/`, so **Settings → Plugins** lists one row |
+| pi | `~/.pi/agent/extensions/{caveman,combo,commands,headroom,pstack,rtk,timing,shared}/`, auto-discovered | `~/.pi/agent/ponytail/` |
+| OpenCode | `~/.config/opencode/plugins/tersio/`, registered in `opencode.json` | bundled with Tersio |
+| PiG (Pi-in-go) | `~/.pig/agent/extensions/{caveman,combo,commands,headroom,pstack,rtk,timing,shared}/`, auto-discovered; `PIG_HOME` or `XDG_CONFIG_HOME` moves the root | `~/.pig/agent/ponytail/` |
 
-Tersio is agent-neutral: every host loads the same six extensions and the same `shared/` modules from the same sources. Only the paths and the registration differ, and the installer owns those. OMP is one host of three, not the target.
+Tersio is agent-neutral: every host loads the same extensions and the same `shared/` modules from the same sources. Only the paths and the registration differ, and the installer owns those. No host is the target.
 
 Per host, in more words:
 
-- **OMP.** The plugin manifest and the extension dir OMP discovers by default merge, so Tersio keeps one copy of each file and clears what an older build left in `~/.omp/agent/extensions/`. A second copy would load twice, and one of the two cannot resolve its own rule bodies. The install also registers the package in `~/.omp/plugins`, so it shows under **Settings → Plugins**.
-- **pi and OpenCode.** Nothing to register beyond what their own install command does, so the table above is the whole story.
+- **Oh My Pi.** The plugin manifest and the directory OMP discovers by default merge, so Tersio keeps one copy of each file and clears what an older build left in `~/.omp/agent/extensions/`. A second copy would load twice, and one of the two cannot find its own rule bodies. The install also registers the package in `~/.omp/plugins`, so it shows under **Settings → Plugins**.
+- **pi, PiG, and OpenCode.** Their own install command registers what they need, so the table above is the whole story.
 
 The installer writes `<file>.bak` before it replaces a source. `tersio doctor --fix extensions` restores a damaged tree, and `doctor --fix registrations` drops retired or duplicate `config.yml` entries.
 
