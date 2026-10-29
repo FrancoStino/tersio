@@ -223,12 +223,7 @@ function headroomInstallState(): { startedAt: number; code: number | null; error
   return { ...headroomJob };
 }
 
-/**
- * Install Headroom from the dashboard. Always user-initiated and never a tersio side effect: the
- * mode only tracks the binary, and the install runs only when this endpoint was called. uv is the
- * resilient path (it carries its own interpreter and shims into ~/.local/bin); pip --user is the
- * fallback, whose scripts dir the binary resolver probes even when it is off PATH.
- */
+/** Installs Headroom on request: uv first, pip --user as the fallback whose scripts dir the resolver probes. */
 function spawnHeadroomInstall(): boolean {
   const uv = resolveHostBinary('uv');
   const cmd = uv ? 'uv' : process.platform === 'win32' ? 'pip' : 'python3';
@@ -735,6 +730,40 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+/** One JSON reply: every route answers this shape, so the header is set in one place. */
+function json(res: http.ServerResponse, code: number, body: unknown): void {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+/** A reply whose JSON is already serialized: the big payloads build their own string. */
+function jsonText(res: http.ServerResponse, code: number, text: string): void {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(text);
+}
+
+/** The request body as an object; a missing or malformed one reads as empty, as every route assumed. */
+async function bodyOf(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await readBody(req));
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Runs a headroom command and returns its last lines; a failure carries the same tail. */
+async function headroomRun(bin: string, args: string[], timeout: number): Promise<{ ok: boolean; lines: string[] }> {
+  const tail = (text: string): string[] => text.trim().split('\n').filter(Boolean);
+  try {
+    const run = await execFileP(bin, args, { timeout });
+    return { ok: true, lines: tail(`${run.stdout}\n${run.stderr}`) };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return { ok: false, lines: tail(`${err.stdout ?? ''}\n${err.stderr ?? ''}`) };
+  }
+}
+
 function openBrowser(url: string): void {
   // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
   const [cmd, args]: [string, string[]] = process.platform === 'darwin'
@@ -788,24 +817,20 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   requireDashboardBundle();
   const server = http.createServer(async (req, res) => {
     if (req.url === '/api/upstream' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ card: await cachedScorecard(), history: await upstreamHistory() }));
+      json(res, 200, { card: await cachedScorecard(), history: await upstreamHistory() });
       return;
     }
     if (req.url === '/api/upstream/check' && req.method === 'POST') {
       try {
         const card = await refreshScorecard();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, card, history: await upstreamHistory() }));
+        json(res, 200, { ok: true, card, history: await upstreamHistory() });
       } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'check failed' }));
+        json(res, 500, { ok: false, error: (error as Error).message || 'check failed' });
       }
       return;
     }
     if (req.url === '/api/data' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      json(res, 200, {
         dir: backupDir(),
         keep: BACKUP_KEEP,
         sources: dataSources(),
@@ -813,49 +838,40 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         schedule: readBackupSchedule(),
         bytes: backupDiskBytes(),
         reset: resetCounts(),
-      }));
+      });
       return;
     }
     if (req.url === '/api/data' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch { body = {}; }
+      const body = await bodyOf(req);
       const action = String(body.action ?? '');
       const name = String(body.name ?? '');
       // A missing SQLite engine, or a locked file, is a 500 with a message rather than a silent no-op.
       try {
         if (action === 'create') {
           const made = createDataBackup();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, name: made.name }));
+          json(res, 200, { ok: true, name: made.name });
           return;
         }
         if (action === 'restore') {
           const ok = restoreDataBackup(name);
-          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          json(res, ok ? 200 : 400, ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' });
           return;
         }
         if (action === 'reset') {
           const done = resetStatistics();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, ...done }));
+          json(res, 200, { ok: true, ...done });
           return;
         }
         if (action === 'delete') {
           const ok = deleteDataBackup(name);
-          res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' }));
+          json(res, ok ? 200 : 400, ok ? { ok: true, name } : { ok: false, error: 'unknown snapshot' });
           return;
         }
       } catch (error) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: (error as Error).message || 'backup failed' }));
+        json(res, 500, { ok: false, error: (error as Error).message || 'backup failed' });
         return;
       }
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'unknown action' }));
+      json(res, 400, { ok: false, error: 'unknown action' });
       return;
     }
     if (req.url?.startsWith('/api/mark?') && req.method === 'GET') {
@@ -901,55 +917,43 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     if (req.url?.startsWith('/api/logs') && req.method === 'GET') {
       const raw = new URL(req.url, 'http://127.0.0.1').searchParams.get('limit');
       const limit = Math.min(2000, Math.max(1, Number.parseInt(raw ?? '', 10) || 400));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(readActivity(limit)));
+      json(res, 200, readActivity(limit));
       return;
     }
     if (req.url === '/api/hosts' && req.method === 'GET') {
       // What the guide draws as connected: the host directories an install writes, read from disk.
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(detectHosts().map((host) => ({
+      json(res, 200, detectHosts().map((host) => ({
         id: host.id,
         label: host.label,
         installed: host.installed,
         version: host.version,
-      }))));
+      })));
       return;
     }
     if (req.url === '/api/hosts/action' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify([...hostJobs].map(([host, job]) => ({ host, ...job }))));
+      json(res, 200, [...hostJobs].map(([host, job]) => ({ host, ...job })));
       return;
     }
     if (req.url === '/api/hosts/action' && req.method === 'POST') {
       // Add an agent or turn one off from the guide. The CLI does the work, so the tree on disk and
       // the guide cannot drift apart.
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch {
-        body = {};
-      }
+      const body = await bodyOf(req);
       const host = String(body.host ?? '');
       const action = String(body.action ?? '');
       const known = detectHosts().some((entry) => entry.id === host);
       if (!known || (action !== 'install' && action !== 'uninstall' && action !== 'update')) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown host or action' }));
+        json(res, 400, { ok: false, error: 'unknown host or action' });
         return;
       }
       if (!spawnCli(action, host)) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+        json(res, 500, { ok: false, error: 'cannot find the tersio entry point' });
         return;
       }
-      res.writeHead(202, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, pending: true, host, action }));
+      json(res, 202, { ok: true, pending: true, host, action });
       return;
     }
     if (req.url === '/api/headroom/install' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() }));
+      json(res, 200, { ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() });
       return;
     }
     // Which headroom wrap targets exist on this machine, so the drawer only offers what can run.
@@ -959,60 +963,42 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         name,
         available: bin !== null && await binaryExists(WRAP_BINARY[name] ?? name),
       })));
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: bin !== null, targets }));
+      json(res, 200, { ok: bin !== null, targets });
       return;
     }
     // The automated wrap: one documented command per tool, run detached, so nobody copies it by hand.
     if (req.url === '/api/headroom/wrap' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      const body = await bodyOf(req);
       const name = String(body.name ?? '');
-      const unwrap = body.action === 'unwrap';
       const bin = resolveHeadroomBinary();
       if (!bin || !isHeadroomWrapTarget(name)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown wrap target or no headroom binary' }));
+        json(res, 400, { ok: false, error: 'unknown wrap target or no headroom binary' });
         return;
       }
-      if (unwrap) {
+      if (body.action === 'unwrap') {
         // headroom's own undo: it restores whatever the wrap/init edited for that tool.
-        try {
-          const run = await execFileP(bin, ['unwrap', name], { timeout: 120_000 });
-          const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, detail: out || `${name}: headroom integration removed` }));
-        } catch (e) {
-          const err = e as { stdout?: string; stderr?: string; message?: string };
-          const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: out || err.message || `the ${name} unwrap failed` }));
-        }
+        const run = await headroomRun(bin, ['unwrap', name], 120_000);
+        const out = run.lines.slice(-2).join(' · ');
+        json(res, 200, run.ok
+          ? { ok: true, detail: out || `${name}: headroom integration removed` }
+          : { ok: false, error: out || `the ${name} unwrap failed` });
         return;
       }
-      // Durable first: headroom's init install outlives restarts and every later launch. Tools
-      // without an init subcommand fall back to a one-session wrap, and the reply says which ran.
-      try {
-        const run = await execFileP(bin, ['init', '-g', name], { timeout: 120_000 });
-        const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: out || `${name}: durable headroom integration installed` }));
-        return;
-      } catch (e) {
-        const err = e as { stdout?: string; stderr?: string; message?: string };
-        const said = `${err.stdout ?? ''}\n${err.stderr ?? ''}`;
-        // Only "no such command" means the tool has no durable install; any other failure is real.
-        if (!/no such command|invalid choice|Usage: headroom init/i.test(said)) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: said.trim().split('\n').filter(Boolean).slice(-2).join(' · ') || err.message || `the ${name} integration failed` }));
-          return;
-        }
-        const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
-        child.unref();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: `${name} has no init subcommand — headroom wrap set it up instead; the off switch undoes it` }));
+      // Durable first: headroom's init outlives restarts; a tool without it gets a one-session wrap.
+      const init = await headroomRun(bin, ['init', '-g', name], 120_000);
+      if (init.ok) {
+        json(res, 200, { ok: true, detail: init.lines.slice(-2).join(' · ') || `${name}: durable headroom integration installed` });
         return;
       }
+      // Only "no such command" means the tool has no durable install; any other failure is real.
+      if (!/no such command|invalid choice|Usage: headroom init/i.test(init.lines.join('\n'))) {
+        json(res, 200, { ok: false, error: init.lines.slice(-2).join(' · ') || `the ${name} integration failed` });
+        return;
+      }
+      const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
+      child.unref();
+      json(res, 200, { ok: true, detail: `${name} has no init subcommand — headroom wrap set it up instead; the off switch undoes it` });
+      return;
     }
     // The wrap record lives tersio-side too, so a second browser sees the same switches. Headroom's
     // own checks correct it: a wrap undone outside Tersio clears instead of lying.
@@ -1030,58 +1016,42 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         wraps = mergeHeadroomWraps(stored, doctor.checks, WRAP_TARGETS);
         try { writeFileSync(file, `${JSON.stringify(wraps, null, 2)}\n`, 'utf8'); } catch { /* best effort */ }
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, wraps }));
+      json(res, 200, { ok: true, wraps });
       return;
     }
     // Upstream surfaces Tersio does not reimplement: its savings dashboard, memory store, and evals.
     if (req.url === '/api/headroom/action' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const body = await bodyOf(req);
       const action = String(body.action ?? '');
       const bin = resolveHeadroomBinary();
       const args = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : null;
       if (!bin || !args) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: !bin ? 'headroom is not installed' : 'unknown action' }));
+        json(res, 400, { ok: false, error: !bin ? 'headroom is not installed' : 'unknown action' });
         return;
       }
-      try {
-        const run = await execFileP(bin, args, { timeout: 30_000 });
-        const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-6).join('\n');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: out || `${action}: done` }));
-      } catch (e) {
-        const err = e as { stdout?: string; stderr?: string; message?: string };
-        const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim().split('\n').filter(Boolean).slice(-6).join('\n');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: out || err.message || `the ${action} command failed` }));
-      }
+      const run = await headroomRun(bin, args, 30_000);
+      const out = run.lines.slice(-6).join('\n');
+      json(res, 200, run.ok ? { ok: true, detail: out || `${action}: done` } : { ok: false, error: out || `the ${action} command failed` });
       return;
     }
     if (req.url === '/api/headroom/wraps' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      const body = await bodyOf(req);
       if (!body.wraps || typeof body.wraps !== 'object') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'wraps must be an object' }));
+        json(res, 400, { ok: false, error: 'wraps must be an object' });
         return;
       }
       const file = path.join(tersioHome(), 'headroom-wraps.json');
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(body.wraps, null, 2)}\n`, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      json(res, 200, { ok: true });
       return;
     }
     // The vendor footers: update or remove a third-party binary (headroom, rtk) from its drawer.
     if (req.url === '/api/vendor/update' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const body = await bodyOf(req);
       const tool = String(body.tool ?? '');
       if (!isVendorTool(tool)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
+        json(res, 400, { ok: false, error: 'unknown tool' });
         return;
       }
       if (tool === 'headroom') {
@@ -1089,45 +1059,38 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         if (!bin) {
           // Not installed yet: the update button doubles as the installer.
           if (!spawnHeadroomInstall()) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+            json(res, 500, { ok: false, error: 'cannot find the tersio entry point' });
             return;
           }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, detail: 'headroom installs in the background' }));
+          json(res, 200, { ok: true, detail: 'headroom installs in the background' });
           return;
         }
         const child = spawn(bin, ['update'], { detached: true, stdio: 'ignore' });
         child.unref();
         recordActivity('agent', 'Headroom update started');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: 'headroom updates in the background' }));
+        json(res, 200, { ok: true, detail: 'headroom updates in the background' });
         return;
       }
       if (tool === 'rtk') {
         const entry = process.argv[1];
         const host = detectHosts().find((entry) => entry.installed)?.id;
         if (!entry || !host) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'no installed agent to refresh rtk through' }));
+          json(res, 400, { ok: false, error: 'no installed agent to refresh rtk through' });
           return;
         }
         const runtime = entry.endsWith('.ts') ? 'bun' : process.execPath;
         const child = spawn(runtime, [entry, 'install', '--host', host, '--apply-update', '--yes'], { detached: true, stdio: 'ignore' });
         child.unref();
         recordActivity('agent', 'RTK update started');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: `rtk updates through the ${host} refresh — running in the background` }));
+        json(res, 200, { ok: true, detail: `rtk updates through the ${host} refresh — running in the background` });
         return;
       }
     }
     if (req.url === '/api/vendor/uninstall' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const body = await bodyOf(req);
       const tool = String(body.tool ?? '');
       if (!isVendorTool(tool)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
+        json(res, 400, { ok: false, error: 'unknown tool' });
         return;
       }
       const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
@@ -1139,26 +1102,22 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
         child.unref();
         recordActivity('agent', 'Headroom uninstall started');
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, detail: `uninstalling headroom-ai with ${cmd} in the background` }));
+        json(res, 200, { ok: true, detail: `uninstalling headroom-ai with ${cmd} in the background` });
         return;
       }
       if (tool === 'rtk') {
         const found = dirs.map((dir) => path.join(dir, 'rtk')).find((p) => existsSync(p));
         if (!found) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'rtk is not installed' }));
+          json(res, 400, { ok: false, error: 'rtk is not installed' });
           return;
         }
         try {
           existsSync(`${found}.bak`) ? unlinkSync(`${found}.bak`) : undefined;
           unlinkSync(found);
           recordActivity('agent', 'RTK uninstalled');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, detail: 'the rtk binary is removed — its hooks skip a missing rtk' }));
+          json(res, 200, { ok: true, detail: 'the rtk binary is removed — its hooks skip a missing rtk' });
         } catch (e) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: (e as Error).message || 'could not remove the rtk binary' }));
+          json(res, 500, { ok: false, error: (e as Error).message || 'could not remove the rtk binary' });
         }
         return;
       }
@@ -1169,39 +1128,32 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const file = path.join(tersioHome(), 'pipeline-positions.json');
       let positions: unknown = {};
       try { positions = JSON.parse(readFileSync(file, 'utf8')) as unknown; } catch { /* none yet */ }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, positions: positions && typeof positions === 'object' ? positions : {} }));
+      json(res, 200, { ok: true, positions: positions && typeof positions === 'object' ? positions : {} });
       return;
     }
     if (req.url === '/api/pipeline/positions' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      const body = await bodyOf(req);
       const stored = body.positions;
       if (!stored || typeof stored !== 'object') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'positions must be an object' }));
+        json(res, 400, { ok: false, error: 'positions must be an object' });
         return;
       }
       const file = path.join(tersioHome(), 'pipeline-positions.json');
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(stored, null, 2)}\n`, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      json(res, 200, { ok: true });
       return;
     }
     if (req.url === '/api/headroom/install' && req.method === 'POST') {
       if (resolveHeadroomBinary()) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, present: true }));
+        json(res, 200, { ok: true, present: true });
         return;
       }
       if (!spawnHeadroomInstall()) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'cannot start the install here — run: pip install "headroom-ai[all]"' }));
+        json(res, 500, { ok: false, error: 'cannot start the install here — run: pip install "headroom-ai[all]"' });
         return;
       }
-      res.writeHead(202, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, pending: true }));
+      json(res, 202, { ok: true, pending: true });
       return;
     }
     if (req.url === '/settings' && req.method === 'GET') {
@@ -1211,8 +1163,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         try {
           hosts = (JSON.parse(readFileSync(tersioSettingsFile(), 'utf8') ?? '{}') as { hosts?: Record<string, unknown> }).hosts ?? {};
         } catch { /* no store yet: every host reads the flat defaults */ }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        json(res, 200, {
           comboDefault: profile.comboDefault,
           cavemanDefault: profile.cavemanDefault,
           rtkDefault: profile.rtkDefault,
@@ -1226,22 +1177,17 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           accent: profile.accent,
           sidebarWidth: profile.sidebarWidth,
           currency: options.currency,
-        }));
+        });
       });
       return;
     }
     if (req.url === '/settings' && req.method === 'POST') {
-      let body: Record<string, unknown> = {};
-      try {
-        body = (JSON.parse(await readBody(req)) as Record<string, unknown>) ?? {};
-      } catch { body = {}; }
+      const body = await bodyOf(req);
       const saved = await saveDefaults(body);
       if (!saved.ok) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: saved.error }));
+        json(res, 400, { ok: false, error: saved.error });
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, ...saved.profile }));
+        json(res, 200, { ok: true, ...saved.profile });
       }
       return;
     }
@@ -1252,17 +1198,14 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       } catch { code = null; }
       const saved = await saveDashboardCurrency(code);
       if (saved === null) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'unknown currency' }));
+        json(res, 400, { ok: false, error: 'unknown currency' });
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, currency: saved }));
+        json(res, 200, { ok: true, currency: saved });
       }
       return;
     }
     if (req.url === '/api/update' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(updateView()));
+      json(res, 200, updateView());
       return;
     }
     if (req.url === '/api/update' && req.method === 'POST') {
@@ -1270,24 +1213,20 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       try {
         prefs = (JSON.parse(await readBody(req)) as UpdatePrefs) ?? {};
       } catch { prefs = {}; }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(setUpdatePrefs(prefs)));
+      json(res, 200, setUpdatePrefs(prefs));
       return;
     }
     // Both start work and return at once: the page's poll carries the status and the streamed log.
     if (req.url === '/api/update/check' && req.method === 'POST') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(startCheck(true)));
+      json(res, 200, startCheck(true));
       return;
     }
     if (req.url === '/api/update/apply' && req.method === 'POST') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(startApply()));
+      json(res, 200, startApply());
       return;
     }
     if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
+      jsonText(res, 200, agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
       return;
     }
     if (req.url?.startsWith('/api/agent/session')) {
@@ -1300,29 +1239,25 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         },
         toolStats: [], truncated: false,
       };
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      json(res, 200, body);
       return;
     }
     if (req.url?.startsWith('/api/agent/entry')) {
       const file = decodeURIComponent(queryParam(req.url, 'file') ?? '');
       const entry = decodeURIComponent(queryParam(req.url, 'entry') ?? '');
       const body = file && entry ? readAgentRequestEntry(file, entry) : emptyRequestEntry();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(body));
+      json(res, 200, body);
       return;
     }
     if (req.url?.startsWith('/export')) {
       return;
     }
     if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(healthJson());
+      jsonText(res, 200, healthJson());
       return;
     }
     if (req.url === '/status' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(await statusJson());
+      jsonText(res, 200, await statusJson());
       return;
     }
     if (req.url === '/doctor' && req.method === 'POST') {
@@ -1333,8 +1268,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       } catch { /* keep manual */ }
       const report = schedule === 'manual' ? getDoctorReport(true) : setDiagSchedule(schedule);
       recordActivity('doctor', schedule === 'manual' ? 'Doctor check' : `Check schedule to ${schedule}`, 'From the dashboard.');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(report));
+      json(res, 200, report);
       return;
     }
     if (req.url === '/doctor/fix' && req.method === 'POST') {
@@ -1343,18 +1277,15 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         const failed = await runDoctorRepairs(['extensions', 'registrations', 'ponytail']);
         recordActivity('doctor', 'Doctor repair', failed.length === 0 ? 'Extensions, registrations, and Ponytail checked.' : `${failed.length} step(s) failed.`, failed.length === 0);
         getDoctorReport(true);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: failed.length === 0, failed }));
+        json(res, 200, { ok: failed.length === 0, failed });
       } catch (e) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, failed: ['fix'], error: (e as Error).message }));
+        json(res, 200, { ok: false, failed: ['fix'], error: (e as Error).message });
       }
       return;
     }
     if (req.url === '/doctor' || req.url?.startsWith('/doctor?')) {
       const fresh = (req.url.split('?')[1] ?? '').includes('fresh=1');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(getDoctorReport(fresh)));
+      json(res, 200, getDoctorReport(fresh));
       return;
     }
     const name = (req.url ?? '/').split('?')[0];
