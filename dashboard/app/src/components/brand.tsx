@@ -135,18 +135,19 @@ export function MarkGlyph({ slug, className, color }: { slug: string; className:
   return <MaskedGlyph className={className} src={src} color={color} />;
 }
 
-export function BrandSilhouette({ model }: { model: string }) {
-  const v = vendorOf(model);
+export function BrandSilhouette({ model, provider }: { model?: string; provider?: string }) {
+  // A provider silhouette names the routing service; a model silhouette names the model author.
+  const slug = provider !== undefined ? providerMeta(provider).slug : vendorOf(model ?? "").slug;
   const cls =
     "pointer-events-none absolute -right-6 -bottom-6 size-[88px] select-none opacity-[.16] dark:opacity-[.2]";
-  if (v.slug === "openai") {
+  if (slug === "openai") {
     return (
       <span className={cn(cls, "grid place-items-center text-accent")} aria-hidden="true">
         <OpenAIGlyph className="block size-[72px]" />
       </span>
     );
   }
-  const image = v.slug ? imageMark(v.slug) : null;
+  const image = slug ? imageMark(slug) : null;
   if (image) {
     return (
       <span className={cn(cls, "grid place-items-center")} aria-hidden="true">
@@ -154,7 +155,7 @@ export function BrandSilhouette({ model }: { model: string }) {
       </span>
     );
   }
-  const mask = v.slug ? maskMark(v.slug) : null;
+  const mask = slug ? maskMark(slug) : null;
   if (mask) {
     return (
       <span className={cn(cls, "grid place-items-center text-accent")} aria-hidden="true">

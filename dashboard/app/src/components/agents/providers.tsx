@@ -22,6 +22,7 @@ import {
 } from "@/components/charts";
 import type { Column, SeriesSpec } from "@/components/charts";
 import { EmptyState, Picker } from "@/components/common";
+import { TopUsedCards, type TopUsedEntry } from "./top-hero";
 import {
   PALETTE,
   fmt,
@@ -132,6 +133,20 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
     () => agent.byProvider.reduce<AgentRow | null>((top, p) => (top === null || p.total > top.total ? p : top), null),
     [agent.byProvider],
   );
+  // The hero ranks by requests; its silhouette is the leader's own brand mark.
+  const topEntries = useMemo<TopUsedEntry[]>(
+    () =>
+      [...agent.byProvider]
+        .toSorted((a, b) => b.requests - a.requests)
+        .slice(0, 3)
+        .map((p) => ({
+          name: p.provider,
+          detail: `${fmtShort(p.total)} tokens`,
+          requests: p.requests,
+          share: p.requests / Math.max(1, totals.requests),
+        })),
+    [agent.byProvider, totals.requests],
+  );
 
   return (
     <Page>
@@ -171,6 +186,8 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
           hint={`${fmt(totals.requests - totals.failed)} succeeded`}
         />
       </StatGrid>
+
+      <TopUsedCards kind="provider" entries={topEntries} />
 
       <Card
         title="Provider totals" icon="plug-zap"

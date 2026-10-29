@@ -188,7 +188,7 @@ export function StatGrid({
       data-reveal
       data-stat-band={cols}
       className={cn(
-        "translate-y-[18px] grid overflow-hidden rounded-xl border border-line bg-panel opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(.16,1,.3,1)] data-[reveal=in]:translate-y-0 data-[reveal=in]:opacity-100",
+        "shine translate-y-[18px] grid overflow-hidden rounded-xl border border-line bg-panel opacity-0 transition-[opacity,transform] duration-500 ease-[cubic-bezier(.16,1,.3,1)] data-[reveal=in]:translate-y-0 data-[reveal=in]:opacity-100",
         sizes[cols],
         RULES[cols] ?? RULES[2],
         className,

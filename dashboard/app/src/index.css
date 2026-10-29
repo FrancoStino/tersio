@@ -171,9 +171,28 @@
 }
 
 
+/* The topbar fill: the page bg itself, so the bar and the rail are exactly one color. */
+@utility bar-veil {
+  background-color: var(--bg);
+}
+
+/* A hint of shine: a hairline highlight along a card's top edge, with a soft sheen fading under it. */
+  @utility shine {
+    position: relative;
+    &::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1px;
+      z-index: 1;
+      background: linear-gradient(90deg, transparent, var(--shine-line) 50%, transparent);
+      pointer-events: none;
+    }
+  }
+
 /* Tersio dashboard design tokens. */
   :root {
-    --bg: #f4f4f5; --panel: #ffffff; --ink: #18181b; --dim: #52525b;
+    --bg: #f2f2f3; --panel: #ffffff; --sidebar: var(--bg); --sidebar-foreground: var(--ink); --shine-line: rgba(24, 24, 27, .18); --shine-sheen: rgba(24, 24, 27, .05); --bar-veil: rgba(242, 242, 243, .72); --ink: #18181b; --dim: #52525b;
     --line: rgba(24, 24, 27, .12); --accent: #047857; --accent-soft: rgba(4, 120, 87, .12);
     --track: rgba(24, 24, 27, .08); --grid: rgba(4, 120, 87, .07);
     --cell-0: rgba(24, 24, 27, .07);
@@ -199,7 +218,7 @@
   html[data-theme="dark"] { color-scheme: dark; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #09090b; --panel: #101014; --ink: #f4f4f5; --dim: #a1a1aa;
+      --bg: #000; --panel: #09090a; --shine-line: rgba(244, 244, 245, .2); --shine-sheen: rgba(244, 244, 245, .04); --bar-veil: rgba(0, 0, 0, .72); --ink: #f4f4f5; --dim: #a1a1aa;
       --line: rgba(255, 255, 255, .09); --accent: #34d399; --accent-soft: rgba(52, 211, 153, .1);
       --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .05);
       --cell-0: rgba(255, 255, 255, .07);
@@ -220,7 +239,7 @@
   }
   body { background: var(--bg); color: var(--ink); }
   html[data-theme="dark"] {
-    --bg: #09090b; --panel: #101014; --ink: #f4f4f5; --dim: #a1a1aa;
+    --bg: #000; --panel: #09090a; --shine-line: rgba(244, 244, 245, .2); --shine-sheen: rgba(244, 244, 245, .04); --bar-veil: rgba(0, 0, 0, .72); --ink: #f4f4f5; --dim: #a1a1aa;
     --line: rgba(255, 255, 255, .09); --accent: #34d399; --accent-soft: rgba(52, 211, 153, .1);
     --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .05);
     --cell-0: rgba(255, 255, 255, .07);
@@ -343,30 +362,4 @@
 }
 @media (min-width: 1024px) {
   [data-stat-band] > :last-child { grid-column: span var(--stat-band-span-lg, 1); }
-}
-
-/* The topbar fill: the page bg itself, so the bar and the rail are exactly one color. */
-@utility bar-veil {
-  background-color: var(--bg);
-}
-
-/* A hairline highlight along a card's top edge. */
-@utility shine {
-  position: relative;
-  &::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 1px;
-    z-index: 1;
-    background: linear-gradient(90deg, transparent, var(--shine-line, var(--line)) 50%, transparent);
-    pointer-events: none;
-  }
-}
-
-/* The hairline color follows the palette. */
-:root { --shine-line: rgba(24, 24, 27, .18); }
-html[data-theme="dark"] { --shine-line: rgba(244, 244, 245, .2); }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --shine-line: rgba(244, 244, 245, .2); }
 }

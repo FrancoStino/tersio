@@ -17,6 +17,7 @@ import {
 import type { Column, SeriesSpec } from "@/components/charts";
 import type { AgentModelPerformancePoint, AgentRow, AgentStats } from "@/lib/data";
 import { AGENT_RANGE_LABEL } from "@/lib/data";
+import { TopUsedCards, type TopUsedEntry } from "./top-hero";
 import { PALETTE, fmt, fmtMs, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
 import { Icon } from "@/components/icon";
 
@@ -237,6 +238,21 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
   const [expanded, setExpanded] = useState<string | null>(null);
   const view = useMemo(() => buildView(agent), [agent]);
   const word = bucketWord(agent.bucketMs);
+  // The hero ranks by requests; its bar keeps each model's chart color so the page reads as one story.
+  const topEntries = useMemo<TopUsedEntry[]>(
+    () =>
+      [...view.rows]
+        .toSorted((a, b) => b.requests - a.requests)
+        .slice(0, 3)
+        .map((row) => ({
+          name: row.key,
+          detail: row.provider,
+          requests: row.requests,
+          share: row.requests / Math.max(1, view.totalRequests),
+          color: view.colors.get(`${row.key}\u0000${row.provider}`),
+        })),
+    [view],
+  );
   const perf = useMemo(() => {
     const map = new Map<string, AgentModelPerformancePoint[]>();
     for (const series of agent.modelPerformance) map.set(modelKey({ key: series.model, provider: series.provider }), series.points);
@@ -414,6 +430,8 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
           hint={view.unpricedRequests > 0 ? `${fmt(view.unpricedRequests)} unpriced` : undefined}
         />
       </StatGrid>
+
+      <TopUsedCards kind="model" entries={topEntries} />
 
       <Card
         title="Request share" icon="chart-spline"
