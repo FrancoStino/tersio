@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { agentJson, healthJson, isHeadroomWrapTarget, isVendorTool, json, statusJson } from '../../cli/dashboard.ts';
+import { agentJson, headroomDashboardPlan, headroomProxyAnswers, headroomProxyRequests, healthJson, isHeadroomWrapTarget, isVendorTool, json, statusJson } from '../../cli/dashboard.ts';
+import { createServer } from 'node:http';
 import { withHome } from '../helpers/env.ts';
 
 // The route handlers pass these names straight to a child process, so the guards are the boundary.
@@ -43,4 +44,49 @@ describe('dashboard payloads are serialized once', () => {
 test('json refuses a pre-serialized string, so a folded route cannot double-encode', () => {
   const res = { writeHead: () => res, end: () => res };
   expect(() => json(res, 200, healthJson())).toThrow(/jsonText/);
+});
+
+// The dashboard command prints its URL with the proxy down, so the drawer only opens a port that answers.
+test('the proxy probe tells a live port from a refused one', async () => {
+  const server = createServer((_req, res) => { res.writeHead(200); res.end('ok'); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    expect(await headroomProxyAnswers(`http://127.0.0.1:${port}/dashboard`)).toBe(true);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  expect(await headroomProxyAnswers(`http://127.0.0.1:${port}/dashboard`, 400)).toBe(false);
+});
+
+// The route's fork: an answering proxy redirects, a silent one explains how to start it.
+test('the dashboard plan redirects only when the proxy answers', () => {
+  expect(headroomDashboardPlan('http://127.0.0.1:8787/dashboard', true)).toEqual({ kind: 'redirect', url: 'http://127.0.0.1:8787/dashboard' });
+  expect(headroomDashboardPlan('http://127.0.0.1:9001/dashboard', false)).toEqual({ kind: 'explain', port: '9001' });
+  expect(headroomDashboardPlan(null, false)).toEqual({ kind: 'explain', port: '8787' });
+});
+
+// Closing the tab must not pull the proxy out from under a routed session.
+test('the stop guard reads the proxy traffic counters, and fails safe', async () => {
+  const start = async (payload: string): Promise<{ url: string; close: () => Promise<void> }> => {
+    const server = createServer((req, res) => {
+      if (req.url !== '/stats') { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(payload);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    return { url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  };
+
+  const idle = await start(JSON.stringify({ summary: { api_requests: 0, compression: { requests_compressed: 0 } } }));
+  try { expect(await headroomProxyRequests(idle.url)).toBe(0); } finally { await idle.close(); }
+
+  const busy = await start(JSON.stringify({ summary: { api_requests: 3, compression: { requests_compressed: 1 } } }));
+  try { expect(await headroomProxyRequests(busy.url)).toBe(3); } finally { await busy.close(); }
+
+  const junk = await start('not json');
+  try { expect(await headroomProxyRequests(junk.url)).toBeNull(); } finally { await junk.close(); }
+
+  expect(await headroomProxyRequests('http://127.0.0.1:9', 400)).toBeNull();
 });

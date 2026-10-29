@@ -671,11 +671,6 @@ export async function fetchWrapTargets(): Promise<Array<{ name: string; availabl
   return body?.targets ?? null;
 }
 
-/** Upstream headroom surfaces Tersio does not reimplement: the savings dashboard and the memory store. */
-export async function runHeadroomAction(action: "dashboard" | "memory"): Promise<{ ok: boolean; detail?: string; error?: string } | null> {
-  return apiJson("/api/headroom/action", { action });
-}
-
 /** The canvas mirrors the wrap record in browser storage; the server copy stays the source of truth. */
 const WRAP_KEY = "tersio.headroom.wrap.v1";
 

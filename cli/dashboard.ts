@@ -201,6 +201,10 @@ export function isVendorTool(tool: string): tool is 'headroom' | 'rtk' {
   return tool === 'headroom' || tool === 'rtk';
 }
 
+/** The proxy this dashboard started for its own link; a user-started one is never touched. */
+let dashboardProxy: { child: import('node:child_process').ChildProcess; port: string } | null = null;
+process.once('exit', () => { try { dashboardProxy?.child.kill('SIGTERM'); } catch { /* gone */ } });
+
 /** The one Headroom install job, so the Tools page can poll until the binary appears or the pip run fails. */
 const headroomJob: { startedAt: number; code: number | null; error: string | null } = { startedAt: 0, code: null, error: null };
 /** pip's stderr lands here, so a failed install names its own cause instead of polling forever. */
@@ -680,6 +684,10 @@ function saveDefaults(body: Record<string, unknown>): Promise<
     profile.accent = v;
     events.push(`Accent to ${v}`);
   }
+  if (body.sidebarOpen !== undefined) {
+    if (typeof body.sidebarOpen !== 'boolean') return { ok: false, error: 'sidebarOpen must be true or false' };
+    profile.sidebarOpen = body.sidebarOpen;
+  }
   if (body.sidebarWidth !== undefined) {
     if (typeof body.sidebarWidth !== 'number') return { ok: false, error: 'sidebarWidth must be a number' };
     // A drag changes it often, so it is saved without an activity line.
@@ -705,6 +713,7 @@ function saveDefaults(body: Record<string, unknown>): Promise<
       devTools: profile.devTools,
       accent: profile.accent,
       sidebarWidth: profile.sidebarWidth,
+      sidebarOpen: profile.sidebarOpen,
     },
   };
   }
@@ -759,6 +768,40 @@ async function bodyOf(req: http.IncomingMessage): Promise<Record<string, unknown
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+/** Requests the proxy has served; null when it cannot say, which is reason enough to leave it running. */
+export async function headroomProxyRequests(url: string, budgetMs = 1500): Promise<number | null> {
+  try {
+    const res = await fetch(new URL('/stats', url), { signal: AbortSignal.timeout(budgetMs) });
+    if (!res.ok) return null;
+    const stats = (await res.json()) as { summary?: { api_requests?: unknown; compression?: { requests_compressed?: unknown } } };
+    const api = Number(stats.summary?.api_requests);
+    const compressed = Number(stats.summary?.compression?.requests_compressed);
+    const served = Math.max(Number.isFinite(api) ? api : 0, Number.isFinite(compressed) ? compressed : 0);
+    return served;
+  } catch {
+    return null;
+  }
+}
+
+/** What the dashboard link does once the proxy has been asked: a redirect, or the page that says how to start it. */
+export function headroomDashboardPlan(url: string | null, proxyAnswers: boolean): { kind: 'redirect'; url: string } | { kind: 'explain'; port: string } {
+  const port = (() => {
+    try { return url ? new URL(url).port || '8787' : '8787'; } catch { return '8787'; }
+  })();
+  return url && proxyAnswers ? { kind: 'redirect', url } : { kind: 'explain', port };
+}
+
+/** Whether Headroom's proxy answers at the URL its dashboard command printed; a refused port is the usual case. */
+export async function headroomProxyAnswers(url: string, budgetMs = 1500): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(budgetMs) });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1010,6 +1053,59 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       json(res, 200, { ok: true, detail: `${name} has no init subcommand — headroom wrap set it up instead; the off switch undoes it` });
       return;
     }
+    // The dashboard link is a navigation, not a scripted popup: probe, start what Tersio owns, then redirect.
+    if (req.url === '/headroom/dashboard' && req.method === 'GET') {
+      const bin = resolveHeadroomBinary();
+      const run = bin ? await headroomRun(bin, ['dashboard', '--no-open'], 30_000) : null;
+      const url = run?.lines.join(' ').match(/https?:\/\/\S+/)?.[0] ?? null;
+      let answered = url !== null && await headroomProxyAnswers(url);
+      // Nothing listening: start one Tersio owns, so closing the tab can end it again.
+      if (!answered && bin && !dashboardProxy) {
+        dashboardProxy = { child: spawn(bin, ['proxy'], { stdio: 'ignore', windowsHide: true }), port: url ? new URL(url).port || '8787' : '8787' };
+        recordActivity('agent', 'Headroom proxy started for the dashboard');
+        for (let tick = 0; tick < 60 && !answered; tick += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          answered = url !== null && await headroomProxyAnswers(url, 500);
+        }
+      }
+      const plan = headroomDashboardPlan(url, answered);
+      if (plan.kind === 'redirect') {
+        res.writeHead(302, { Location: plan.url, 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(`<!doctype html><meta charset="utf-8"><title>Headroom dashboard</title>
+<body style="font:14px/1.5 system-ui,sans-serif;padding:2rem;background:#141414;color:#e8e8e8">
+<h1 style="font-size:1rem;margin:0 0 .5rem">Headroom&rsquo;s proxy is not running</h1>
+<p style="margin:0 0 .75rem">Start it, then reload this page.</p>
+<pre style="background:#222;padding:.75rem;border-radius:6px;margin:0 0 .75rem">headroom proxy</pre>
+<p style="color:#8a8a8a;margin:0">It prints <code>http://127.0.0.1:${plan.port}</code> when it is ready.</p>`);
+      return;
+    }
+    // The opener calls this when the Headroom tab closes; only a proxy this server started is killed.
+    if (req.url === '/headroom/dashboard/stop' && req.method === 'POST') {
+      const owned = dashboardProxy;
+      if (!owned) {
+        json(res, 200, { ok: true, stopped: false });
+        return;
+      }
+      // A wrapped session may have found this proxy meanwhile; only a proxy that served nothing dies here.
+      const served = await headroomProxyRequests(`http://127.0.0.1:${owned.port}`);
+      if (served === null || served > 0) {
+        json(res, 200, {
+          ok: true,
+          stopped: false,
+          kept: served === null ? 'the proxy did not answer its stats endpoint' : `it served ${served} request(s)`,
+        });
+        return;
+      }
+      dashboardProxy = null;
+      try { owned.child.kill('SIGTERM'); } catch { /* already gone */ }
+      recordActivity('agent', 'Headroom proxy stopped with the dashboard tab', `port ${owned.port}`, true);
+      json(res, 200, { ok: true, stopped: true });
+      return;
+    }
     // The wrap record lives tersio-side too, so a second browser sees the same switches. Headroom's
     // own checks correct it: a wrap undone outside Tersio clears instead of lying.
     if (req.url === '/api/headroom/wraps' && req.method === 'GET') {
@@ -1027,21 +1123,6 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         try { writeFileSync(file, `${JSON.stringify(wraps, null, 2)}\n`, 'utf8'); } catch { /* best effort */ }
       }
       json(res, 200, { ok: true, wraps });
-      return;
-    }
-    // Upstream surfaces Tersio does not reimplement: its savings dashboard, memory store, and evals.
-    if (req.url === '/api/headroom/action' && req.method === 'POST') {
-      const body = await bodyOf(req);
-      const action = String(body.action ?? '');
-      const bin = resolveHeadroomBinary();
-      const args = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : null;
-      if (!bin || !args) {
-        json(res, 400, { ok: false, error: !bin ? 'headroom is not installed' : 'unknown action' });
-        return;
-      }
-      const run = await headroomRun(bin, args, 30_000);
-      const out = run.lines.slice(-6).join('\n');
-      json(res, 200, run.ok ? { ok: true, detail: out || `${action}: done` } : { ok: false, error: out || `the ${action} command failed` });
       return;
     }
     if (req.url === '/api/headroom/wraps' && req.method === 'POST') {
@@ -1186,6 +1267,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           devTools: profile.devTools,
           accent: profile.accent,
           sidebarWidth: profile.sidebarWidth,
+          sidebarOpen: profile.sidebarOpen,
           currency: options.currency,
         });
       });

@@ -21,7 +21,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "../toaster";
 import { cn } from "cn";
-import { checkVendor, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, runHeadroomAction, storeWraps, type HealthReport, type VendorRow } from "@/lib/data";
+import { checkVendor, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, storeWraps, type HealthReport, type VendorRow } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -475,11 +475,16 @@ export function VendorFooter({
     onAfter();
   };
   const updateLabel = row?.upstream ? `Update to ${row.upstream}` : "Update";
-  const openDashboard = async (): Promise<void> => {
-    const result = await runHeadroomAction("dashboard");
-    if (!result) toast("Could not open the dashboard", "The dashboard server did not answer.", "circle-alert");
-    else if (!result.ok) toast(result.error ?? "headroom refused", "Start its proxy first — headroom dashboard needs one.", "circle-alert");
-    else toast(result.detail ?? "Headroom dashboard opened", "Its own savings view, in a new tab.", "check");
+  const openDashboard = (): void => {
+    // A plain navigation tab: the route probes (and may start) Headroom's proxy, so nothing is popup-blocked.
+    const tab = window.open("/headroom/dashboard", "_blank");
+    if (!tab) return;
+    // Cross-origin tabs still report `closed`; the server only kills a proxy it started for this link.
+    const timer = window.setInterval(() => {
+      if (!tab.closed) return;
+      window.clearInterval(timer);
+      void fetch("/headroom/dashboard/stop", { method: "POST" });
+    }, 2000);
   };
   return (
     <DrawerFooter className="border-t border-line px-6 pb-4 pt-3.5">
@@ -522,7 +527,7 @@ export function VendorFooter({
         )}
       </div>
       {tool === "headroom" && installed ? (
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void openDashboard()} className="w-full gap-1.5 text-dim">
+        <Button size="sm" variant="ghost" disabled={busy} onClick={openDashboard} className="w-full gap-1.5 text-dim">
           <Icon name="gauge" className="size-3.5" />
           Headroom dashboard
         </Button>
