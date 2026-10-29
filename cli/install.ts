@@ -629,7 +629,7 @@ async function runCommandMenu(): Promise<void> {
     { value: 'update', label: updateLabel, hint: updateHint },
     { value: 'doctor', label: 'Doctor', hint: 'verify the installation' },
     { value: 'dashboard', label: 'Dashboard', hint: 'open the report in your browser' },
-    { value: 'uninstall', label: 'Uninstall plugin', hint: 'remove tersio' },
+    { value: 'uninstall', label: 'Uninstall', hint: 'remove tersio and the add-ons you pick' },
   ], 'install');
   if (choice.status !== 'selected') {
     closeRL();
@@ -908,6 +908,32 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (headroomEnabled) {
     if (hostExplicit && !chosenFields.includes('headroomDefault')) chosenFields.push('headroomDefault');
     if (!hostExplicit) profile.headroomDefault = 'on';
+  }
+  // Headroom's durable install for the agent this run targets. headroom ships init for
+  // claude/codex/copilot/openclaw; a host without one gets the wrap hint instead of a silent no-op.
+  // The update lifecycle refreshes the user's own Headroom install alongside the add-ons.
+  if (applyUpdate && !dryRun) {
+    const headroomBin = resolveHeadroomBinary();
+    if (headroomBin) {
+      try {
+        await execP(headroomBin, ['update'], { timeout: 300_000 });
+        sayTagged('  Headroom — updated to the latest release');
+      } catch {
+        sayTagged('  [warn] Headroom update failed — run: headroom update');
+      }
+    }
+  }
+  if ((headroomEnabled || profile.headroomDefault === 'on') && !dryRun) {
+    const headroomBin = resolveHeadroomBinary();
+    if (headroomBin) {
+      try {
+        const shim = shimCommand(headroomBin, ['init', '-g', targetHost]);
+        await execP(shim.cmd, shim.args, { timeout: 120_000 });
+        if (!quiet) sayTagged(`  Headroom — durable integration installed for ${targetHost}`);
+      } catch {
+        if (!quiet) sayTagged(`  Headroom — no durable install for ${targetHost}; wrap it per session: headroom wrap ${targetHost}`);
+      }
+    }
   }
 
   const userDir = OMP_AGENT_DIR;
