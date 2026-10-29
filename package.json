@@ -1,7 +1,7 @@
 {
   "name": "@krtclcdy/tersio",
   "version": "2.25.16",
-  "description": "\u2702\ufe0f Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, Headroom compression, and a gain dashboard \u2014 one-command combos over one shared extension tree.",
+  "description": "✂️ Token saver and usage tracker for coding agents: terse Caveman replies, compact RTK shell output, lean Ponytail code, pstack rigor, Headroom compression, and a gain dashboard — one-command combos over one shared extension tree.",
   "keywords": [
     "token-saving",
     "ai-tools",
@@ -189,15 +189,15 @@
     "node": ">=20.12.0"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.0.22",
-    "@types/node": "^26.4.1",
-    "happy-dom": "^20.14.5",
-    "oxlint": "^1.85.0",
+    "@opencode/plugin": "^2.2.1",
+    "@types/node": "^26.6.6",
+    "happy-dom": "^20.14.6",
+    "oxlint": "^1.90.0",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "@clack/core": "^1.5.1",
-    "@clack/prompts": "^1.8.0"
+    "@clack/prompts": "^1.8.1"
   }
 }
