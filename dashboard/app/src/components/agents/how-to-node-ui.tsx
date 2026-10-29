@@ -5,12 +5,15 @@ import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
 import {
   Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle,
 } from "@/components/ui/drawer";
 import { MarkGlyph } from "@/components/brand";
+import { imageMark, maskMark } from "@/lib/marks";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { luminance, MARK_BG } from "../../../../../extensions/shared/brand-marks.ts";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -18,7 +21,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "../toaster";
 import { cn } from "cn";
-import { checkVendor, fetchHealth, fetchWrapTargets, postHeadroomWrap, postVendorAction, type VendorRow } from "@/lib/data";
+import { checkVendor, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, runHeadroomAction, storeWraps, type HealthReport, type VendorRow } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -39,15 +42,15 @@ export interface NodeSurfaceProps {
   onSaved: () => void;
 }
 
-/** One option row: a full-width control with the active state carried by a check. */
-export function OptionRow({
-  label, active, disabled, onClick, hint,
+/** One selectable level card: label, optional hint, and a check that pops in on select. */
+function LevelCard({
+  label, hint, active, disabled, onClick,
 }: {
   label: string;
+  hint?: string;
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
-  hint?: string;
 }) {
   return (
     <button
@@ -56,25 +59,59 @@ export function OptionRow({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex w-full cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors duration-150",
-        active ? "border-accent/60 bg-accent-soft" : "border-transparent hover:border-line hover:bg-track/60",
-        disabled && "cursor-default opacity-50",
+        "group relative flex min-h-[52px] flex-col items-start justify-center gap-0.5 overflow-hidden rounded-lg border px-3 py-2 text-left transition-all duration-200",
+        active
+          ? "border-accent/60 bg-accent-soft"
+          : "border-line hover:-translate-y-px hover:border-accent/40 hover:bg-track/40",
+        disabled && "cursor-default opacity-50 hover:translate-y-0",
       )}
     >
+      <span className={cn("mono truncate text-[11px] font-semibold", active ? "text-ink" : "text-dim group-hover:text-ink")}>{label}</span>
+      {hint ? <span className="mono truncate text-[9px] text-dim">{hint}</span> : null}
       <span
         aria-hidden="true"
         className={cn(
-          "grid size-4 shrink-0 place-items-center rounded border transition-colors",
-          active ? "border-accent bg-accent text-panel" : "border-line text-transparent group-hover:border-dim",
+          "absolute top-2 right-2 grid size-3.5 place-items-center rounded-full border transition-transform duration-150",
+          active ? "scale-100 border-accent bg-accent text-panel" : "scale-0 border-line",
         )}
       >
-        <Icon name="check" className="size-3" />
-      </span>
-      <span className={cn("mono truncate text-[11px]", active ? "text-ink" : "text-dim group-hover:text-ink")}>{label}</span>
-      <span className={cn("mono ml-auto shrink-0 text-[9px]", active ? "text-accent" : "text-transparent")}>
-        {hint ?? "current"}
+        <Icon name="check" className="size-2.5" />
       </span>
     </button>
+  );
+}
+
+/** A settings row: the title and hint on the left, a switch on the right. */
+function ToggleRow({
+  title, hint, checked, disabled, onCheckedChange,
+}: {
+  title: string;
+  hint: string;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (on: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-line bg-track/20 px-3.5 py-3">
+      <div className="min-w-0">
+        <p className="m-0 text-[12px] font-semibold">{title}</p>
+        <p className="m-0 mt-0.5 text-[10px] leading-snug text-dim">{hint}</p>
+      </div>
+      <Switch size="sm" checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+    </div>
+  );
+}
+
+/** Shown when a vendor binary is not on the machine: configure nothing, install from the footer. */
+function NotInstalledNote({ tool }: { tool: string }) {
+  return (
+    <Alert>
+      <Icon name="circle-alert" className="size-4" />
+      <AlertTitle className="mono text-[11px]">{tool} is not installed</AlertTitle>
+      <AlertDescription className="text-[10px] leading-snug">
+        Install it from the footer below to configure it and see its version.
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -82,8 +119,7 @@ function SurfaceHeader({ node, modes, hostState }: { node: NodeId; modes: ModeSt
   const glyph = nodeGlyph(node);
   const state = nodeState(node, modes, hostState);
   return (
-    // pr-7 clears the dialog's own close button, which floats over the row's right edge.
-    <span className="flex items-center gap-2 pr-7">
+    <span className="flex items-center gap-2">
       {glyph ? <span aria-hidden="true" className="text-[13px] leading-none">{glyph}</span> : null}
       <span className="min-w-0 truncate text-sm font-semibold">{nodeTitle(node)}</span>
       <span className="mono ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] leading-none text-dim">
@@ -205,8 +241,8 @@ function AgentModes({ host, onSaved }: { host: HostId; onSaved: () => void }) {
   );
 }
 
-/** Mode nodes open a dialog: the level list, and the scope the level writes to. */
-export function ModeDialog({ node, open, onOpenChange, modes, hostState, busy, onSet }: NodeSurfaceProps) {
+/** Mode nodes open a side drawer: the level list, and the scope the level writes to. */
+export function ModeDrawer({ node, open, onOpenChange, modes, hostState, busy, onSet }: NodeSurfaceProps) {
   const key = (MODES.find((m) => m.key === node)?.key ?? "headroom") as keyof typeof PICKER;
   const picker = PICKER[key];
   const installed = HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => h.id as HostId);
@@ -221,15 +257,13 @@ export function ModeDialog({ node, open, onOpenChange, modes, hostState, busy, o
   const inherited = modes !== null && section !== undefined && section[picker.field as "comboDefault"] === undefined;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm gap-0">
-        <DialogHeader>
-          <DialogTitle><SurfaceHeader node={node} modes={modes} hostState={hostState} /></DialogTitle>
-          <DialogDescription className="text-[11px] leading-relaxed">
-            {ABOUT[node] ?? ""}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-1.5">
+    <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
+      <DrawerContent>
+        <DrawerHeader className="border-b border-line pb-3.5 px-6 pt-4">
+          <DrawerTitle><SurfaceHeader node={node} modes={modes} hostState={hostState} /></DrawerTitle>
+          <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT[node] ?? ""}</DrawerDescription>
+        </DrawerHeader>
+        <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto px-6 py-4 pb-5">
           <div className="mb-1 flex items-center gap-2">
             <span className="mono text-[10px] tracking-[0.1em] text-dim uppercase">scope</span>
             <Select value={scope} onValueChange={(v) => setScope(v as HostId | "all")}>
@@ -252,28 +286,26 @@ export function ModeDialog({ node, open, onOpenChange, modes, hostState, busy, o
               <Skeleton className="h-8 w-full rounded-md" />
             </div>
           ) : (
-            picker.options.map((option) => (
-              <OptionRow
-                key={option.id}
-                label={option.label}
-                active={current === option.id}
-                disabled={busy !== null}
-                hint={inherited && current === option.id ? "inherited" : undefined}
-                onClick={() => onSet(node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
-              />
-            ))
+            <div className="grid grid-cols-2 gap-1.5 [&>*:last-child:nth-child(odd)]:col-span-2">
+              {picker.options.map((option) => (
+                <LevelCard
+                  key={option.id}
+                  label={option.label}
+                  hint={inherited && current === option.id ? "inherited" : undefined}
+                  active={current === option.id}
+                  disabled={busy !== null || option.id === "custom"}
+                  onClick={() => onSet(node, picker.field, picker.field === "rtkDefault" ? option.id === "on" : option.id, scope === "all" ? undefined : scope)}
+                />
+              ))}
+            </div>
           )}
-        </div>
-        <DialogFooter className="mt-3 flex-row items-center justify-between border-t border-line pt-2.5">
-          {picked ? (
-            <code className="mono rounded bg-track/40 px-1.5 py-0.5 text-[10px] text-ink">/{key} {picked}</code>
-          ) : <span />}
-          <span className="mono text-[9px] text-dim">
+          <p className="mono m-0 mt-1 text-[9px] text-dim">
             {scope !== "all" ? `saves for ${scope} only` : "every agent reads this"}
-          </span>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            {picked ? ` · /${key} ${picked}` : ""}
+          </p>
+        </div>
+      </DrawerContent>
+    </Drawer>
   );
 }
 
@@ -374,11 +406,14 @@ const WRAP_SLUGS: Record<string, string> = {
 function BrandMark({ name, className }: { name: string; className: string }) {
   const slug = WRAP_SLUGS[name];
   if (slug === undefined) return <Icon name={WRAP_ICONS[name] ?? "terminal"} className={className} />;
-  const color = MARK_BG[slug];
-  if (color === undefined) return <Icon name={WRAP_ICONS[name] ?? "terminal"} className={className} />;
+  const image = imageMark(slug);
+  if (image) return <img src={image} alt="" className={cn("shrink-0 object-contain", className)} />;
+  const mask = maskMark(slug);
+  if (!mask) return <Icon name={WRAP_ICONS[name] ?? "terminal"} className={className} />;
   // A brand color near black or white disappears on the theme, so those marks fall back to the row's ink.
-  const lum = luminance(color);
-  return <MarkGlyph slug={slug} className={className} color={lum < 60 || lum > 225 ? "currentColor" : color} />;
+  const color = MARK_BG[slug];
+  const lum = color === undefined ? 0 : luminance(color);
+  return <MarkGlyph slug={slug} className={className} color={color !== undefined && lum >= 60 && lum <= 225 ? color : "currentColor"} />;
 }
 
 /**
@@ -386,15 +421,25 @@ function BrandMark({ name, className }: { name: string; className: string }) {
  * background when a newer build exists, or remove the binary. Only headroom and rtk carry one —
  * caveman and ponytail ship inside Tersio and update with it.
  */
-export function VendorFooter({ tool, source, open }: { tool: "headroom" | "rtk"; source: "Headroom" | "RTK"; open: boolean }) {
+export function VendorFooter({
+  tool, source, open, installed, onAfter,
+}: {
+  tool: "headroom" | "rtk";
+  source: "Headroom" | "RTK";
+  open: boolean;
+  installed: boolean;
+  onAfter: () => void;
+}) {
   const toast = useToast();
-  const [phase, setPhase] = useState<"idle" | "checking" | "update" | "updating" | "removing">("idle");
+  const [phase, setPhase] = useState<"idle" | "checking" | "update" | "confirm-uninstall" | "busy">("idle");
+  const [busyLabel, setBusyLabel] = useState("");
   const [row, setRow] = useState<VendorRow | null>(null);
   useEffect(() => {
     if (!open) { setPhase("idle"); setRow(null); }
   }, [open]);
-  const busy = phase === "checking" || phase === "updating" || phase === "removing";
+  const busy = phase === "busy";
   const updateReady = phase === "update";
+  const confirming = phase === "confirm-uninstall";
   const dots = (
     <span aria-hidden="true" className="flex items-center gap-0.5">
       {[0, 1, 2].map((i) => (
@@ -408,34 +453,85 @@ export function VendorFooter({ tool, source, open }: { tool: "headroom" | "rtk";
     setRow(found);
     setPhase(found?.upstream && found.pin !== found.upstream ? "update" : "idle");
   };
-  const act = async (action: "update" | "uninstall"): Promise<void> => {
-    setPhase(action === "update" ? "updating" : "removing");
+  const runVendor = async (action: "update" | "uninstall"): Promise<void> => {
+    setBusyLabel(action === "uninstall" ? `uninstalling ${tool}` : installed ? `updating ${tool}` : `installing ${tool}`);
+    setPhase("busy");
     const result = await postVendorAction(tool, action);
-    toast(result?.ok ? result.detail : result?.error ?? "the dashboard server did not answer", result?.ok ? "Runs in the background." : "Nothing changed.", result?.ok ? "check" : "circle-alert");
-    if (result?.ok && action === "uninstall") { setPhase("idle"); setRow(null); return; }
+    if (!result?.ok) {
+      toast(result?.error ?? "the dashboard server did not answer", "Nothing changed.", "circle-alert");
+      setPhase("idle");
+      return;
+    }
+    toast(result.detail, "Runs in the background.", "check");
+    // The job is detached, so the bar rides a health poll: it ends when the binary state flips.
+    const key = tool === "headroom" ? "headroom" : "rtk";
+    const wasVersion = row?.pin ?? null;
+    for (let tick = 0; tick < 30; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const report = await fetchHealth();
+      const state = report?.[key];
+      if (!state) continue;
+      if (action === "uninstall" && !state.present) break;
+      if (action === "update" && state.present && state.version !== wasVersion) break;
+    }
     setPhase("idle");
+    setRow(null);
+    onAfter();
   };
   const updateLabel = row?.upstream ? `Update to ${row.upstream}` : "Update";
+  const openDashboard = async (): Promise<void> => {
+    const result = await runHeadroomAction("dashboard");
+    if (!result) toast("Could not open the dashboard", "The dashboard server did not answer.", "circle-alert");
+    else if (!result.ok) toast(result.error ?? "headroom refused", "Start its proxy first — headroom dashboard needs one.", "circle-alert");
+    else toast(result.detail ?? "Headroom dashboard opened", "Its own savings view, in a new tab.", "check");
+  };
   return (
     <DrawerFooter className="border-t border-line px-6 pb-4 pt-3.5">
+      {phase === "busy" ? <Progress value={null} className="w-full" /> : null}
       <div className="grid w-full grid-cols-2 gap-2">
-        {updateReady ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void act("update")} className="w-full gap-1.5 border-accent/40 text-accent">
-            {busy ? dots : <Icon name="circle-arrow-up" className="size-3.5" />}
-            {busy ? "updating" : updateLabel}
-          </Button>
+        {installed ? (
+          updateReady ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void runVendor("update")} className="w-full gap-1.5 border-accent/40 text-accent">
+              {busy ? busyLabel : updateLabel}
+              {busy ? dots : <Icon name="circle-arrow-up" className="size-3.5" />}
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" disabled={busy || phase === "confirm-uninstall"} onClick={() => void check()} className="w-full gap-1.5">
+              {phase === "checking" ? "checking" : row ? "check again" : "Check for updates"}
+              {phase === "checking" ? dots : <Icon name="refresh-cw" className="size-3.5" />}
+            </Button>
+          )
         ) : (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void check()} className="w-full gap-1.5">
-            {busy ? dots : <Icon name="refresh-cw" className="size-3.5" />}
-            {busy ? "checking" : row ? "check again" : "Check for updates"}
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void runVendor("update")} className="w-full gap-1.5">
+            {busy ? busyLabel : "Install"}
+            {busy ? dots : <Icon name="plus" className="size-3.5" />}
           </Button>
         )}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act("uninstall")} className="w-full gap-1.5 text-dim">
-          {phase === "removing" ? dots : <Icon name="trash" className="size-3.5" />}
-          {phase === "removing" ? "removing" : "Uninstall"}
-        </Button>
+        {confirming ? (
+          <Button size="sm" variant="destructive" disabled={busy} onClick={() => void runVendor("uninstall")} className="w-full gap-1.5">
+            {busy ? busyLabel : "Confirm uninstall"}
+            {busy ? dots : <Icon name="trash" className="size-3.5" />}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy || !installed}
+            onClick={() => { setPhase("confirm-uninstall"); setRow(null); }}
+            className="w-full gap-1.5 text-dim"
+          >
+            <Icon name="trash" className="size-3.5" />
+            Uninstall
+          </Button>
+        )}
       </div>
-      {row ? (
+      {tool === "headroom" && installed ? (
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void openDashboard()} className="w-full gap-1.5 text-dim">
+          <Icon name="gauge" className="size-3.5" />
+          Headroom dashboard
+        </Button>
+      ) : null}
+      {row && installed ? (
         <p className="mono m-0 text-center text-[9px] text-dim">
           {row.pin ?? "not installed"}{row.upstream ? ` · latest ${row.upstream}` : ""}
         </p>
@@ -444,16 +540,7 @@ export function VendorFooter({ tool, source, open }: { tool: "headroom" | "rtk";
   );
 }
 
-/** The headroom version from its own CLI, fetched once per drawer open. */
-function HeadroomVersionPill({ open }: { open: boolean }) {
-  const [version, setVersion] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    void fetchHealth().then((report) => {
-      const raw = report?.headroom?.version;
-      if (raw) setVersion(String(raw));
-    });
-  }, [open]);
+function VersionPill({ version }: { version: string | null }) {
   if (!version) return null;
   return <span className="mono ml-auto shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-[9px] text-success">{version}</span>;
 }
@@ -462,15 +549,27 @@ function HeadroomVersionPill({ open }: { open: boolean }) {
 export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "onHostAction">) {
   const [detail, setDetail] = useState<string | null>(null);
   const [wrapTargets, setWrapTargets] = useState<Array<{ name: string; available: boolean }> | null>(null);
+  const [health, setHealth] = useState<HealthReport | null>(null);
   // Which durable integrations the dashboard has installed; optimistic, kept across drawer opens.
-  const [wrapped, setWrapped] = useState<Record<string, true>>(() => {
-    try { return JSON.parse(localStorage.getItem("tersio.headroom.wrap.v1") ?? "{}") as Record<string, true>; } catch { return {}; }
-  });
+  const [wrapped, setWrapped] = useState<Record<string, true>>(readStoredWraps);
   const [wrapBusy, setWrapBusy] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
     void fetchWrapTargets().then(setWrapTargets);
+    void fetchHealth().then(setHealth);
+    void fetchHeadroomWraps().then((server) => {
+      if (!server || typeof server !== 'object') return;
+      const record = server as Record<string, true>;
+      if (Object.keys(record).length > 0) {
+        setWrapped(record);
+        storeWraps(record);
+      } else if (Object.keys(wrapped).length > 0) {
+        // A record from before the server copy existed moves up once.
+        void postHeadroomWraps(wrapped);
+      }
+    });
   }, [open]);
+  const headroomInstalled = health?.headroom?.present ?? false;
   const picker = PICKER.headroom;
   const current = nodeValue("headroom", "all", modes);
 
@@ -482,7 +581,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
             <span className="flex items-center gap-2">
               <span aria-hidden="true" className="text-[13px] leading-none">🍃</span>
               <span className="min-w-0 truncate">headroom</span>
-              <HeadroomVersionPill open={open} />
+              <VersionPill version={health?.headroom?.version ?? null} />
             </span>
           </DrawerTitle>
           <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT.headroom}</DrawerDescription>
@@ -494,8 +593,9 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
               <span className="mono ml-auto shrink-0 rounded border border-accent/40 px-1.5 py-0.5 text-[9px] text-accent">recommended</span>
             </p>
             <p className="m-0 text-[10px] leading-relaxed text-dim">
-              Flip the switch and Tersio runs headroom's documented wrap command for that tool — no
-              terminal, nothing to copy. The list follows the machine: install a tool and it joins.
+              Flip the switch and Tersio runs headroom's own integration — no terminal, nothing to copy.
+              claude, codex, copilot, and openclaw install durably (`headroom init -g`); the rest wrap that
+              session only, so a shell alias keeps them covered.
             </p>
             {wrapTargets === null ? (
               <Skeleton className="h-8 w-full rounded-md" />
@@ -511,38 +611,68 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
                         on ? "border-success/30 bg-success/5" : "border-line",
                       )}
                     >
-                      <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />
+                      {HOSTS.some((h) => h.id === target.name)
+                        ? <AgentLogo host={target.name as "omp"} className="size-3.5 shrink-0" />
+                        : <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />}
                       <span className={cn("mono min-w-0 flex-1 truncate text-[11px]", on ? "text-ink" : "text-dim")}>{target.name}</span>
                       <span className={cn("mono shrink-0 rounded border px-1 py-0.5 text-[9px]", on ? "border-success/40 text-success" : "border-line text-dim")}>
                         {on ? "wrapped" : "ready"}
                       </span>
-                      <Switch
-                        size="sm"
-                        checked={on}
-                        disabled={!target.available || wrapBusy !== null}
-                        onCheckedChange={(next: boolean) => {
-                          if (!next) return;
-                          setWrapBusy(target.name);
-                          setDetail(null);
-                          void postHeadroomWrap(target.name)
-                            .then((result) => {
-                              if (result?.ok) {
-                                setWrapped((current) => {
-                                  const nextMap: Record<string, true> = { ...current, [target.name]: true };
-                                  try { localStorage.setItem("tersio.headroom.wrap.v1", JSON.stringify(nextMap)); } catch { /* private mode */ }
-                                  return nextMap;
-                                });
-                              }
-                              setDetail(result?.detail ?? "the dashboard server did not answer");
-                            })
-                            .finally(() => setWrapBusy(null));
-                        }}
-                        aria-label={`Wrap ${target.name} through headroom`}
-                      />
+                      <span className="relative inline-flex">
+                        <Switch
+                          size="sm"
+                          checked={on}
+                          disabled={!target.available || wrapBusy !== null || !headroomInstalled}
+                          onCheckedChange={(next: boolean) => {
+                            if (!next) {
+                              // Off runs headroom's own undo (`headroom unwrap`), then clears Tersio's record.
+                              setWrapBusy(target.name);
+                              setDetail(null);
+                              void postHeadroomWrap(target.name, "unwrap")
+                                .then((result) => {
+                                  if (result?.ok) {
+                                    const cleared = { ...wrapped };
+                                    delete cleared[target.name];
+                                    setWrapped(cleared);
+                                    storeWraps(cleared);
+                                    void postHeadroomWraps(cleared);
+                                  }
+                                  setDetail(result?.ok ? result.detail : result?.error ?? "the dashboard server did not answer");
+                                })
+                                .finally(() => setWrapBusy(null));
+                              return;
+                            }
+                            setWrapBusy(target.name);
+                            setDetail(null);
+                            void postHeadroomWrap(target.name)
+                              .then((result) => {
+                                if (result?.ok) {
+                                  const nextMap: Record<string, true> = { ...wrapped, [target.name]: true };
+                                  setWrapped(nextMap);
+                                  storeWraps(nextMap);
+                                  void postHeadroomWraps(nextMap);
+                                }
+                                setDetail(result?.detail ?? "the dashboard server did not answer");
+                              })
+                              .finally(() => setWrapBusy(null));
+                          }}
+                          aria-label={`Wrap ${target.name} through headroom`}
+                        />
+                        {wrapBusy === target.name ? (
+                          <span className="absolute inset-0 grid place-items-center">
+                            <Spinner className="size-3 text-accent" />
+                          </span>
+                        ) : null}
+                      </span>
                     </div>
                   );
                 })}
-                {HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => (
+                {wrapTargets.filter((target) => target.available).length === 0 ? (
+                  <p className="mono m-0 rounded-md border border-dashed border-line px-2.5 py-2 text-[10px] leading-relaxed text-dim">
+                    headroom is not installed on this machine — install it from the footer below, then its tools join this list
+                  </p>
+                ) : null}
+                {HOSTS.filter((h) => hostState.installed[h.id] !== false && !wrapTargets.some((t) => t.available && t.name === h.id)).map((h) => (
                   <div key={h.id} className="flex items-center gap-2.5 rounded-md border border-line px-2.5 py-1.5">
                     <AgentLogo host={h.id} className="size-3.5 shrink-0" />
                     <span className="mono min-w-0 flex-1 truncate text-[11px] text-ink">{h.label}</span>
@@ -561,22 +691,24 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
           </div>
           <div className="grid gap-1.5">
             <p className="m-0 text-[13px] font-semibold">Session default</p>
-            {modes === null ? (
+            {health === null ? (
+              <Skeleton className="h-8 w-full rounded-md" />
+            ) : !headroomInstalled ? (
+              <NotInstalledNote tool="headroom" />
+            ) : modes === null ? (
               <Skeleton className="h-8 w-full rounded-md" />
             ) : (
-              picker.options.map((option) => (
-                <OptionRow
-                  key={option.id}
-                  label={option.label}
-                  active={current === option.id}
-                  disabled={busy !== null}
-                  onClick={() => { onSet("headroom", picker.field, option.id); onSaved(); }}
-                />
-              ))
+              <ToggleRow
+                title="Compress traffic for new sessions"
+                hint="Tool outputs and history compress below the shell; Tersio tracks the savings."
+                checked={current === "on"}
+                disabled={busy !== null}
+                onCheckedChange={(on: boolean) => { onSet("headroom", picker.field, on ? "on" : "off"); onSaved(); }}
+              />
             )}
           </div>
         </div>
-        <VendorFooter tool="headroom" source="Headroom" open={open} />
+        <VendorFooter tool="headroom" source="Headroom" open={open} installed={headroomInstalled} onAfter={() => void fetchHealth().then(setHealth)} />
       </DrawerContent>
     </Drawer>
   );
@@ -584,6 +716,12 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
 
 /** The rtk node opens its own drawer: the on/off default plus the vendor release footer. */
 export function RtkDrawer({ open, onOpenChange, modes, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "hostState" | "onHostAction">) {
+  const [health, setHealth] = useState<HealthReport | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    void fetchHealth().then(setHealth);
+  }, [open]);
+  const rtkInstalled = health?.rtk?.present ?? false;
   const picker = PICKER.rtk;
   const current = nodeValue("rtk", "all", modes);
   return (
@@ -594,47 +732,37 @@ export function RtkDrawer({ open, onOpenChange, modes, busy, onSet, onSaved }: O
             <span className="flex items-center gap-2">
               <span aria-hidden="true" className="text-[13px] leading-none">🗜️</span>
               <span className="min-w-0 truncate">rtk</span>
-              <RtkVersionPill open={open} />
+              <VersionPill version={health?.rtk?.version ?? null} />
             </span>
           </DrawerTitle>
           <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT.rtk ?? ""}</DrawerDescription>
         </DrawerHeader>
-        <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-6 py-4 pb-5">
-          <div className="grid gap-1.5">
-            <p className="m-0 text-[13px] font-semibold">Session default</p>
-            {modes === null ? (
-              <Skeleton className="h-8 w-full rounded-md" />
-            ) : (
-              picker.options.map((option) => (
-                <OptionRow
-                  key={option.id}
-                  label={option.label}
-                  active={current === option.id}
+        <div className="grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-6 py-4 pb-5">
+          {health === null ? (
+            <Skeleton className="h-8 w-full rounded-md" />
+          ) : !rtkInstalled ? (
+            <NotInstalledNote tool="rtk" />
+          ) : (
+            <div className="grid gap-1.5">
+              <p className="m-0 text-[13px] font-semibold">Session default</p>
+              {modes === null ? (
+                <Skeleton className="h-8 w-full rounded-md" />
+              ) : (
+                <ToggleRow
+                  title="Rewrite Bash calls through rtk"
+                  hint="Eligible shell calls are rewritten and their output condensed before the model sees it."
+                  checked={current === "on"}
                   disabled={busy !== null}
-                  onClick={() => { onSet("rtk", picker.field, option.id === "on"); onSaved(); }}
+                  onCheckedChange={(on: boolean) => { onSet("rtk", picker.field, on); onSaved(); }}
                 />
-              ))
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
-        <VendorFooter tool="rtk" source="RTK" open={open} />
+        <VendorFooter tool="rtk" source="RTK" open={open} installed={rtkInstalled} onAfter={() => void fetchHealth().then(setHealth)} />
       </DrawerContent>
     </Drawer>
   );
-}
-
-/** The rtk version from its own CLI, fetched once per drawer open. */
-function RtkVersionPill({ open }: { open: boolean }) {
-  const [version, setVersion] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    void fetchHealth().then((report) => {
-      const raw = report?.rtk?.version;
-      if (raw) setVersion(String(raw));
-    });
-  }, [open]);
-  if (!version) return null;
-  return <span className="mono ml-auto shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-[9px] text-success">{version}</span>;
 }
 
 /** The add-agent picker: every agent with its install state, so what is missing is obvious at a glance. */

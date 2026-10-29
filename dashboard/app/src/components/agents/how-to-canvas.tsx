@@ -5,11 +5,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentLogo } from "@/components/agent-logos";
 import { Icon } from "@/components/icon";
 import { Spinner } from "@/components/ui/spinner";
-import { fetchPipelinePositions, postPipelinePositions } from "@/lib/data";
+import { fetchPipelinePositions, postPipelinePositions, readStoredWraps } from "@/lib/data";
 import { cn } from "cn";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { HeadroomDrawer, HostDrawer, ModeDialog, RtkDrawer } from "./how-to-node-ui";
+import { HeadroomDrawer, HostDrawer, ModeDrawer, RtkDrawer } from "./how-to-node-ui";
 import {
   HOSTS, MODES, NODE_H, NODE_W, agentModeRows, alignDrag, defaultPositions, edgeLit, edgePath, edgePorts, isOff, loadPositions,
   nodeOff, nodeState, nodeTitle, pipelineGraph, portPoint, savePositions, snapToGrid, versionOf,
@@ -64,7 +64,7 @@ function NodeButton({
       onClick={(event) => { if (event.detail === 0 && interactive) onActivate(); }}
       style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
       className={cn(
-        "howto-node absolute flex cursor-grab flex-col overflow-hidden rounded-xl border border-line bg-panel text-left outline-none active:cursor-grabbing",
+        "howto-node absolute flex cursor-pointer flex-col overflow-hidden rounded-xl border border-line bg-panel text-left outline-none active:cursor-grabbing",
         "hover:border-accent/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/40",
         dashed && "items-center border-2 border-dashed bg-panel text-dim hover:border-accent/50 hover:text-ink",
         off && "border-2 border-dashed opacity-55",
@@ -120,6 +120,16 @@ export function PipelineCanvas({
   const [selected, setSelected] = useState<NodeId | null>(null);
   const [guides, setGuides] = useState<{ vertical: GuideLine[]; horizontal: GuideLine[] } | null>(null);
   const [stored, setStored] = useState<Record<string, Box>>(() => loadPositions() ?? {});
+  // Which tools the wrap drawer has integrated: the agent cards wear it, refreshed as a drawer closes.
+  const [wrapped, setWrapped] = useState<Record<string, true>>(readStoredWraps);
+  useEffect(() => {
+    const sync = (): void => {
+      setWrapped(readStoredWraps());
+    };
+    if (selected === null) sync();
+    window.addEventListener("tersio:wrap-changed", sync);
+    return () => window.removeEventListener("tersio:wrap-changed", sync);
+  }, [selected]);
   // The server copy wins over localStorage: the layout belongs to the machine, not to one origin,
   // so a dashboard restart on a new port keeps every node where the user placed it.
   useEffect(() => {
@@ -324,7 +334,9 @@ export function PipelineCanvas({
             <span className="truncate text-[13px] font-semibold">{host.label}</span>
             {off
               ? <NodeBadge on={false} label="not installed" />
-              : <NodeBadge on={true} label={versionOf(hostState.versions[host.id]) ?? "installed"} />}
+              : wrapped[host.id]
+                ? <NodeBadge on={true} label="🍃 wrapped" />
+                : <NodeBadge on={true} label={versionOf(hostState.versions[host.id]) ?? "installed"} />}
           </span>
           {!off ? (
             <span className="grid flex-1 grid-cols-2 content-center gap-x-3 gap-y-1 px-3.5 py-2.5">
@@ -575,7 +587,7 @@ export function PipelineCanvas({
         />
       ) : null}
       {selected !== null && selected !== "headroom" && selected !== "rtk" && !selected.startsWith("host-") && selected !== "prompt" && selected !== "output" ? (
-        <ModeDialog
+        <ModeDrawer
           node={selected}
           open
           onOpenChange={(open) => { if (!open) setSelected(null); }}

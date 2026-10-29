@@ -680,16 +680,72 @@ export async function fetchWrapTargets(): Promise<Array<{ name: string; availabl
   }
 }
 
+/** Upstream headroom surfaces Tersio does not reimplement: the savings dashboard and the memory store. */
+export async function runHeadroomAction(action: "dashboard" | "memory"): Promise<{ ok: boolean; detail?: string; error?: string } | null> {
+  try {
+    const r = await fetch("/api/headroom/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    return (await r.json()) as { ok: boolean; detail?: string; error?: string };
+  } catch {
+    return null;
+  }
+}
+
+/** The canvas mirrors the wrap record in browser storage; the server copy stays the source of truth. */
+const WRAP_KEY = "tersio.headroom.wrap.v1";
+
+export function readStoredWraps(): Record<string, true> {
+  try {
+    return JSON.parse(localStorage.getItem(WRAP_KEY) ?? "{}") as Record<string, true>;
+  } catch {
+    return {};
+  }
+}
+
+/** Mirrors the record for the canvas, and tells it to redraw; a private-mode write just skips. */
+export function storeWraps(wraps: Record<string, true>): void {
+  try { localStorage.setItem(WRAP_KEY, JSON.stringify(wraps)); } catch { /* private mode */ }
+  window.dispatchEvent(new Event("tersio:wrap-changed"));
+}
+
+/** The wrap record, stored tersio-side so every browser sees the same switches. */
+export async function fetchHeadroomWraps(): Promise<Record<string, unknown> | null> {
+  try {
+    const r = await fetch("/api/headroom/wraps");
+    if (!r.ok) return null;
+    const body = (await r.json()) as { wraps?: Record<string, unknown> };
+    return body.wraps ?? {};
+  } catch {
+    return null;
+  }
+}
+
+export async function postHeadroomWraps(wraps: Record<string, unknown>): Promise<boolean> {
+  try {
+    const r = await fetch("/api/headroom/wraps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wraps }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Runs headroom's documented wrap command for one tool, detached. */
-export async function postHeadroomWrap(name: string): Promise<{ ok: boolean; detail: string } | null> {
+export async function postHeadroomWrap(name: string, action: "wrap" | "unwrap" = "wrap"): Promise<{ ok: boolean; detail: string; error?: string } | null> {
   try {
     const r = await fetch("/api/headroom/wrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, action }),
     });
     if (!r.ok) return null;
-    return (await r.json()) as { ok: boolean; detail: string };
+    return (await r.json()) as { ok: boolean; detail: string; error?: string };
   } catch {
     return null;
   }

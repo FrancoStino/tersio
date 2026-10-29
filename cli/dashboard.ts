@@ -11,11 +11,13 @@ import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { isCurrencyCode } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import {
-  OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION,
+  OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_VERSION, execFileP,
 } from './common.ts';
 import { BACKUP_SCHEDULES, applyComboPreset, clampSidebarWidth, comboLevelOf, formatCliStatus, saveHostDefaults, storedProfile, writePluginSettings } from './profile.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { REMOTE_MARKS } from '../extensions/shared/brand-marks.ts';
+import { mergeHeadroomWraps } from '../extensions/shared/headroom-wraps.ts';
+import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
 import { setUpdatePrefs, startApply, startCheck, startUpdateWatch, updateView } from './dashboard-update.ts';
 import type { UpdatePrefs } from './dashboard-update.ts';
 import type { BackupSchedule, HostDefaultField } from './profile.ts';
@@ -34,9 +36,10 @@ import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent
 
 /** The tools headroom can wrap (`headroom wrap --help`), and the binary each one runs under. */
 const WRAP_TARGETS = [
-  'claude', 'codex', 'copilot', 'vscode', 'vscode-claude', 'aider', 'openclaude', 'vibe',
+  'omp', 'claude', 'codex', 'copilot', 'vscode', 'vscode-claude', 'aider', 'openclaude', 'vibe',
   'grok', 'cursor', 'grok-build', 'cline', 'continue', 'goose', 'openhands', 'openclaw', 'opencode',
 ] as const;
+
 
 const WRAP_BINARY: Record<string, string> = {
   vscode: 'code', 'vscode-claude': 'code', cline: 'code', continue: 'code', 'grok-build': 'grok', copilot: 'gh',
@@ -187,6 +190,16 @@ interface HostJob {
 
 /** The last command run per host, so the guide can stop waiting the moment it exits. */
 const hostJobs = new Map<string, HostJob>();
+
+/** Whether a name is one of headroom's wrapped tools, so a route never passes an arbitrary string to the binary. */
+export function isHeadroomWrapTarget(name: string): boolean {
+  return (WRAP_TARGETS as readonly string[]).includes(name);
+}
+
+/** The two third-party binaries Tersio's footers manage; anything else is a bad request. */
+export function isVendorTool(tool: string): tool is 'headroom' | 'rtk' {
+  return tool === 'headroom' || tool === 'rtk';
+}
 
 /** The one Headroom install job, so the Tools page can poll until the binary appears or the pip run fails. */
 const headroomJob: { startedAt: number; code: number | null; error: string | null } = { startedAt: 0, code: null, error: null };
@@ -955,16 +968,110 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       let body: Record<string, unknown> = {};
       try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
       const name = String(body.name ?? '');
+      const unwrap = body.action === 'unwrap';
       const bin = resolveHeadroomBinary();
-      if (!bin || !(WRAP_TARGETS as readonly string[]).includes(name)) {
+      if (!bin || !isHeadroomWrapTarget(name)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'unknown wrap target or no headroom binary' }));
         return;
       }
-      const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
-      child.unref();
+      if (unwrap) {
+        // headroom's own undo: it restores whatever the wrap/init edited for that tool.
+        try {
+          const run = await execFileP(bin, ['unwrap', name], { timeout: 120_000 });
+          const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, detail: out || `${name}: headroom integration removed` }));
+        } catch (e) {
+          const err = e as { stdout?: string; stderr?: string; message?: string };
+          const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: out || err.message || `the ${name} unwrap failed` }));
+        }
+        return;
+      }
+      // Durable first: headroom's init install outlives restarts and every later launch. Tools
+      // without an init subcommand fall back to a one-session wrap, and the reply says which ran.
+      try {
+        const run = await execFileP(bin, ['init', '-g', name], { timeout: 120_000 });
+        const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-2).join(' · ');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: out || `${name}: durable headroom integration installed` }));
+        return;
+      } catch (e) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const said = `${err.stdout ?? ''}\n${err.stderr ?? ''}`;
+        // Only "no such command" means the tool has no durable install; any other failure is real.
+        if (!/no such command|invalid choice|Usage: headroom init/i.test(said)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: said.trim().split('\n').filter(Boolean).slice(-2).join(' · ') || err.message || `the ${name} integration failed` }));
+          return;
+        }
+        const child = spawn(bin, ['wrap', name], { detached: true, stdio: 'ignore' });
+        child.unref();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: `${name} has no init subcommand — headroom wrap set it up instead; the off switch undoes it` }));
+        return;
+      }
+    }
+    // The wrap record lives tersio-side too, so a second browser sees the same switches. Headroom's
+    // own checks correct it: a wrap undone outside Tersio clears instead of lying.
+    if (req.url === '/api/headroom/wraps' && req.method === 'GET') {
+      const file = path.join(tersioHome(), 'headroom-wraps.json');
+      let stored: Record<string, unknown> = {};
+      try {
+        const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
+        if (raw && typeof raw === 'object') stored = raw as Record<string, unknown>;
+      } catch { /* none yet */ }
+      const bin = resolveHeadroomBinary();
+      let wraps = mergeHeadroomWraps(stored, [], WRAP_TARGETS);
+      const doctor = bin ? readHeadroomDoctor({ binary: bin }) : null;
+      if (doctor?.measured) {
+        wraps = mergeHeadroomWraps(stored, doctor.checks, WRAP_TARGETS);
+        try { writeFileSync(file, `${JSON.stringify(wraps, null, 2)}\n`, 'utf8'); } catch { /* best effort */ }
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, detail: `${name} launches through headroom in the background — its traffic is compressed from here on` }));
+      res.end(JSON.stringify({ ok: true, wraps }));
+      return;
+    }
+    // Upstream surfaces Tersio does not reimplement: its savings dashboard, memory store, and evals.
+    if (req.url === '/api/headroom/action' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
+      const action = String(body.action ?? '');
+      const bin = resolveHeadroomBinary();
+      const args = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : null;
+      if (!bin || !args) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: !bin ? 'headroom is not installed' : 'unknown action' }));
+        return;
+      }
+      try {
+        const run = await execFileP(bin, args, { timeout: 30_000 });
+        const out = `${run.stdout}\n${run.stderr}`.trim().split('\n').filter(Boolean).slice(-6).join('\n');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, detail: out || `${action}: done` }));
+      } catch (e) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const out = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim().split('\n').filter(Boolean).slice(-6).join('\n');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: out || err.message || `the ${action} command failed` }));
+      }
+      return;
+    }
+    if (req.url === '/api/headroom/wraps' && req.method === 'POST') {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)) as typeof body; } catch { /* treated as empty */ }
+      if (!body.wraps || typeof body.wraps !== 'object') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'wraps must be an object' }));
+        return;
+      }
+      const file = path.join(tersioHome(), 'headroom-wraps.json');
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(body.wraps, null, 2)}\n`, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
     // The vendor footers: update or remove a third-party binary (headroom, rtk) from its drawer.
@@ -972,11 +1079,22 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       let body: Record<string, unknown> = {};
       try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
       const tool = String(body.tool ?? '');
+      if (!isVendorTool(tool)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
+        return;
+      }
       if (tool === 'headroom') {
         const bin = resolveHeadroomBinary();
         if (!bin) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'headroom is not installed' }));
+          // Not installed yet: the update button doubles as the installer.
+          if (!spawnHeadroomInstall()) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'cannot find the tersio entry point' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, detail: 'headroom installs in the background' }));
           return;
         }
         const child = spawn(bin, ['update'], { detached: true, stdio: 'ignore' });
@@ -1002,14 +1120,16 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         res.end(JSON.stringify({ ok: true, detail: `rtk updates through the ${host} refresh — running in the background` }));
         return;
       }
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
-      return;
     }
     if (req.url === '/api/vendor/uninstall' && req.method === 'POST') {
       let body: Record<string, unknown> = {};
       try { body = JSON.parse(await readBody(req)) as typeof body; } catch { body = {}; }
       const tool = String(body.tool ?? '');
+      if (!isVendorTool(tool)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
+        return;
+      }
       const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
       dirs.push(path.join(homeDir(), '.local', 'bin'));
       if (tool === 'headroom') {
@@ -1042,9 +1162,6 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         }
         return;
       }
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'unknown tool' }));
-      return;
     }
     // The canvas node layout lives tersio-side, not in the browser: localStorage is scoped to the
     // origin, so a dashboard restart on a new port would forget every node the user placed.

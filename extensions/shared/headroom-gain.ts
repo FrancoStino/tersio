@@ -132,17 +132,9 @@ export function parseHeadroomDoctor(raw: string): HeadroomDoctor {
 // its own answer briefly (the ledger moves slowly, the routing check less so).
 const MEMOS = new Map<string, { at: number; value: unknown }>();
 
-/** Tests only: drops one probe's memo so a refetch re-runs the CLI. */
-export function resetHeadroomProbeMemo(probe: 'savings' | 'doctor'): void {
-  MEMOS.delete(probe);
-}
-
+/** Tests only: drops the savings memo so a refetch re-runs the CLI. */
 export function resetHeadroomGainMemo(): void {
-  resetHeadroomProbeMemo('savings');
-}
-
-export function resetHeadroomDoctorMemo(): void {
-  resetHeadroomProbeMemo('doctor');
+  MEMOS.delete('savings');
 }
 
 function runProbe<T>(probe: 'savings' | 'doctor', binary: string, budgetMs: number, memoMs: number,

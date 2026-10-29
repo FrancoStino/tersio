@@ -2,7 +2,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readActivity } from './activity.ts';
-import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, HEADROOM_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS } from './common.ts';
+import { CAVEMAN_DEFAULTS, COMBO_DEFAULTS, HEADROOM_DEFAULTS, IS_WINDOWS, PACKAGE_VERSION, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, RTK_DEFAULTS, execFileP } from './common.ts';
+import { resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 import { formatCurrency, readStoredCurrency } from './currency.ts';
 import { agentStats } from './dashboard.ts';
 import { applyComboPreset, formatProfile, storedProfile, writePluginSettings } from './profile.ts';
@@ -34,6 +35,11 @@ interface StatsToolArgs {
 
 interface ActivityToolArgs {
   limit?: unknown;
+}
+
+interface HeadroomToolArgs {
+  action?: string;
+  suite?: string;
 }
 
 interface ModesToolArgs {
@@ -148,15 +154,21 @@ const TOOLS = [
   },
   {
     name: 'tersio_headroom',
-    description: 'Durable Headroom compression savings: tokens saved, calls, cost avoided, and the by-client breakdown. Unmeasured when Headroom is not installed.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'Headroom, the token saver: compression savings by default, or its memory store, an eval suite, and the savings dashboard. Unmeasured when Headroom is not installed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['savings', 'memory', 'evals', 'dashboard'], description: 'What to ask headroom for. savings is the default.' },
+        suite: { type: 'string', description: 'With evals: the suite name, as `headroom evals --help` lists them.' },
+      },
+    },
   },
 ] as const;
 
 async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const call = (params ?? {}) as { name?: unknown; arguments?: unknown };
   const name = typeof call.name === 'string' ? call.name : null;
-  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs;
+  const args = (call.arguments ?? {}) as StatsToolArgs & ActivityToolArgs & ModesToolArgs & HeadroomToolArgs;
   if (name === 'tersio_stats') {
     if (args.range !== undefined && !isRangeKey(args.range)) throw new RpcError(-32602, `range must be one of ${RANGES.join(', ')}`);
     return { content: [{ type: 'text', text: statsText(isRangeKey(args.range) ? args.range : '24h') }] };
@@ -188,6 +200,22 @@ async function callTool(params: unknown): Promise<{ content: Array<{ type: 'text
     return { content: [{ type: 'text', text: await modesText(want) }] };
   }
   if (name === 'tersio_headroom') {
+    // Upstream owns these surfaces; Tersio passes the command through and returns its tail.
+    const action = args.action ?? 'savings';
+    if (!['savings', 'memory', 'evals', 'dashboard'].includes(action)) throw new RpcError(-32602, 'action must be savings, memory, evals, or dashboard');
+    if (action !== 'savings') {
+      const bin = resolveHeadroomBinary();
+      if (!bin) return { content: [{ type: 'text', text: 'Headroom: not installed — install it from the dashboard Tools page, or run pip install "headroom-ai[all]".' }] };
+      const argv = action === 'dashboard' ? ['dashboard'] : action === 'memory' ? ['memory', 'stats'] : ['evals', ...(typeof args.suite === 'string' && args.suite ? [args.suite] : [])];
+      try {
+        const run = await execFileP(bin, argv, { timeout: 120_000 });
+        return { content: [{ type: 'text', text: (`${run.stdout}\n${run.stderr}`.trim() || `headroom ${argv.join(' ')}: done`) }] };
+      } catch (e) {
+        const err = e as { stdout?: string; stderr?: string; message?: string };
+        const said = `${err.stdout ?? ''}\n${err.stderr ?? ''}`.trim();
+        return { isError: true, content: [{ type: 'text', text: said || err.message || `headroom ${argv.join(' ')} failed` }] };
+      }
+    }
     const gain = readHeadroomSavings();
     if (!gain.measured) return { content: [{ type: 'text', text: `Headroom savings: not measured — ${gain.failure}. Install Headroom, then wrap your tools (headroom wrap <tool>, or the switch on the dashboard) so their traffic flows through it.` }] };
     const lines = [
