@@ -615,6 +615,10 @@ function saveDefaults(body: Record<string, unknown>): Promise<
   const events: string[] = [];
   // A host scope carries only the mode fields the request changed; non-mode fields stay global-only.
   const changedFields: HostDefaultField[] = [];
+  // `inherit` describes one agent's section; a shared write has nothing to hand the value back to.
+  const inherited = ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault']
+    .filter((key) => String(body[key]) === 'inherit');
+  if (inherited.length > 0 && !body.host) return { ok: false, error: 'inherit applies to one agent — pass a host' };
   if (String(body.comboDefault) === 'inherit') {
     Object.assign(profile as unknown as Record<string, unknown>, { comboDefault: 'inherit', cavemanDefault: 'inherit', rtkDefault: 'inherit', ponytailDefault: 'inherit' });
     events.push('Combo back to the shared defaults');

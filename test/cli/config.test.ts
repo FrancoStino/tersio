@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { withHome } from "../helpers/env.ts";
-import { configEntries, defaultProfile, saveHostDefaults } from "../../cli/profile.ts";
+import { configEntries, defaultProfile, saveHostDefaults, writePluginSettings } from "../../cli/profile.ts";
 
 function store(home: string, settings: unknown): string {
   const dir = path.join(home, ".tersio");
@@ -24,5 +24,8 @@ test("the shared store names each value's source, and inherit clears an override
     await saveHostDefaults("omp", ["comboDefault"], { ...defaultProfile(), comboDefault: "inherit" }, { dryRun: false, quiet: true, verbose: false });
     expect((JSON.parse(readFileSync(file, "utf8")) as { hosts?: Record<string, Record<string, unknown>> }).hosts?.omp?.comboDefault).toBeUndefined();
     expect(row("omp", "comboDefault")?.source).toBe("inherited");
+
+    await writePluginSettings({ ...defaultProfile(), comboDefault: "inherit" }, { dryRun: false, quiet: true, verbose: false });
+    expect((JSON.parse(readFileSync(file, "utf8")) as { comboDefault?: string }).comboDefault, "the shared store never holds inherit").toBe("balanced");
   });
 });
