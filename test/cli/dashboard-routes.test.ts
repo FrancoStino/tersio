@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { agentJson, healthJson, isHeadroomWrapTarget, isVendorTool, statusJson } from '../../cli/dashboard.ts';
+import { agentJson, healthJson, isHeadroomWrapTarget, isVendorTool, json, statusJson } from '../../cli/dashboard.ts';
 import { withHome } from '../helpers/env.ts';
 
 // The route handlers pass these names straight to a child process, so the guards are the boundary.
@@ -38,4 +38,9 @@ describe('dashboard payloads are serialized once', () => {
       expect(agent).toHaveProperty('agent');
     });
   });
+});
+
+test('json refuses a pre-serialized string, so a folded route cannot double-encode', () => {
+  const res = { writeHead: () => res, end: () => res };
+  expect(() => json(res, 200, healthJson())).toThrow(/jsonText/);
 });

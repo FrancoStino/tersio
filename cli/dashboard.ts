@@ -731,7 +731,9 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 /** One JSON reply: every route answers this shape, so the header is set in one place. */
-function json(res: http.ServerResponse, code: number, body: unknown): void {
+export function json(res: Pick<http.ServerResponse, 'writeHead' | 'end'>, code: number, body: unknown): void {
+  // A string here would be serialized twice; the routes that build their own text call jsonText.
+  if (typeof body === 'string') throw new Error('json() takes a value, not text: use jsonText() for a serialized payload');
   res.writeHead(code, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 }
