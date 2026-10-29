@@ -1,6 +1,14 @@
 ## Unreleased
 
+### Added
+ - **A "top three" card on the Models and Providers pages.** It shows the three you use most, each with its brand picture and how much of the work it did.
+
+### Changed
+ - **A new dashboard look.** The sidebar and top bar are one seamless surface, and the rest of the page sits inside one big card. Cards get a thin light line at their top edge, and the sidebar becomes a slim icon strip on smaller windows.
+ - **Fresher parts under the hood.** Everything the dashboard and CLI build on is up to date.
+
 ### Fixed
+ - **The right brand picture for every model.** Models running through Codex now show their own maker's logo — DeepSeek, GLM, and Beam included — instead of Codex's, and Codex itself gets its own logo too.
  - The drawer's **Headroom dashboard** button opens Headroom's own savings view in a new tab. The link is a plain navigation to a Tersio route that probes the proxy and redirects, so a popup blocker cannot swallow it; when nothing answers it starts a proxy Tersio owns, and closing that tab stops that proxy only while it has served no traffic. A proxy you started yourself, one that has served requests, or one that cannot report is never touched.
  - The install flow offers Headroom only for the agents it can route (OMP and OpenCode). pi and PiG get a note instead of a prompt, and their own section starts with the mode off.
 
