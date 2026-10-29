@@ -41,14 +41,17 @@ export function fakeExecutable(dir: string, name: string, posixBody: string, win
 }
 
 export function cliEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
     PI_CODING_AGENT: 'true',
     PI_CODING_AGENT_DIR: path.join(home, '.pi', 'agent'),
-    ...extra,
   };
+  // A runner that sets PiG's own root variables would move the host trees out of the fixture home,
+  // so the home above is the whole story unless a test sets one of them itself.
+  for (const name of ['XDG_CONFIG_HOME', 'PIG_HOME', 'PIG_CODING_AGENT_DIR', 'PIG_USE_PI_DIRS', 'PIG_CODING_AGENT']) delete env[name];
+  return { ...env, ...extra };
 }
 
 // TERSIO_HOME is what the settings store resolves through; HOME alone is not enough.

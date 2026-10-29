@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import path from "node:path";
 
 import { withHome } from "../helpers/env.ts";
 import { pigAgentDir } from "../../extensions/shared/utils.ts";
@@ -17,16 +18,16 @@ test("the PiG agent directory follows PiG's own root order", () => {
       delete process.env.PIG_CODING_AGENT_DIR;
       delete process.env.PIG_USE_PI_DIRS;
       delete process.env.XDG_CONFIG_HOME;
-      expect(pigAgentDir(), "the default root is ~/.pig").toBe(`${home}/.pig/agent`);
+      expect(pigAgentDir(), "the default root is ~/.pig").toBe(path.join(home, ".pig", "agent"));
 
-      process.env.XDG_CONFIG_HOME = `${home}/config`;
-      expect(pigAgentDir(), "XDG_CONFIG_HOME/pig comes before the default").toBe(`${home}/config/pig/agent`);
+      process.env.XDG_CONFIG_HOME = path.join(home, "config");
+      expect(pigAgentDir(), "XDG_CONFIG_HOME/pig comes before the default").toBe(path.join(home, "config", "pig", "agent"));
 
-      process.env.PIG_HOME = `${home}/pighome`;
-      expect(pigAgentDir(), "PIG_HOME comes before XDG").toBe(`${home}/pighome/agent`);
+      process.env.PIG_HOME = path.join(home, "pighome");
+      expect(pigAgentDir(), "PIG_HOME comes before XDG").toBe(path.join(home, "pighome", "agent"));
 
-      process.env.PIG_CODING_AGENT_DIR = `${home}/moved`;
-      expect(pigAgentDir(), "the agent-dir override wins outright").toBe(`${home}/moved`);
+      process.env.PIG_CODING_AGENT_DIR = path.join(home, "moved");
+      expect(pigAgentDir(), "the agent-dir override wins outright").toBe(path.join(home, "moved"));
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
