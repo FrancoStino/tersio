@@ -323,6 +323,30 @@ test("install --host pig writes the pig tree and no OMP files", () => {
   }
 });
 
+
+// OMP loads skills only from user roots; the plugin manifest has no skills field, so install registers the bundled dir.
+test("the OMP install registers the bundled skills with OMP", () => {
+  const home = tempHome();
+  try {
+    const pkg = path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio");
+    mkdirSync(path.join(pkg, "skills", "ponytail-help"), { recursive: true });
+    writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version }), "utf8");
+    writeFileSync(path.join(pkg, "skills", "ponytail-help", "SKILL.md"), "---\nname: ponytail-help\ndescription: help\n---\n", "utf8");
+
+    const result = run(home, ["install", "--host", "omp", "--dry-run", "--verbose"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/\[dry-run\] would register .*tersio[\\/]skills as an OMP skill directory/);
+
+    mkdirSync(path.join(home, ".omp", "agent"), { recursive: true });
+    writeFileSync(path.join(home, ".omp", "agent", "settings.json"), JSON.stringify({ skills: { customDirectories: [path.join(pkg, "skills")] } }), "utf8");
+    const removed = run(home, ["uninstall", "--host", "omp", "--dry-run"]);
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(removed.stdout).toMatch(/\[dry-run\] would remove the Tersio skills directory from OMP settings/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("install --host omp keeps the OMP tree and never touches pi", () => {
   const home = tempHome();
   try {

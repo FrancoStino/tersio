@@ -367,6 +367,23 @@ async function runUninstall(options: UninstallOptions = {}): Promise<boolean> {
     }
   }
 
+  // OMP finds plugin skills only through user skill roots; the install added this one.
+  await updateJsonFile(
+    path.join(OMP_AGENT_DIR, 'settings.json'),
+    (data) => {
+      const skills = (data.skills ?? {}) as Record<string, unknown>;
+      const dirs = skills.customDirectories;
+      if (!Array.isArray(dirs)) return false;
+      const kept = dirs.filter((p) => typeof p !== 'string' || !(p.endsWith('tersio/skills') || p.endsWith(`tersio${path.sep}skills`)));
+      if (kept.length === dirs.length) return false;
+      data.skills = { ...skills, customDirectories: kept };
+      return true;
+    },
+    'would remove the Tersio skills directory from OMP settings',
+    'Removed the Tersio skills directory from OMP settings',
+    shouldDryRun,
+  );
+
   // Cleared last: writeConfigLines above would just make a fresh one.
   const cavemanDir = path.join(pluginsDir, 'node_modules', PACKAGE_NAME, 'extensions', 'caveman-session');
   for (const backup of [`${configPath}.bak`, path.join(cavemanDir, 'rule.md.bak'), path.join(cavemanDir, 'rule-lite.md.bak'), path.join(cavemanDir, 'rule-megacave-lite.md.bak'), path.join(cavemanDir, 'rule-megacave-ultra.md.bak'), path.join(cavemanDir, 'rule-ultra.md.bak'), path.join(cavemanDir, 'rule-megacave.md.bak')]) {

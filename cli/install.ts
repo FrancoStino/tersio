@@ -593,6 +593,30 @@ async function maybeInstallHeadroom(profile: Profile): Promise<boolean> {
   return true;
 }
 
+/** OMP reads plugin skills only from user skill roots, so the bundled Ponytail skills join skills.customDirectories. */
+async function stepOmpSkills(packageRoot: string, options: InstallOptions): Promise<void> {
+  const skillsDir = path.join(packageRoot, 'skills');
+  if (!existsSync(skillsDir)) {
+    if (verbose && !options.quiet) sayTagged('  [skip] bundled skills are not on disk yet');
+    return;
+  }
+  const settingsPath = path.join(OMP_AGENT_DIR, 'settings.json');
+  const before = parseJsonObject<Record<string, unknown>>(await readTextIfExists(settingsPath)) ?? {};
+  const skills = { ...((before.skills as Record<string, unknown> | undefined) ?? {}) };
+  const dirs = Array.isArray(skills.customDirectories) ? [...(skills.customDirectories as string[])] : [];
+  const existing = dirs.findIndex((dir) => typeof dir === 'string' && dir.includes('tersio') && dir.endsWith('skills'));
+  if (existing >= 0 && dirs[existing] === skillsDir) return;
+  if (existing >= 0) dirs[existing] = skillsDir; else dirs.push(skillsDir);
+  const next = { ...before, skills: { ...skills, customDirectories: dirs } };
+  if (options.dryRun) {
+    if (verbose && !options.quiet) sayTagged(`  [dry-run] would register ${skillsDir} as an OMP skill directory`);
+    return;
+  }
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await writeIfChanged(settingsPath, `${JSON.stringify(next, null, 2)}\n`, options);
+  if (!options.quiet) sayTagged(`  Skills — registered ${skillsDir} for /skill commands`);
+}
+
 let updatePromptDone = false;
 
 // Bare `tersio` at a terminal picks a command; scripts and flags install.
@@ -1034,6 +1058,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   await capture('pstack', () => stepPstack(extDir, installOptions));
   await capture('headroom', () => stepHeadroom(extDir, installOptions));
   await capture('commands', () => stepTersioCommands(extDir, installOptions));
+  await capture('skills', () => stepOmpSkills(path.dirname(pluginExtDir), installOptions));
   // One package, one file set: the repair writes every tree file here, so the install does too.
   if (ownsTree) await capture('plugin entry', () => stepPluginEntry(extDir, installOptions));
   if (ownsTree) await capture('plugin manifest', () => syncPluginManifest(path.dirname(pluginExtDir), installOptions));
