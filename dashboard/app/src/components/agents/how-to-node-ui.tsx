@@ -416,11 +416,7 @@ function BrandMark({ name, className }: { name: string; className: string }) {
   return <MarkGlyph slug={slug} className={className} color={color !== undefined && lum >= 60 && lum <= 225 ? color : "currentColor"} />;
 }
 
-/**
- * The vendor footer under a third-party tool's drawer: check the release feed, update in the
- * background when a newer build exists, or remove the binary. Only headroom and rtk carry one —
- * caveman and ponytail ship inside Tersio and update with it.
- */
+/** The footer under a vendor drawer: check the release feed, update, or remove the binary. */
 export function VendorFooter({
   tool, source, open, installed, onAfter,
 }: {
@@ -573,6 +569,24 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
   const picker = PICKER.headroom;
   const current = nodeValue("headroom", "all", modes);
 
+  /** One switch flip: headroom's own command, then the shared record and every other browser. */
+  const toggleWrap = (name: string, on: boolean): void => {
+    setWrapBusy(name);
+    setDetail(null);
+    void postHeadroomWrap(name, on ? "wrap" : "unwrap")
+      .then((result) => {
+        if (result?.ok) {
+          const next: Record<string, true> = { ...wrapped };
+          if (on) next[name] = true; else delete next[name];
+          setWrapped(next);
+          storeWraps(next);
+          void postHeadroomWraps(next);
+        }
+        setDetail(result?.ok ? result.detail : result?.error ?? "the dashboard server did not answer");
+      })
+      .finally(() => setWrapBusy(null));
+  };
+
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
       <DrawerContent>
@@ -623,39 +637,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
                           size="sm"
                           checked={on}
                           disabled={!target.available || wrapBusy !== null || !headroomInstalled}
-                          onCheckedChange={(next: boolean) => {
-                            if (!next) {
-                              // Off runs headroom's own undo (`headroom unwrap`), then clears Tersio's record.
-                              setWrapBusy(target.name);
-                              setDetail(null);
-                              void postHeadroomWrap(target.name, "unwrap")
-                                .then((result) => {
-                                  if (result?.ok) {
-                                    const cleared = { ...wrapped };
-                                    delete cleared[target.name];
-                                    setWrapped(cleared);
-                                    storeWraps(cleared);
-                                    void postHeadroomWraps(cleared);
-                                  }
-                                  setDetail(result?.ok ? result.detail : result?.error ?? "the dashboard server did not answer");
-                                })
-                                .finally(() => setWrapBusy(null));
-                              return;
-                            }
-                            setWrapBusy(target.name);
-                            setDetail(null);
-                            void postHeadroomWrap(target.name)
-                              .then((result) => {
-                                if (result?.ok) {
-                                  const nextMap: Record<string, true> = { ...wrapped, [target.name]: true };
-                                  setWrapped(nextMap);
-                                  storeWraps(nextMap);
-                                  void postHeadroomWraps(nextMap);
-                                }
-                                setDetail(result?.detail ?? "the dashboard server did not answer");
-                              })
-                              .finally(() => setWrapBusy(null));
-                          }}
+                          onCheckedChange={(next: boolean) => toggleWrap(target.name, next)}
                           aria-label={`Wrap ${target.name} through headroom`}
                         />
                         {wrapBusy === target.name ? (
