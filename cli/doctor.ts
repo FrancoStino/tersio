@@ -447,7 +447,9 @@ async function ponytailLatestGap(local: string): Promise<string | null> {
   if (!local) return null;
   try {
     // A short budget on purpose: this row is advisory, and the doctor has a spawn budget above it.
-    const meta = await fetchJson<{ version?: string }>('https://registry.npmjs.org/@dietrichgebert/ponytail/latest', { timeout: 2500 });
+    // `TERSIO_PONYTAIL_URL` points it at a stub, the way the update check does.
+    const url = process.env.TERSIO_PONYTAIL_URL || 'https://registry.npmjs.org/@dietrichgebert/ponytail/latest';
+    const meta = await fetchJson<{ version?: string }>(url, { timeout: 2500 });
     const remote = meta?.version;
     if (!remote || remote === local) return null;
     return `${local} installed, ${remote} is the latest`;
