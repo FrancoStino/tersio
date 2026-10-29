@@ -1,3 +1,12 @@
+## Unreleased
+
+### Added
+ - **`inherit` is a first-class value.** A `hosts.<agent>` section stores only real overrides, `inherit` returns a field to the shared store, and `tersio config [key] --host <agent>` prints each effective value with its source.
+ - **The OMP plugin manifest defaults every mode setting to `inherit`**, so `omp plugin config get` follows Tersio's store instead of reporting a second, contradictory default.
+
+### Fixed
+ - **Ponytail skills load on OMP.** The install registers the bundled skills directory in OMP's `skills.customDirectories` and uninstall removes it; OMP's plugin manifest has no skills field, so the old declaration was ignored.
+
 ## v2.25.15
 
 ### Added
