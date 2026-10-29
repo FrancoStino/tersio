@@ -108,7 +108,8 @@ const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   'gmi-cloud': 'gmicloud',
   'charm-hyper': 'charmhyper',
   'kimi-code': 'kimi',
-  'openai-codex': 'openai',
+  // Codex's own mark, not the parent OpenAI blossom it ships under.
+  'openai-codex': 'codex',
   'github-copilot': 'githubcopilot',
   'ollama-cloud': 'ollama',
   'amd-radeon-cloud-cn': 'amd',

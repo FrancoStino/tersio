@@ -113,6 +113,12 @@ describe("remote marks", () => {
       ["deepseek-v4.1-flash", "deepseek"],
       ["Qwen3.8-27B", "qwen"],
       ["z-ai/glm-5.3-free", "zdotai"],
+      // Gateway prefixes must not shadow the model author.
+      ["codex/openai/zcode/glm-5.3-flash", "zdotai"],
+      ["codex/openai/commandcode/deepseek/deepseek-v4.1-flash", "deepseek"],
+      // Reflection AI's Beam model.
+      ["auto/beam", "beam"],
+      ["cline/reflection/beam", "beam"],
       ["mimo-v2.6-flash", "xiaomi"],
       ["kimi-k2.5", "kimi"],
       ["k3", "kimi"],
@@ -159,7 +165,8 @@ describe("remote marks", () => {
     const branded: Array<[string, string]> = [
       ["amd-radeon-cloud-cn", "amd"],
       ["kimi-code", "kimi"],
-      ["openai-codex", "openai"],
+      ["openai-codex", "codex"],
+      ["codex", "codex"],
       ["nvidia", "nvidia"],
       ["google-antigravity", "google"],
       ["devin", "cognition"],

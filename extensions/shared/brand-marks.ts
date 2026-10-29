@@ -3,6 +3,10 @@ const SIMPLE_ICONS = "https://cdn.jsdelivr.net/npm/simple-icons@16/icons";
 
 /** Slug to mark URL. Only slugs named here resolve to a mark; the rest get a monogram. */
 export const REMOTE_MARKS: Readonly<Record<string, string>> = {
+  // Simple Icons has no Codex slug; lobehub hosts the CLI's own mark, the blossom with a prompt.
+  codex: "https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/codex.svg",
+  // Reflection AI's Beam: their favicon, an olive mark on the off-white its site paints.
+  beam: "https://reflection.ai/favicon.ico",
   // Simple Icons, CC0-1.0.
   anthropic: `${SIMPLE_ICONS}/anthropic.svg`,
   // Claude Code ships its own mark; the Anthropic wordmark is a different product.
@@ -96,6 +100,9 @@ export const MARK_BG: Readonly<Record<string, string>> = {
   amazonaws: "#ffffff",
   // The mark's own artwork is white, so the tile is white and the glyph is black.
   openai: "#ffffff",
+  codex: "#ffffff",
+  // The favicon is drawn for the site's own off-white, so the tile repeats it.
+  beam: "#f8f6f0",
   commandcode: "#ffffff",
   gmicloud: "#ffffff",
   magpie: "#0b0b0c",
@@ -153,6 +160,8 @@ export const COLORED_MARKS: ReadonlySet<string> = new Set([
   "meituan",
   // Carries its own orange and its own white, so a mask would flatten both into one ink.
   "amazonaws",
+  // A raster ICO with its own olive ink, so a mask would erase the color.
+  "beam",
 ]);
 
 /** The URL a mark comes from, or null when the name has no hosted mark. */

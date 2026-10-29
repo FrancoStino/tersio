@@ -35,8 +35,12 @@ export function readResetWatermark(): number {
     const value = readState().reset;
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
     const legacy = takeLegacy(tersioDataPath('reset.json', 'tersio-reset.json'), (raw) => {
-      const ts = (JSON.parse(raw) as { ts?: unknown }).ts;
-      return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : null;
+      try {
+        const ts = (JSON.parse(raw) as { ts?: unknown }).ts;
+        return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : null;
+      } catch {
+        return null; // takeLegacy already guards, but the parse owns its own boundary
+      }
     });
     if (legacy !== null) {
       patchState({ reset: legacy });
@@ -278,7 +282,7 @@ try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or u
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
       const [id, created, role, providerID, modelID, tCreated, tStreamed, tCompleted, input, output, cacheRead, cacheWrite, cost, tools] = line.split('\t');
-      const n = (v: string | undefined): unknown => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
+      const n = (v: string | undefined): number | undefined => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
       rows.push({
         id,
         created: Number(created),
@@ -681,6 +685,7 @@ const VENDOR_RES: Array<[RegExp, string]> = [
   [/minimax/i, 'MiniMax'],
   [/grok|xai/i, 'xAI'],
   [/stealth|space-bunny/i, 'Stealth'],
+  [/^beam$/i, 'Beam'],
   [/openai|codex|gpt-|o1/i, 'OpenAI'],
   [/muse|llama/i, 'Meta'],
   [/deepseek/i, 'DeepSeek'],
@@ -696,8 +701,18 @@ const VENDOR_RES: Array<[RegExp, string]> = [
 ];
 
 function modelVendor(model: string): string {
+  // Tail first: gateway prefixes ("codex/openai/...") must not shadow the model author, so a
+  // DeepSeek or GLM run through Codex still reads as DeepSeek or Z.ai. The head still wins when
+  // only it names a known vendor ("codex/openai").
+  const segs = String(model).split('/').filter(Boolean);
+  for (let i = segs.length - 1; i >= 0; i--) {
+    for (const [re, name] of VENDOR_RES) {
+      if (re.test(segs[i])) return name;
+    }
+  }
+  // A pattern may span segments ("typesafe/jev"), so the whole string still gets one pass.
   for (const [re, name] of VENDOR_RES) {
-    if (re.test(model)) return name;
+    if (re.test(String(model))) return name;
   }
   return 'Other';
 }
@@ -746,6 +761,9 @@ export function displayModelId(model: string): string {
   if (vendor === 'Other') return segs.length > 1 ? `${words(segs[segs.length - 2])} - ${pretty}` : pretty;
   const claude = pretty.match(/^claude[-_](.+)$/i);
   if (vendor === 'Anthropic' && claude) return `Anthropic - Claude - ${claude[1]}`;
+  // GLM is always uppercase, and the vendor names Z.ai, so the label folds the same way.
+  const glm = pretty.match(/^glm[-_](.+)$/i);
+  if (vendor === 'Z.ai' && glm) return `Z.ai - GLM - ${glm[1]}`;
   if (pretty.toLowerCase().startsWith(vendor.toLowerCase())) return pretty;
   return `${vendor} - ${pretty}`;
 }

@@ -159,6 +159,9 @@ export function displayModel(m: string): string {
   // DeepSeek spells itself with a capital S, so the label says it and drops the repeated head.
   const seek = pretty.match(/^deepseek[-_](.+)$/i);
   if (vendor.name === "DeepSeek" && seek) return `DeepSeek - ${seek[1]}`;
+  // GLM is always uppercase, and the vendor names Z.ai, so the label folds the same way.
+  const glm = pretty.match(/^glm[-_](.+)$/i);
+  if (vendor.name === "Z.ai" && glm) return `Z.ai - GLM - ${glm[1]}`;
   if (pretty.toLowerCase().startsWith(vendor.name.toLowerCase())) return pretty;
   return `${vendor.name} - ${pretty}`;
 }
@@ -175,6 +178,8 @@ const PROVIDERS: Array<[RegExp, string, string, string]> = [
   [/minimax/i, "MiniMax", "minimax", "#e11d48"],
   [/grok|xai/i, "xAI", "x", "#000"],
   [/stealth|space-bunny|big-pickle/i, "Stealth", "stealth", "#1f2937"],
+  // Reflection AI's Beam model, named by its own segment only, so "beam" cannot swallow others.
+  [/^beam$/i, "Beam", "beam", "#34461e"],
   [/openai|codex|gpt-|o1/i, "OpenAI", "openai", "#fff"],
   [/muse|llama/i, "Meta", "meta", "#0082fb"],
   [/deepseek/i, "DeepSeek", "deepseek", "#4d6bfe"],
@@ -198,8 +203,18 @@ const PROVIDERS: Array<[RegExp, string, string, string]> = [
 ];
 
 export function vendorOf(model: string): Vendor {
+  // Tail first: gateway prefixes ("codex/openai/...") must not shadow the model author, so a
+  // DeepSeek or GLM run through Codex still reads as DeepSeek or Z.ai. The head still wins when
+  // only it names a known vendor ("codex/openai").
+  const segs = String(model).split("/").filter(Boolean);
+  for (let i = segs.length - 1; i >= 0; i--) {
+    for (const [re, name, slug, color] of PROVIDERS) {
+      if (re.test(segs[i])) return { name, slug, color };
+    }
+  }
+  // A pattern may span segments ("typesafe/jev"), so the whole string still gets one pass.
   for (const [re, name, slug, color] of PROVIDERS) {
-    if (re.test(model)) return { name, slug, color };
+    if (re.test(String(model))) return { name, slug, color };
   }
   return { name: "Other", slug: "", color: "#71717a" };
 }
@@ -223,7 +238,9 @@ export const PALETTE = ["#34d399", "#818cf8", "#22d3ee", "#fbbf24", "#f472b6", "
 const PROVIDER_MARKS: Record<string, string> = {
   "amd-radeon-cloud-cn": "amd",
   "kimi-code": "kimi",
-  "openai-codex": "openai",
+  "openai-codex": "codex",
+  // Codex writes model ids "codex/...", so its host name is a provider id of its own.
+  codex: "codex",
   nvidia: "nvidia",
   "google-antigravity": "google",
   devin: "cognition",

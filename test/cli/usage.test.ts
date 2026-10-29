@@ -1252,6 +1252,11 @@ test("free suffix and case variants fold into one model row", () => {
   expect(displayModelId("deepseek-v4.1-flash:free")).toBe("Deepseek-V4.1-Flash");
   expect(displayModelId("meta/muse-spark-1.3-contributor")).toBe("Meta - Muse-Spark-1.3-Contributor");
   expect(displayModelId("codex/openai")).toBe("OpenAI");
+  // Gateway prefixes never shadow the model author, and GLM folds like Claude and DeepSeek do.
+  expect(displayModelId("codex/openai/zcode/glm-5.3-flash")).toBe("Z.ai - GLM - 5.3-Flash");
+  expect(displayModelId("codex/openai/commandcode/deepseek/deepseek-v4.1-flash")).toBe("Deepseek-V4.1-Flash");
+  expect(displayModelId("auto/beam")).toBe("Beam");
+  expect(displayModelId("cline/reflection/beam")).toBe("Beam");
   expect(displayModelId("gemma4:31b")).toBe("Google - Gemma4-31B");
   expect(displayModelId("opencode/Github-Copilot/grok-code-fast-1")).toBe("xAI - Grok-Code-Fast-1");
   expect(displayModelId("Swe-1-6-Slow")).toBe("Cognition - SWE-1-6-Slow");
