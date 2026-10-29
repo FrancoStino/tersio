@@ -446,10 +446,10 @@ const CAVEMAN_BODIES = ['rule.md', 'rule-lite.md', 'rule-megacave-lite.md', 'rul
 async function ponytailLatestGap(local: string): Promise<string | null> {
   if (!local) return null;
   try {
-    // A short budget on purpose: this row is advisory, and the doctor has a spawn budget above it.
-    // `TERSIO_PONYTAIL_URL` points it at a stub, the way the update check does.
+    // Advisory, with a short budget; `TERSIO_PONYTAIL_URL` points it at a stub, as the update check does.
     const url = process.env.TERSIO_PONYTAIL_URL || 'https://registry.npmjs.org/@dietrichgebert/ponytail/latest';
-    const meta = await fetchJson<{ version?: string }>(url, { timeout: 2500 });
+    const res = await fetch(url, { signal: AbortSignal.timeout(2500), headers: { accept: 'application/json' } });
+    const meta = (await res.json()) as { version?: string };
     const remote = meta?.version;
     if (!remote || remote === local) return null;
     return `${local} installed, ${remote} is the latest`;

@@ -454,6 +454,22 @@ test("doctor does not count the exec row when rtk is absent", () => {
   }
 });
 
+test("doctor warns when the ponytail feed reports a newer version", () => {
+  const home = missingHome();
+  try {
+    const result = spawnSync(process.execPath, [installer, "doctor"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15000,
+      env: cliEnv(home, { PATH: path.join(home, "empty-bin"), TERSIO_PONYTAIL_URL: registryUrl("99.0.0") }),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(/Ponytail version: warn [\d.]+ installed, 99\.0\.0 is the latest/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("doctor names the missing pstack tree, not just the rule", () => {
   const home = missingHome();
   try {
