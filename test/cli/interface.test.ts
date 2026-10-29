@@ -609,7 +609,7 @@ function screenAt(rows: number): string[] {
   return lines;
 }
 
-const LABELS = ["Install plugin", "Update", "Doctor", "Dashboard", "Uninstall plugin"];
+const LABELS = ["Install plugin", "Update", "Doctor", "Dashboard", "Uninstall"];
 
 // Slow the registry past a spinner frame: Clack's CI spinner residue once pushed tips off a 20-row screen.
 function screenAtCi(rows: number): string[] {
@@ -652,7 +652,7 @@ describe.skipIf(!havePyte)("menu layout", () => {
       }
       // The intro and every option must survive; scrolling them away showed a blank gap and sliced art.
       expect(lines.some((l) => l.includes("set up add-ons")), `tips visible at ${rows} rows`).toBe(true);
-      expect(lines.some((l) => l.includes("Uninstall plugin")), `last option visible at ${rows} rows`).toBe(true);
+      expect(lines.some((l) => l.includes("Uninstall")), `last option visible at ${rows} rows`).toBe(true);
     }, 20000);
   }
 
