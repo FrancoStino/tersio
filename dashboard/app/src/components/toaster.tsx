@@ -44,7 +44,7 @@ export function ToasterProvider({ children }: { children: React.ReactNode }) {
   // A right-side drawer would cover the default corner, so the stack moves left while one is mounted.
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
-    const sync = (): void => setDrawerOpen(document.querySelector("[data-slot=drawer-popup]") !== null);
+    const sync = (): void => setDrawerOpen(document.querySelector("[data-slot=drawer-popup][data-open]") !== null);
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { childList: true, subtree: true });
     sync();
