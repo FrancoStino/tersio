@@ -344,3 +344,29 @@
 @media (min-width: 1024px) {
   [data-stat-band] > :last-child { grid-column: span var(--stat-band-span-lg, 1); }
 }
+
+/* The topbar fill: the page bg itself, so the bar and the rail are exactly one color. */
+@utility bar-veil {
+  background-color: var(--bg);
+}
+
+/* A hairline highlight along a card's top edge. */
+@utility shine {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    z-index: 1;
+    background: linear-gradient(90deg, transparent, var(--shine-line, var(--line)) 50%, transparent);
+    pointer-events: none;
+  }
+}
+
+/* The hairline color follows the palette. */
+:root { --shine-line: rgba(24, 24, 27, .18); }
+html[data-theme="dark"] { --shine-line: rgba(244, 244, 245, .2); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --shine-line: rgba(244, 244, 245, .2); }
+}
