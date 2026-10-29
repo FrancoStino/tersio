@@ -77,7 +77,7 @@ function flagValue(name: string): string | undefined {
   return args.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
 }
 
-const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
+const COMMANDS: Record<string, true> = { install: true, update: true, config: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([
   '--host', '--port', '--export', '--currency', '--scope', '--write',
@@ -89,6 +89,7 @@ const command = commandArg?.toLowerCase() || null;
 const unknownCommand = command !== null && !COMMANDS[command];
 const install = command === 'install';
 const update = command === 'update';
+const config = command === 'config';
 const showVersion = command === 'version' || args.includes('--version') || args.includes('-v');
 const showHelp = command === 'help' || args.includes('--help') || args.includes('-h');
 const applyUpdate = args.includes('--apply-update');
@@ -407,7 +408,7 @@ export {
   IS_WINDOWS, RTK_BINARY_NAME, HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, BUN_BIN_DIR, OMP_BIN, NPM_BIN, BUN_BIN,
   PACKAGE_NAME, PACKAGE_BIN, PACKAGE_VERSION,
   CAVEMAN_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS, HEADROOM_DEFAULTS, RTK_DEFAULTS, COMBO_PRESET_MODES, COMBO_DEFAULTS, ACCENT_DEFAULTS,
-  parseEnum, flagValue, COMMANDS, commandArg, command, unknownCommand, mcp,
+  parseEnum, flagValue, COMMANDS, commandArg, command, config, unknownCommand, mcp,
   install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,

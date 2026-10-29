@@ -262,12 +262,13 @@ test("package manifest declares always-on extensions plus updater feature and se
 
   const combo = settings.comboDefault as { type?: string; values?: string[]; default?: string };
   expect(combo.type).toBe("enum");
-  expect(combo.values).toEqual(["off", "lite", "balanced", "max"]);
-  expect(combo.default).toBe("off");
+  expect(combo.values).toEqual(["inherit", "off", "lite", "balanced", "max"]);
+  expect(combo.default).toBe("inherit");
 
-  const rtk = settings.rtkDefault as { type?: string; default?: boolean };
-  expect(rtk.type).toBe("boolean");
-  expect(rtk.default).toBe(false);
+  const rtk = settings.rtkDefault as { type?: string; values?: string[]; default?: string };
+  expect(rtk.type).toBe("enum");
+  expect(rtk.values).toEqual(["inherit", "on", "off"]);
+  expect(rtk.default).toBe("inherit");
 
   const currency = settings.currency as { type?: string; values?: string[]; default?: string };
   expect(currency.type).toBe("enum");

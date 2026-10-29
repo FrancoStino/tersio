@@ -211,11 +211,17 @@ export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostD
   const section: Record<string, string | boolean> = {};
   for (const field of [...new Set(fields)]) {
     const value = profile[field];
+    // An explicit `inherit` removes the override, so the shared value keeps reaching this agent.
+    if (value === 'inherit') continue;
     // Equality with the flat key is inheritance, not an override, so the section never freezes the shared value.
     if (flat[field] === undefined || flat[field] !== value) section[field] = value as string | boolean;
   }
   const hosts = { ...((before.hosts as Record<string, Record<string, unknown>> | undefined) ?? {}) };
   const merged: Record<string, string | boolean> = { ...((hosts[host] as Record<string, string | boolean> | undefined) ?? {}), ...section };
+  for (const field of [...new Set(fields)]) {
+    // `inherit` is a removal, not a value this section stores.
+    if (profile[field] === 'inherit') delete merged[field];
+  }
   for (const key of Object.keys(merged)) {
     if (merged[key] === flat[key]) delete merged[key];
   }
@@ -234,6 +240,62 @@ export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostD
 
 function formatProfile(profile: Profile): string {
   return `combo=${profile.comboDefault} (caveman=${profile.cavemanDefault} · rtk=${profile.rtkDefault ? 'on' : 'off'} · ponytail=${profile.ponytailDefault} · pstack=${profile.pstackDefault} · headroom=${profile.headroomDefault}) · currency=${profile.currency}`;
+}
+
+/** The mode keys a harness exposes, in the order the status line prints them. */
+export const CONFIG_KEYS: readonly HostDefaultField[] = ['comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault', 'pstackDefault', 'headroomDefault'];
+
+export interface ConfigEntry {
+  key: HostDefaultField;
+  value: string | boolean;
+  source: 'override' | 'inherited' | 'default' | 'invalid';
+}
+
+function validConfigValue(key: HostDefaultField, value: unknown): boolean {
+  if (key === 'rtkDefault') return typeof value === 'boolean';
+  if (typeof value !== 'string') return false;
+  if (key === 'comboDefault') return value in COMBO_PRESET_MODES;
+  const set = key === 'cavemanDefault' ? CAVEMAN_DEFAULTS
+    : key === 'ponytailDefault' ? PONYTAIL_DEFAULTS
+      : key === 'pstackDefault' ? PSTACK_DEFAULTS
+        : HEADROOM_DEFAULTS;
+  return set.has(value);
+}
+
+/** Each mode's effective value and where it came from: this agent's section, the shared store, or the default. */
+export function configEntries(host: HostId | null): ConfigEntry[] {
+  const stored = parseStored(readTextIfExistsSync(tersioSettingsFile())) ?? {};
+  const flat = stored as Record<string, unknown>;
+  const section = (host ? (stored.hosts as Record<string, Record<string, unknown>> | undefined)?.[host] : undefined) ?? {};
+  const effective = storedProfileSync(host);
+  return CONFIG_KEYS.map((key) => {
+    const own = section[key];
+    const shared = flat[key];
+    if (own !== undefined && own !== 'inherit' && !validConfigValue(key, own)) return { key, value: effective[key], source: 'invalid' };
+    if (shared !== undefined && shared !== 'inherit' && !validConfigValue(key, shared)) return { key, value: effective[key], source: 'invalid' };
+    if (own !== undefined && own !== 'inherit') return { key, value: effective[key], source: 'override' };
+    if (shared !== undefined && shared !== 'inherit') return { key, value: effective[key], source: 'inherited' };
+    return { key, value: effective[key], source: 'default' };
+  });
+}
+
+/** Prints the effective defaults, naming the source of each; `key` narrows it to one row. */
+export function runConfig(host: HostId | null, key: string | null): void {
+  const wanted = key === null ? CONFIG_KEYS : CONFIG_KEYS.filter((candidate) => candidate === key);
+  if (wanted.length === 0) {
+    console.error(`[fail] Unknown setting: ${key}. Use one of ${CONFIG_KEYS.join(', ')}.`);
+    process.exitCode = 1;
+    return;
+  }
+  const where = host ? `host ${host}` : 'shared';
+  console.log(`tersio config — ${where}`);
+  for (const entry of configEntries(host).filter((row) => wanted.includes(row.key))) {
+    const source = entry.source === 'override' ? `overridden in ${host}`
+      : entry.source === 'inherited' ? `inherited from ${tersioSettingsFile()}`
+        : entry.source === 'invalid' ? 'invalid value, using the safe default'
+          : 'default';
+    console.log(`  ${entry.key}: ${String(entry.value)} (${source})`);
+  }
 }
 
 export { clampSidebarWidth, defaultProfile, formatProfile, storedProfile, storedProfileSync, writePluginSettings };

@@ -70,12 +70,13 @@
         "type": "enum",
         "description": "Session-start default (no saved state)",
         "values": [
+          "inherit",
           "off",
           "lite",
           "balanced",
           "max"
         ],
-        "default": "off"
+        "default": "inherit"
       },
       "comboSetupComplete": {
         "type": "boolean",
@@ -86,6 +87,7 @@
         "type": "enum",
         "description": "Session-start default (no saved state)",
         "values": [
+          "inherit",
           "off",
           "lite",
           "full",
@@ -94,41 +96,45 @@
           "megacave-full",
           "megacave-ultra"
         ],
-        "default": "off"
+        "default": "inherit"
       },
       "rtkDefault": {
-        "type": "boolean",
-        "description": "Session-start default (no saved state)",
-        "default": false
+        "type": "enum",
+        "description": "RTK on by default. inherit reads ~/.tersio/settings.json",
+        "values": ["inherit", "on", "off"],
+        "default": "inherit"
       },
       "ponytailDefault": {
         "type": "enum",
         "description": "Session-start default; follows the combo preset unless overridden",
         "values": [
+          "inherit",
           "off",
           "lite",
           "full",
           "ultra"
         ],
-        "default": "off"
+        "default": "inherit"
       },
       "pstackDefault": {
         "type": "enum",
         "description": "Session-start default; every combo preset above off turns it on",
         "values": [
+          "inherit",
           "off",
           "on"
         ],
-        "default": "off"
+        "default": "inherit"
       },
       "headroomDefault": {
         "type": "enum",
         "description": "Session-start default for the opt-in Headroom token-saver; no combo preset turns it on",
         "values": [
+          "inherit",
           "off",
           "on"
         ],
-        "default": "off"
+        "default": "inherit"
       },
       "currency": {
         "type": "enum",
