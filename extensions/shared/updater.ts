@@ -31,7 +31,6 @@ import type { RtkRelease } from './utils.ts';
 const IS_WINDOWS = process.platform === 'win32';
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-const PONYTAIL_REMOTE = 'https://raw.githubusercontent.com/DietrichGebert/ponytail/main/package.json';
 const RTK_BINARY = resolveRtkBinary();
 // Beside this file: a retired agent-tree copy has no `caveman` sibling, so fall back to the OMP plugin.
 const CAVEMAN_SIBLING = (name: string): string => path.join(EXTENSION_DIR, '..', 'caveman', name);

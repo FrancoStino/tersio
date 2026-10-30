@@ -1,8 +1,7 @@
 // Usage ledger: append-only JSON lines, read by the CLI, `/tersio`, and the Dashboard. Corrupt lines are skipped.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { homeDir, isPiProcess, isPigProcess, pigAgentDir, piAgentDir, resolveRtkBinary, rtkDirs, shimCommand, tersioDataPath } from './utils.ts';
+import { homeDir, isPiProcess, isPigProcess, pigAgentDir, piAgentDir, resolveRtkBinary, tersioDataPath } from './utils.ts';
 import { tersioStateFile } from './state.ts';
 import { eligibleHeads } from './rtk-eligible.ts';
 import { sqliteRead } from './sqlite.ts';
@@ -76,7 +75,7 @@ export function appendUsage(kind: UsageKind, detail: string): void {
   } catch { /* ledger is best-effort; never break the caller */ }
 }
 
-// Session tokens, tokscale-style: assistant messages in the host transcripts carry usage, model, and a timestamp.
+// Session tokens: assistant messages in the host transcripts carry usage, model, and a timestamp.
 export interface TokenBreakdown {
   input: number;
   output: number;
@@ -148,12 +147,6 @@ export interface RtkAdoption {
   byHost: Record<string, RtkHostAdoption>;
 }
 
-export interface RtkRecallDiagnostics {
-  mode: 'sqlite' | 'tee' | 'disabled' | 'unknown';
-  entries: number;
-  available: boolean;
-}
-
 function zeroBreakdown(): TokenBreakdown {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 }
@@ -210,10 +203,6 @@ export function sessionsDirs(): string[] {
   return found.length > 0 ? found : [dirs[0]];
 }
 
-export function sessionsDir(): string {
-  return sessionsDirs()[0];
-}
-
 // One JSON file per message; probe XDG, then local, then macOS default.
 export function opencodeSessionsDir(): string {
   const override = process.env.TERSIO_OPENCODE_DIR;
@@ -267,6 +256,11 @@ const ocDbCurrent = (since: number): string =>
 // A re-scan window covers tokens that land after the row was created, so a late fill is not lost.
 export const OPENCODE_DB_OVERLAP_MS = 3_600_000;
 
+/** Tab-split fields: empty and non-finite text read as absent. */
+function tabNum(v: string | undefined): number | undefined {
+  return v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined;
+}
+
 // Empty when no SQLite is available or the db is unreadable; that is a sync skip, not a failure.
 export function readOpencodeDbRows(db: string, sinceMs: number): OpencodeDbRow[] {
   if (!Number.isFinite(sinceMs)) return [];
@@ -275,14 +269,13 @@ export function readOpencodeDbRows(db: string, sinceMs: number): OpencodeDbRow[]
     const since = Math.max(0, Math.floor(sinceMs));
     // Separate calls: a db holding only one table must not cancel the other.
     const run = (sql: string): string => sqliteRead(db, sql);
-let out = '';
-try { out += run(ocDbLegacy(since)); } catch { /* no legacy table or unreadable */ }
-try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or unreadable */ }
+    let out = '';
+    try { out += run(ocDbLegacy(since)); } catch { /* no legacy table or unreadable */ }
+    try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or unreadable */ }
     const rows: OpencodeDbRow[] = [];
     for (const line of out.split('\n')) {
       if (!line.trim()) continue;
       const [id, created, role, providerID, modelID, tCreated, tStreamed, tCompleted, input, output, cacheRead, cacheWrite, cost, tools] = line.split('\t');
-      const n = (v: string | undefined): number | undefined => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined);
       rows.push({
         id,
         created: Number(created),
@@ -291,9 +284,9 @@ try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or u
           role,
           modelID,
           providerID,
-          tokens: { input: n(input), output: n(output), cache: { read: n(cacheRead), write: n(cacheWrite) } },
-          time: { created: n(tCreated), streamed: n(tStreamed), completed: n(tCompleted) },
-          cost: n(cost),
+          tokens: { input: tabNum(input), output: tabNum(output), cache: { read: tabNum(cacheRead), write: tabNum(cacheWrite) } },
+          time: { created: tabNum(tCreated), streamed: tabNum(tStreamed), completed: tabNum(tCompleted) },
+          cost: tabNum(cost),
         },
       });
     }
@@ -303,12 +296,16 @@ try { out += run(ocDbCurrent(since)); } catch { /* no session_message table or u
   }
 }
 
+/** Zero-padded two-digit number, for the day keys. */
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
 export function dayKey(ts: string | number): string | null {
   const ms = typeof ts === 'number' ? ts : Date.parse(ts);
   if (!Number.isFinite(ms)) return null;
   const d = new Date(ms);
-  const p = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
 // OpenCode tool parts carry the command in the message blob; sqliteRead is line-based, so newlines are flattened in SQL.
@@ -402,6 +399,11 @@ export interface SessionAccum {
 export function newSessionAccum(): SessionAccum {
   return { byModel: {}, byDay: {}, byDayModel: {}, byTool: {}, byModelMessages: {}, byHost: {}, byAgent: {}, byAgentMessages: {}, byModelMeasured: {}, byModelCostMessages: {}, totals: zeroBreakdown(), messages: 0, costMeasured: 0, recent: [], recentFloor: Number.POSITIVE_INFINITY };
 }
+/** Positive numbers floor to an int; anything else counts as 0. */
+function positiveInt(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
 export function ingestSessionRow(accum: SessionAccum, model: string, usage: Record<string, unknown>, ts: string | number | undefined, durMs?: unknown, run?: { st: RunStatus; code?: number; note?: string }, toolNames?: string[], host?: string, id?: string, agent?: string, ttftMs?: unknown): boolean {
   const watermark = readResetWatermark();
   const ms = ts === undefined ? NaN : typeof ts === 'number' ? ts : Date.parse(ts);
@@ -423,12 +425,11 @@ export function ingestSessionRow(accum: SessionAccum, model: string, usage: Reco
     const am = (accum.byAgentMessages[key] ??= {});
     am[agent] = (am[agent] ?? 0) + 1;
   }
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
   if (Number.isFinite(ms)) {
     const outcome = run ?? { st: 'completed' as RunStatus };
     // Only the newest rows are read: skip below the floor, and a 50k-row store costs 2000 rows of memory.
     if (accum.recent.length < RECENT_LIMIT || ms >= accum.recentFloor) {
-      accum.recent.push({ m: key, i: num(usage.input), o: num(usage.output), t: ms, d: durOf(durMs), tf: durOf(ttftMs), h: host, cr: num(usage.cacheRead), cw: num(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
+      accum.recent.push({ m: key, i: positiveInt(usage.input), o: positiveInt(usage.output), t: ms, d: durOf(durMs), tf: durOf(ttftMs), h: host, cr: positiveInt(usage.cacheRead), cw: positiveInt(usage.cacheWrite), usd: costOf(usage), st: outcome.st, code: outcome.code, note: outcome.note, id });
       if (accum.recent.length > RECENT_LIMIT) {
         let drop = 0;
         for (let k = 1; k < accum.recent.length; k += 1) if (accum.recent[k].t < accum.recent[drop].t) drop = k;
@@ -619,6 +620,11 @@ export interface OpencodeClassification {
   ttftMs: number | undefined;
 }
 
+/** Positive finite numbers pass through; anything else reads as absent. */
+function posNum(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
 // One OpenCode message file; assistant rows carry the token buckets.
 export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined): OpencodeClassification | null {
   if (!obj || typeof obj !== 'object' || obj.role !== 'assistant') return null;
@@ -634,11 +640,10 @@ export function classifyOpencodeMessage(obj: OpencodeMessage | null | undefined)
   if (!hasPositiveUsage(usage)) return null;
   const provider = typeof obj.providerID === 'string' && obj.providerID ? obj.providerID : 'unknown';
   const model = typeof obj.modelID === 'string' && obj.modelID ? obj.modelID : 'unknown';
-  const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
-  const created = num(obj.time?.created);
-  const completed = num(obj.time?.completed);
+  const created = posNum(obj.time?.created);
+  const completed = posNum(obj.time?.completed);
   // `streamed` is when the first token arrived, so it is the host's own first-token latency.
-  const streamed = num(obj.time?.streamed);
+  const streamed = posNum(obj.time?.streamed);
   return {
     model: `opencode/${provider}/${model}`,
     usage,
@@ -736,23 +741,31 @@ export function foldModelsByLabel(
   }
   return { byModel: folded, byModelMessages: messages };
 }
+/** Capitalize one word the way each vendor spells itself: GPT, SWE, AI, d4-style codes. */
+function capWord(s: string): string {
+  const low = s.toLowerCase();
+  if (low === 'openai') return 'OpenAI';
+  if (low === 'gpt') return 'GPT';
+  if (low === 'swe') return 'SWE';
+  if (low === 'ai') return 'AI';
+  if (/^\d+[a-z]+$/.test(low)) return low.toUpperCase();
+  if (s.length <= 2) return s.toUpperCase();
+  return s[0].toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function seg(s: string): string {
+  return s.split('.').map(capWord).join('.');
+}
+
+function words(s: string): string {
+  return s.split(/[-_:]+/).filter(Boolean).map(seg).join('-');
+}
+
 // Vendor-first labels, same fold as the dashboard: "Anthropic - Claude - Haiku-4.5".
 export function displayModelId(model: string): string {
   const bare = model.replace(FREE_SUFFIX, '');
   // The report already folds keys; folding again would lowercase the caps.
   if (bare.includes(' - ')) return bare;
-  const cap = (s: string): string => {
-    const low = s.toLowerCase();
-    if (low === 'openai') return 'OpenAI';
-    if (low === 'gpt') return 'GPT';
-    if (low === 'swe') return 'SWE';
-    if (low === 'ai') return 'AI';
-    if (/^\d+[a-z]+$/.test(low)) return low.toUpperCase();
-    if (s.length <= 2) return s.toUpperCase();
-    return s[0].toUpperCase() + s.slice(1).toLowerCase();
-  };
-  const seg = (s: string): string => s.split('.').map(cap).join('.');
-  const words = (s: string): string => s.split(/[-_:]+/).filter(Boolean).map(seg).join('-');
   const segs = bare.split('/').filter(Boolean);
   const tail = segs[segs.length - 1] ?? bare;
   // One free model under two spellings; fold the alpha variant onto it.
@@ -929,7 +942,7 @@ export function readRtkAdoption(): RtkAdoption {
   // The eligible set comes from rtk's rewrite contract, cached per binary version.
   const eligible = eligibleHeads(resolveRtkBinary());
   // A cached count is only valid for the head set that produced it.
-  const headsKey = [...eligible].sort().join(',');
+  const headsKey = [...eligible].toSorted().join(',');
   const files: string[] = [];
   for (const dir of sessionsDirs()) walkJsonl(dir, files, 2000);
   const live = new Set(files);
@@ -1045,28 +1058,12 @@ export function processSessionText(accum: SessionAccum, state: { codexProvider: 
   }
 }
 
-export function readRtkRecallDiagnostics(binary: string | null = resolveRtkBinary()): RtkRecallDiagnostics {
-  if (!binary) return { mode: 'unknown', entries: 0, available: false };
-  try {
-    const configPath = process.env.RTK_CONFIG || path.join(rtkDirs().config, 'config.toml');
-    let config = '';
-    try { config = fs.readFileSync(configPath, 'utf8'); } catch { /* use RTK CLI fallback */ }
-    const modeMatch = /^\s*mode\s*=\s*"(sqlite|tee|disabled)"/m.exec(config);
-    const mode = (modeMatch?.[1] ?? 'unknown') as RtkRecallDiagnostics['mode'];
-    const shim = shimCommand(binary, ['recall', '--list']);
-    const output = execFileSync(shim.cmd, shim.args, { encoding: 'utf8', timeout: 5000, windowsHide: true });
-    const entries = /\((\d+)\s+(?:entries?|stored)\)/i.exec(output)?.[1] ?? /^\s*(\d+)\s+entries?/im.exec(output)?.[1] ?? '0';
-    return { mode, entries: Number(entries) || 0, available: true };
-  } catch {
-    return { mode: 'unknown', entries: 0, available: false };
-  }
-}
 // Lead binary of a shell string: first segment past `cd` chains and VAR=x assignments. Falls back to `bash`.
 const SKIP_HEADS = ['cd', 'echo', 'export', 'true', 'false'];
 export function leadBinary(command: unknown): string {
   if (typeof command !== 'string' || !command.trim()) return 'bash';
-  for (const seg of command.split(/&&|;|\n|\|(?!\|)/)) {
-    const toks = seg.trim().split(/\s+/).filter(Boolean);
+  for (const chunk of command.split(/&&|;|\n|\|(?!\|)/)) {
+    const toks = chunk.trim().split(/\s+/).filter(Boolean);
     let i = 0;
     while (i < toks.length && (toks[i] === 'sudo' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]))) i++;
     const head = (toks[i] ?? '').replace(/^['"]|['"]$/g, '').split('/').pop() ?? '';

@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { appendUsage } from '../shared/usage-ledger.ts';
 import { runAddonUpdate } from '../shared/updater.ts';
+import { openCommand } from '../shared/utils.ts';
 import type { ExtensionApi, ExtensionCtx } from '../shared/types.ts';
 
 const HELP = [
@@ -46,12 +47,7 @@ async function openDashboard(pi: ExtensionApi, ctx?: ExtensionCtx): Promise<void
   try {
     const exported = await pi.exec?.('tersio', ['dashboard', '--export', file], { cwd: ctx?.cwd });
     if (!exported || exported.code !== 0) throw new Error((exported?.stderr || 'export failed').trim());
-    // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
-    const [openCmd, openArgs]: [string, string[]] = process.platform === 'darwin'
-      ? ['open', [file]]
-      : process.platform === 'win32'
-        ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'start', '', file]]
-        : ['xdg-open', [file]];
+    const [openCmd, openArgs] = openCommand(file);
     await pi.exec?.(openCmd, openArgs, { cwd: ctx?.cwd });
     ctx?.ui?.notify?.(`tersio dashboard: opened in your browser.`, 'info');
   } catch (e) {

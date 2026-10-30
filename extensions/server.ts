@@ -17,6 +17,11 @@ import { resolveRtkBinary, shimCommand } from './shared/utils.ts';
 import { appendUsage } from './shared/usage-ledger.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from './shared/types.ts';
 
+// The first hook of an unseen session runs its session_start handlers.
+function sidOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
 interface CommandConfig {
   description: string;
   handler: (args: string, ctx: ExtensionCtx) => Promise<void>;
@@ -128,10 +133,6 @@ const plugin: Plugin.Plugin = {
     };
 
     for (const extension of [cavemanSessionExtension, pstackSessionExtension, headroomSessionExtension, rtkSessionExtension, rtkFilterExtension, comboToggleExtension, tersioCommandsExtension]) extension(host);
-
-    // The first hook of an unseen session runs its session_start handlers.
-    const sidOf = (value: unknown): string | undefined =>
-      typeof value === 'string' && value ? value : undefined;
 
     await ctx.command.transform((editor) => {
       for (const [name, config] of commands) {
@@ -304,7 +305,7 @@ function bundledSkills(): ReturnType<typeof parseSkillFile>[] {
   let entries;
   try { entries = readdirSync(PONYTAIL_BUNDLE_SKILLS, { withFileTypes: true }); } catch { return []; }
   const out: ReturnType<typeof parseSkillFile>[] = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory()) continue;
     const skill = parseSkillFile(join(PONYTAIL_BUNDLE_SKILLS, entry.name, 'SKILL.md'));
     if (skill) out.push(skill);

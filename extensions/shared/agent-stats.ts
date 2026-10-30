@@ -1,6 +1,5 @@
 // Read-only aggregate over the usage store; missing SQLite, table, or metric reads as zeros.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { sqliteRead } from './sqlite.ts';
 import { homeDir } from './utils.ts';
@@ -715,11 +714,6 @@ function txt(column: string): string {
   return `replace(replace(replace(COALESCE(${column}, ''), char(10), ' '), char(13), ' '), char(9), ' ')`;
 }
 
-/** The unpriced rule, kept for callers that group by it: no route here is a subscription route. */
-function unpricedSql(): string {
-  return '0';
-}
-
 /** The additive facts every messages group reads. */
 function messageFacts(): string {
   return [
@@ -846,6 +840,27 @@ function bucketSize(range: RangeKey, firstTs: number | null, lastTs: number | nu
   return Math.max(base, Math.ceil(span / MAX_BUCKETS / base) * base);
 }
 
+/** A request row from its SQL column order. */
+function toRequestRows(rows: string[][]): AgentRequestRow[] {
+  return rows.map((r) => ({
+    ts: num(r[0]),
+    provider: r[1] ?? '',
+    model: r[2] ?? '',
+    project: r[3] ?? '',
+    api: r[4] ?? '',
+    input: num(r[5]), output: num(r[6]), cacheRead: num(r[7]), cacheWrite: num(r[8]), totalTokens: num(r[9]),
+    costUsd: num(r[10]),
+    unpriced: num(r[11]) > 0,
+    durationMs: numOrNull(r[12]),
+    ttftMs: numOrNull(r[13]),
+    stopReason: r[14] ?? '',
+    errorMessage: r[15] || null,
+    agentType: r[16] ?? '',
+    sessionFile: r[17] ?? '',
+    entryId: r[18] ?? '',
+  }));
+}
+
 function readStatsDb(db: string, cutoff: number, bucketMs: number, parts: Set<string>, offset = 0): Partial<AgentStats> {
   const where = rangeWhere(cutoff, COL.timestamp);
   const errorWhere = `WHERE ${COL.stopReason} = 'error'${cutoff > 0 ? ` AND ${COL.timestamp} >= ${Math.floor(cutoff)}` : ''}`;
@@ -887,25 +902,7 @@ function readStatsDb(db: string, cutoff: number, bucketMs: number, parts: Set<st
   }));
   applySessionMetadata(traces);
 
-  const requestRows = (rows: string[][]): AgentRequestRow[] => rows.map((r) => ({
-    ts: num(r[0]),
-    provider: r[1] ?? '',
-    model: r[2] ?? '',
-    project: r[3] ?? '',
-    api: r[4] ?? '',
-    input: num(r[5]), output: num(r[6]), cacheRead: num(r[7]), cacheWrite: num(r[8]), totalTokens: num(r[9]),
-    costUsd: num(r[10]),
-    unpriced: num(r[11]) > 0,
-    durationMs: numOrNull(r[12]),
-    ttftMs: numOrNull(r[13]),
-    stopReason: r[14] ?? '',
-    errorMessage: r[15] || null,
-    agentType: r[16] ?? '',
-    sessionFile: r[17] ?? '',
-    entryId: r[18] ?? '',
-  }));
-
-  const errorRows = requestRows(out.get('errors') ?? []);
+  const errorRows = toRequestRows(out.get('errors') ?? []);
   const errorCounts = new Map<string, AgentErrorModelRow>();
   for (const row of errorRows) {
     const key = `${row.model}\u0000${row.provider}`;
@@ -932,7 +929,7 @@ function readStatsDb(db: string, cutoff: number, bucketMs: number, parts: Set<st
     hourOfDay: (out.get('hourOfDay') ?? []).map((r) => ({
       hour: num(r[0]), requests: num(r[1]), errors: num(r[2]), tokens: num(r[3]), costUsd: num(r[4]),
     })),
-    recent: requestRows(out.get('recent') ?? []),
+    recent: toRequestRows(out.get('recent') ?? []),
     errorGroups: groupErrors(errorRows),
     errors: errorRows,
     errorModels: [...errorCounts.values()].toSorted((a, b) => b.count - a.count),
@@ -1042,6 +1039,24 @@ function readProviderSeries(db: string, cutoff: number, bucketMs: number): Array
     .map(([provider, held]) => ({ provider, points: held.points }));
 }
 
+/** A tool row from its SQL column order. */
+function parseToolRow(r: string[]): AgentToolRow {
+  return {
+    tool: r[1] ?? '',
+    calls: num(r[4]),
+    errors: num(r[11]),
+    argsChars: num(r[9]),
+    resultChars: num(r[10]),
+    totalTokensShare: num(r[5]),
+    outputTokensShare: num(r[6]),
+    costShare: num(r[7]),
+    unpricedShare: 0,
+    lastUsed: numOrNull(r[8]),
+    model: r[2] ?? '',
+    provider: r[3] ?? '',
+  };
+}
+
 /** Tool calls per message. A row carrying `tc` holds one fact per call; an older row holds names only. */
 function readToolSeries(db: string, cutoff: number, bucketMs: number): Partial<AgentStats> {
   const where = `WHERE ${COL.timestamp} >= ${Math.floor(cutoff)}`;
@@ -1071,23 +1086,9 @@ function readToolSeries(db: string, cutoff: number, bucketMs: number): Partial<A
     ['toolSeries', `SELECT (${COL.bucket} / ${bucketMs}) * ${bucketMs}, ${name}, COUNT(*), TOTAL(${failed})
       FROM ${from} ${where} GROUP BY 1, 2 ORDER BY 1`],
   ]);
-  const parseTool = (r: string[]): AgentToolRow => ({
-    tool: r[1] ?? '',
-    calls: num(r[4]),
-    errors: num(r[11]),
-    argsChars: num(r[9]),
-    resultChars: num(r[10]),
-    totalTokensShare: num(r[5]),
-    outputTokensShare: num(r[6]),
-    costShare: num(r[7]),
-    unpricedShare: 0,
-    lastUsed: numOrNull(r[8]),
-    model: r[2] ?? '',
-    provider: r[3] ?? '',
-  });
   return {
-    tools: (out.get('byTool') ?? []).map(parseTool),
-    toolsByModel: (out.get('byToolModel') ?? []).map(parseTool),
+    tools: (out.get('byTool') ?? []).map(parseToolRow),
+    toolsByModel: (out.get('byToolModel') ?? []).map(parseToolRow),
     toolSeries: (out.get('toolSeries') ?? []).map((r) => ({
       ts: num(r[0]), tool: r[1] ?? '', calls: num(r[2]), errors: num(r[3]),
     })),

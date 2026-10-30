@@ -167,6 +167,14 @@ export function resolveHostBinary(name: string, managedDir = path.join(homeDir()
   return firstExecutable(name, managedDir);
 }
 
+// The platform's opener, as one command plus argv, shared by the CLI and the /tersio command.
+export function openCommand(target: string): [string, string[]] {
+  if (process.platform === 'darwin') return ['open', [target]];
+  // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
+  if (process.platform === 'win32') return [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'start', '', target]];
+  return ['xdg-open', [target]];
+}
+
 export function rtkPlatformSpec(platform: string = process.platform, arch: string = process.arch): RtkPlatformSpec | null {
   return RTK_PLATFORM_SPECS[`${platform}/${arch}`] || null;
 }
