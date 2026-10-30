@@ -142,7 +142,8 @@ test.skipIf(!hasSqlite())("a restore puts a readable snapshot back over the live
     // What the dashboard's "Backup now" does, over a db that already has rows.
     const made = createDataBackup();
     expect(clearUsageDb()).toBe(1);
-    expect(readUsageDb()).toBe(null);
+    expect(readUsageDb()?.tokens.messages ?? 0).toBe(0);
+    // The snapshot predates the reset marker, so restoring it brings the rows back into view.
     expect(restoreDataBackup(made.name)).toBe(true);
     expect(readUsageDb()?.tokens.messages).toBe(1);
   } finally {
@@ -316,7 +317,8 @@ function writeTranscript(dir: string, name: string, model: string, tokens: Recor
   mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     JSON.stringify({ type: "session", version: 3, id: name, timestamp: at, cwd: "/tmp/project" }),
-    JSON.stringify({ type: "message", id: "m", timestamp: at, message: transcriptMessage(model, tokens, at) }),
+    // A distinct id per transcript: two hosts never share one assistant call.
+    JSON.stringify({ type: "message", id: `m-${name}`, timestamp: at, message: transcriptMessage(model, tokens, at) }),
   ];
   writeFileSync(file, `${lines.join("\n")}\n`, "utf8");
 }
@@ -382,7 +384,7 @@ test.skipIf(!hasSqlite())("the reads the page needs are indexed", () => {
         usageDbPath(),
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_messages%';",
       ).split("\n").map((line) => line.trim()).filter(Boolean).toSorted();
-      expect(names).toEqual(["idx_messages_file", "idx_messages_h_t", "idx_messages_model", "idx_messages_t"]);
+      expect(names).toEqual(["idx_messages_file", "idx_messages_h_t", "idx_messages_id", "idx_messages_model", "idx_messages_t"]);
       // The watermark the sync reads is the one the index serves.
       const plan = sqliteRead(
         usageDbPath(),
@@ -552,11 +554,11 @@ test("clearUsageLedger removes the file and returns rows cleared", async () => {
 });
 
 test("reset watermark defaults to 0, writes and reads back", async () => {
-  const { resetMarkerPath, readResetWatermark, markReset } = await import("../../extensions/shared/usage-ledger.ts");
+  const { resetMarkerPath, readResetWatermark: readWatermark, markReset: writeWatermark } = await import("../../extensions/shared/usage-ledger.ts");
   expect(fs.existsSync(resetMarkerPath())).toBe(false);
-  expect(readResetWatermark()).toBe(0);
-  const ts = markReset();
-  expect(readResetWatermark()).toBe(ts);
+  expect(readWatermark()).toBe(0);
+  const ts = writeWatermark();
+  expect(readWatermark()).toBe(ts);
   expect(fs.readFileSync(resetMarkerPath(), "utf8")).toMatch(/"ts":\d+/);
 });
 
@@ -701,9 +703,10 @@ test.skipIf(!hasSqlite())("migration guard restores the backup when transcripts 
       sqliteExec(process.env.TERSIO_USAGE_DB!, "UPDATE meta SET v='__old__' WHERE k='parser_version';");
       rmSync(path.join(dir, "sessions", "a.jsonl"));
       rmSync(path.join(dir, "sessions", "b.jsonl"));
-      expect(syncUsageDb()).toBe(false);
+      // Nothing is wiped, so nothing needs restoring: the rows for the vanished transcripts stay.
+      expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(6);
-      expect(reparseGuardReport()).toMatch(/kept 2 of 6 rows/);
+      expect(reparseGuardReport()).toBe(null);
       process.env.TERSIO_FORCE_REPARSE = "1";
       expect(syncUsageDb()).toBe(true);
       expect(readUsageDb()?.tokens.messages).toBe(2);
@@ -894,17 +897,61 @@ test("usageDbPath migrates the legacy plugins copy into ~/.tersio", () => {
   }
 });
 
-test.skipIf(!hasSqlite())("clearUsageDb removes the store file", () => {
+// A branched or resumed transcript repeats the same assistant call; it must count once.
+test.skipIf(!hasSqlite())("a message id shared by two transcripts counts once", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-usage-dedupe-"));
+  try {
+    withEnv(dir, () => {
+      const row = (id: string, input: number): string =>
+        `{"timestamp":"2026-09-01T10:00:00.000Z","type":"message","id":"${id}","message":{"role":"assistant","model":"m","usage":{"input":${input},"output":1}}}`;
+      mkdirSync(process.env.TERSIO_SESSIONS_DIR!, { recursive: true });
+      writeFileSync(path.join(process.env.TERSIO_SESSIONS_DIR!, "a.jsonl"), row("shared", 10) + "\n", "utf8");
+      writeFileSync(path.join(process.env.TERSIO_SESSIONS_DIR!, "b.jsonl"), row("shared", 10) + "\n" + row("only-b", 40) + "\n", "utf8");
+      expect(syncUsageDb()).toBe(true);
+      const db = process.env.TERSIO_USAGE_DB!;
+      expect(sqliteRead(db, "SELECT COUNT(*) FROM messages;").trim()).toBe("2");
+      expect(sqliteRead(db, "SELECT COUNT(*) FROM messages WHERE id='shared';").trim()).toBe("1");
+      expect(sqliteRead(db, "SELECT SUM(i) FROM messages;").trim()).toBe("50");
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+// A reset is a marker, not a delete: the views go empty and the rows stay for a later restore.
+test.skipIf(!hasSqlite())("clearUsageDb hides the rows and keeps the store file", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-usage-db-"));
   try {
     withEnv(dir, () => {
       seedSessions(dir);
       expect(syncUsageDb()).toBe(true);
-      expect(existsSync(process.env.TERSIO_USAGE_DB!)).toBe(true);
+      expect(readUsageDb()?.tokens.messages).toBeGreaterThan(0);
       expect(clearUsageDb()).toBe(1);
-      expect(existsSync(process.env.TERSIO_USAGE_DB!)).toBe(false);
-      expect(clearUsageDb()).toBe(0);
-      expect(readUsageDb()).toBe(null);
+      expect(existsSync(process.env.TERSIO_USAGE_DB!), "the rows are kept, so the file stays").toBe(true);
+      expect(readUsageDb()?.tokens.messages ?? 0).toBe(0);
+      const kept = sqliteRead(process.env.TERSIO_USAGE_DB!, "SELECT COUNT(*) FROM messages;");
+      expect(Number(kept[0]?.[0])).toBeGreaterThan(0);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A version bump re-reads the transcripts that remain; rows whose transcript is already gone survive it.
+test.skipIf(!hasSqlite())("a parser bump keeps rows whose transcript rotated away", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-usage-bump-"));
+  try {
+    withEnv(dir, () => {
+      seedSessions(dir);
+      expect(syncUsageDb()).toBe(true);
+      const before = Number(sqliteRead(process.env.TERSIO_USAGE_DB!, "SELECT COUNT(*) FROM messages;")[0]?.[0]);
+      expect(before).toBeGreaterThan(0);
+      // The transcript is gone and the store claims an older parser, which used to drop every row.
+      rmSync(process.env.TERSIO_SESSIONS_DIR!, { recursive: true, force: true });
+      sqliteExec(process.env.TERSIO_USAGE_DB!, "UPDATE meta SET v = '1' WHERE k = 'parser_version';");
+      expect(syncUsageDb()).toBe(true);
+      const after = Number(sqliteRead(process.env.TERSIO_USAGE_DB!, "SELECT COUNT(*) FROM messages;")[0]?.[0]);
+      expect(after, "rotation is not a reason to lose history").toBe(before);
+      expect(readUsageDb()?.tokens.messages).toBeGreaterThan(0);
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1144,7 +1191,7 @@ test("two hosts spelling one model share a single priced key", () => {
     expect(keys).toEqual(["deepseek/deepseek-v4.1-flash", "opencode/opencode/longcat-2.5-preview"]);
     expect(accum.byModel["deepseek/deepseek-v4.1-flash"].input).toBe(3000);
     // The per-host split survives the fold, so a report can still attribute tokens to an agent.
-    expect(Object.keys(accum.byHost["deepseek/deepseek-v4.1-flash"] ?? {}).sort()).toEqual(["omp", "pi"]);
+    expect(Object.keys(accum.byHost["deepseek/deepseek-v4.1-flash"] ?? {}).toSorted()).toEqual(["omp", "pi"]);
     // And one key is one price resolution, so the same model is never counted twice as a guess.
     expect(keys.map((k) => priceFor(k).tier)).toEqual(["tail", "default"]);
   } finally {
@@ -1239,7 +1286,7 @@ test("gateway variants of one model fold into a single labeled row", () => {
       "meta/muse-spark-1.3-contributor": 1,
     },
   );
-  expect(Object.keys(folded.byModel).sort()).toEqual(["Meta - Muse-Spark-1.3-Contributor", "OpenAI - GPT-5.2-Codex"]);
+  expect(Object.keys(folded.byModel).toSorted()).toEqual(["Meta - Muse-Spark-1.3-Contributor", "OpenAI - GPT-5.2-Codex"]);
   expect(folded.byModel["OpenAI - GPT-5.2-Codex"]).toEqual({ input: 150, output: 15, cacheRead: 1500, cacheWrite: 0 });
   expect(folded.byModelMessages["OpenAI - GPT-5.2-Codex"]).toBe(6);
   expect(folded.byModelMessages["Meta - Muse-Spark-1.3-Contributor"]).toBe(1);
@@ -1314,7 +1361,7 @@ test("importer walks both hosts' session directories", () => {
     clearRtkAdoptionCache();
 
     const s = importSessionTokens();
-    expect(Object.keys(s.byModel).sort()).toEqual(["omp-model", "pi-model"]);
+    expect(Object.keys(s.byModel).toSorted()).toEqual(["omp-model", "pi-model"]);
     expect(s.byModel["omp-model"].input).toBe(200);
     expect(s.byModel["pi-model"].input).toBe(400);
   } finally {
@@ -1630,40 +1677,6 @@ test("formatCurrency converts through the snapshot rates", () => {
   expect(formatCurrency(1, "JPY")).toBe("¥150");
   expect(formatCurrency(2, "EUR")).toBe("€1.84");
 });
-
-function fixtureSessions(): string {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-cur-sessions-"));
-  mkdirSync(path.join(dir, "branch"), { recursive: true });
-  writeFileSync(
-    path.join(dir, "branch", "s1.jsonl"),
-    [
-      '{"type":"session","version":3,"id":"s1","timestamp":"2026-09-01T10:00:00.000Z","cwd":"/tmp"}',
-      '{"type":"message","id":"a","timestamp":"2026-09-01T10:01:00.000Z","message":{"role":"assistant","model":"claude-sonnet-5","usage":{"input":1000,"output":200,"cacheRead":500,"cacheWrite":0,"cost":0.012},"content":[]}}',
-    ].join("\n") + "\n",
-    "utf8",
-  );
-  return dir;
-}
-
-function usageEnv(dir: string, sessions: string): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    HOME: dir,
-    USERPROFILE: dir,
-    TERSIO_USAGE_FILE: path.join(dir, "usage.jsonl"),
-    TERSIO_SESSIONS_DIR: sessions,
-    TERSIO_RESET_FILE: path.join(dir, "reset.json"),
-    TERSIO_USAGE_DB: path.join(dir, "usage.db"),
-    TERSIO_RTK_DB: path.join(dir, "no-rtk.db"),
-  };
-}
-
-// Session defaults, including the display currency, live in ~/.tersio/settings.json.
-function writeSettingsLock(home: string, tersio: Record<string, unknown>): void {
-  const dir = path.join(home, ".tersio");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "settings.json"), JSON.stringify(tersio), "utf8");
-}
 
 test("dashboard --export bakes the requested currency into data.json", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-cur-gain-"));
@@ -2043,17 +2056,17 @@ describe('omp stats', () => {
 
     test('folds a subagent transcript into its root session row', () => {
       const now = Date.parse('2026-01-01T12:00:00.000Z');
-      const root = sessionPath(ompStatsDir, '-proj-a', 'root.jsonl');
-      const child = path.join(path.dirname(root), 'root', 'PageTile.jsonl');
+      const rootSession = sessionPath(ompStatsDir, '-proj-a', 'root.jsonl');
+      const child = path.join(path.dirname(rootSession), 'root', 'PageTile.jsonl');
       // The root file carries the session's own line and title, which the row reads from its head.
-      writeSessionFixture(root, [
+      writeSessionFixture(rootSession, [
         { role: 'user', timestamp: '2026-01-01T11:00:00.000Z', content: [{ type: 'text', text: 'hello' }] },
       ]);
       mkdirSync(path.dirname(child), { recursive: true });
       writeFileSync(child, '');
       process.env.TERSIO_AGENT_STATS_DB = writeUsageStore(path.join(ompStatsDir, 'usage.db'), {
         messages: [
-          { session: root, entry: 'e1', model: 'commandcode/priced-model', ts: now - 2 * HOUR, duration: 2000, input: 100, cost: 0.10, tools: ['read'] },
+          { session: rootSession, entry: 'e1', model: 'commandcode/priced-model', ts: now - 2 * HOUR, duration: 2000, input: 100, cost: 0.10, tools: ['read'] },
           { session: child, entry: 'e2', model: 'commandcode/sub-model', ts: now - 1 * HOUR, duration: 3000, input: 200, cost: 0.20, agentType: 'subagent', tools: ['edit'] },
         ],
       });
@@ -2062,7 +2075,7 @@ describe('omp stats', () => {
       expect(traces).toHaveLength(1);
       const [row] = traces;
       // One row per root: the child's work, models, and tool calls fold into it.
-      expect(row.sessionFile).toBe(root);
+      expect(row.sessionFile).toBe(rootSession);
       expect(row.requests).toBe(2);
       expect(row.toolCalls).toBe(2);
       expect(row.subagents).toBe(1);

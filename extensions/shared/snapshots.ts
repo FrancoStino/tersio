@@ -15,7 +15,7 @@ import { usageDbPath } from './usage-store.ts';
 import { tersioHome } from './utils.ts';
 
 /** Snapshots kept on disk, newest first; six fills past one screen so the pane scrolls. */
-export const BACKUP_KEEP = 6;
+export const BACKUP_KEEP = 14;
 
 const EXT = '.snap';
 const LEGACY = /^usage-\d{14}\.db$/;
@@ -65,11 +65,6 @@ interface Staged {
 
 export function backupDir(): string {
   return path.join(tersioHome(), 'backups');
-}
-
-/** The home directory the snapshots live under, for the pane's path line. */
-export function backupHome(): string {
-  return tersioHome();
 }
 
 /** Byte size of a file, zero when it is absent or unreadable. */
@@ -397,6 +392,7 @@ export function pruneBackups(): void {
   }
   const readable: DataBackup[] = [];
   const surplus: string[] = [];
+  const broken: string[] = [];
   const mirrors: string[] = [];
   for (const name of names) {
     const full = path.join(backupDir(), name);
@@ -412,7 +408,7 @@ export function pruneBackups(): void {
       // A listing reads the header alone, but a snapshot whose body fails its hash cannot be restored,
       // so it never counts against the keep limit. Prune runs on a create, so the read cost lands there.
       if (entry && readBodies(full)) readable.push(entry);
-      else surplus.push(full);
+      else { surplus.push(full); broken.push(full); }
     } else if (LEGACY.test(name)) {
       mirrors.push(name);
     }
@@ -422,6 +418,8 @@ export function pruneBackups(): void {
   // An unreadable file carries nothing, so it never displaces a snapshot that does.
   for (const entry of readable) if (!keep.has(entry.name)) surplus.push(entry.path);
   for (const file of surplus) fs.rmSync(file, { force: true });
+  // A corrupted snapshot is gone for good, so the loss must not be silent.
+  if (broken.length > 0) console.warn(`tersio: removed ${broken.length} unreadable snapshot file(s) from ${backupDir()}`);
   const newest = kept[0];
   // A mirror is the ledger alone, so only a snapshot that carries the ledger and is at least as new retires it.
   const ledger = path.basename(usageDbPath());

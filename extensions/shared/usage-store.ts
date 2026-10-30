@@ -70,7 +70,7 @@ function query(db: string, sql: string): string[][] {
 }
 
 // Bump on a parse change: unchanged transcripts are never re-read.
-const PARSER_VERSION = '13';
+const PARSER_VERSION = '14';
 
 /** OpenCode rows gained tool names; re-read by id, since a PARSER_VERSION bump drops rotated history. */
 const OPENCODE_TOOLS_VERSION = '1';
@@ -95,7 +95,9 @@ const SCHEMA_SQL =
   `CREATE INDEX IF NOT EXISTS idx_messages_file ON messages(file_id);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_t ON messages(t);` +
   `CREATE INDEX IF NOT EXISTS idx_messages_h_t ON messages(h, t);` +
-  `CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);`;
+  `CREATE INDEX IF NOT EXISTS idx_messages_model ON messages(model);` +
+  // One row per assistant message id: a branched transcript repeats the same call.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_id ON messages(id) WHERE id IS NOT NULL;`;
 
 /** WAL + a checkpoint: the write path avoids an fsync per commit, and usage.db alone holds every row. */
 function pragmas(db: string): void {
@@ -338,12 +340,58 @@ function alterInPlace(db: string): boolean {
   return !canAlterInPlace(db);
 }
 
+
+/**
+ * Every column the schema names, with the type an old store is missing. A bump adds these instead of
+ * dropping the table, so rows whose transcript has rotated away survive the migration.
+ */
+const MESSAGE_COLUMNS: ReadonlyArray<readonly [string, string]> = [
+  ['d', 'REAL'], ['tf', 'REAL'], ['usd', 'REAL'], ['code', 'REAL'], ['note', 'TEXT'],
+  ['tools', "TEXT NOT NULL DEFAULT '[]'"], ['h', 'TEXT'], ['a', 'TEXT'], ['id', 'TEXT'],
+  ['tc', 'TEXT'], ['p', 'TEXT'], ['cr', 'INTEGER NOT NULL DEFAULT 0'], ['cw', 'INTEGER NOT NULL DEFAULT 0'],
+];
+
+/** Adds each column the store is missing; returns true when one landed. */
+function addMissingColumns(db: string): boolean {
+  let names: string[] = [];
+  try {
+    names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
+  } catch {
+    return false;
+  }
+  let added = false;
+  for (const [name, type] of MESSAGE_COLUMNS) {
+    if (names.includes(name)) continue;
+    try {
+      run(db, `ALTER TABLE messages ADD COLUMN ${name} ${type};`);
+      added = true;
+    } catch { /* a store that refuses the column keeps running on the ones it has */ }
+  }
+  return added;
+}
+/** One row per assistant message id: a resumed or branched transcript repeats the same call, and counting it twice
+ * inflates every total. Rows without an id are kept, since nothing proves they are the same call. */
+function dedupeMessages(db: string): void {
+  try {
+    run(db, `DELETE FROM messages WHERE id IS NOT NULL AND rowid NOT IN (
+      SELECT MIN(rowid) FROM messages WHERE id IS NOT NULL GROUP BY id);`);
+  } catch { /* a store without the column keeps what it has */ }
+}
+
 function ensureSchema(db: string, forceWipe: boolean): void {
   fs.mkdirSync(path.dirname(db), { recursive: true });
   // Fold in rows stored under a pre-alias spelling; the mtime ledger will not re-read those transcripts.
   const rekeys = MODEL_ALIASES.map((a) => `UPDATE messages SET model='${a.id}' WHERE model='${a.feed}';`).join('');
   const stored = storedParserVersion(db);
   pragmas(db);
+  // Before the unique index is created, so a store that already counted a call twice can still take the index.
+  dedupeMessages(db);
+  // Forced: the operator accepts the loss and asks for a clean rebuild from what is on disk.
+  if (forceWipe) {
+    run(db, `DROP TABLE IF EXISTS messages;DROP TABLE IF EXISTS files;` + SCHEMA_SQL +
+      `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
+    return;
+  }
   if (stored === PARSER_VERSION) {
     // A store this build already wrote still gains a column added since, without a version bump.
     run(db, SCHEMA_SQL + rekeys);
@@ -372,8 +420,12 @@ function ensureSchema(db: string, forceWipe: boolean): void {
       run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('parser_version','${PARSER_VERSION}');`);
       return;
     }
-    run(db, `DROP TABLE IF EXISTS messages;DROP TABLE IF EXISTS files;` + SCHEMA_SQL +
-      `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
+    // Last resort: keep both tables. Missing columns are added and every transcript is marked dirty, so
+    // the new parser re-reads what is still on disk. Rows whose transcript rotated away stay counted.
+    run(db, SCHEMA_SQL + rekeys);
+    addMissingColumns(db);
+    markTranscriptsDirty(db);
+    run(db, `INSERT OR REPLACE INTO meta (k,v) VALUES ('parser_version','${PARSER_VERSION}');`);
   } catch { /* fresh db, nothing to invalidate */ }
 }
 
@@ -542,8 +594,8 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
       if (parsed.kind !== 'assistant_row' || !parsed.model || !parsed.usage) continue;
       const usage = parsed.usage;
       const dur = durOf(parsed.durMs);
-      const run = parsed.run ?? { st: 'completed' as RunStatus };
-      const note = run.note?.replace(/[\t\n\r]/g, ' ').slice(0, 180);
+      const runInfo = parsed.run ?? { st: 'completed' as RunStatus };
+      const note = runInfo.note?.replace(/[\t\n\r]/g, ' ').slice(0, 180);
       rows.push({
         t,
         model: canonicalModelId(parsed.model),
@@ -554,8 +606,8 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
         cr: intOf(usage.cacheRead),
         cw: intOf(usage.cacheWrite),
         usd: costOf(usage),
-        st: run.st,
-        code: run.code,
+        st: runInfo.st,
+        code: runInfo.code,
         note,
         tools: parsed.tools ?? [],
         toolFacts: parsed.toolFacts,
@@ -570,7 +622,7 @@ function parseFile(text: string, host?: string, file?: string, agent?: string): 
 }
 
 function insertSql(file: string, r: StoredRow): string {
-  return `INSERT INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id, tc, p) VALUES (` +
+  return `INSERT OR IGNORE INTO messages (file_id, t, model, i, o, d, tf, cr, cw, usd, st, code, note, tools, h, a, id, tc, p) VALUES (` +
     `(SELECT id FROM files WHERE path=${esc(file)}),${r.t === null ? 'NULL' : String(r.t)},${esc(r.model)},${r.i},${r.o},` +
     `${nullNum(r.d)},${nullNum(r.tf)},${r.cr},${r.cw},${nullNum(r.usd)},${esc(r.st)},` +
     `${nullNum(r.code)},${nullStr(r.note)},${esc(JSON.stringify(r.tools))},${nullStr(r.host)},${nullStr(r.agent ?? undefined)},${nullStr(r.id)},` +
@@ -729,13 +781,19 @@ export function readUsageDb(): StoredUsage | null {
     return null;
   }
   let rows: string[][];
+  // A reset marks a timestamp; the rows it hides stay in the table for a later restore.
+  let resetAt = 0;
+  try {
+    const marked = query(db, `SELECT v FROM meta WHERE k='reset_at';`);
+    if (marked.length) resetAt = Number(marked[0][0]) || 0;
+  } catch { /* a store with no meta row yet */ }
   try {
     // The wide `tools` column is read as one string and skipped in JS; a pre-agent store is read without it.
     const names = query(db, `PRAGMA table_info(messages);`).map((r) => r[1]);
     const agentCol = names.includes('a') ? 'a' : "''";
     // A store predating first-token latency has no `tf` column; read NULL so the row still loads.
     const tfCol = names.includes('tf') ? 'tf' : 'NULL';
-    rows = query(db, `SELECT t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, ${agentCol}, id, ${tfCol} FROM messages;`);
+    rows = query(db, `SELECT t, model, i, o, d, cr, cw, usd, st, code, note, tools, h, ${agentCol}, id, ${tfCol} FROM messages${resetAt > 0 ? ` WHERE t IS NULL OR t >= ${resetAt}` : ''};`);
   } catch {
     return null;
   }
@@ -804,10 +862,21 @@ export function readUsageDb(): StoredUsage | null {
   };
 }
 
-// Delete the store file. Returns 1 when removed, 0 when already absent.
+// Reset hides the rows instead of deleting them, so a reset is never a data loss. TERSIO_RESET_PURGE=1
+// still removes the file for a hard wipe. Returns 1 when the reset landed, 0 when there was nothing to reset.
 export function clearUsageDb(): number {
+  const db = usageDbPath();
+  if (process.env.TERSIO_RESET_PURGE === '1') {
+    try {
+      fs.unlinkSync(db);
+      return 1;
+    } catch {
+      return 0;
+    }
+  }
   try {
-    fs.unlinkSync(usageDbPath());
+    if (!fs.existsSync(db)) return 0;
+    run(db, `INSERT OR REPLACE INTO meta (k, v) VALUES ('reset_at', ${Date.now()});`);
     return 1;
   } catch {
     return 0;
