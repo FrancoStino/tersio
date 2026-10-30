@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -18,7 +19,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        # The arm leg is the project's only linux/arm64 coverage. The
+        # 26.04 labels are GA on GitHub (changelog 2026-09-17).
+        os:
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
+          - windows-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -31,14 +37,66 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock', 'dashboard/app/bun.lock', '.bun-version') }}
+          # Folded scalar: joins with one space, so the key string is
+          # unchanged.
+          key: >-
+            bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock',
+            'dashboard/app/bun.lock', '.bun-version') }}
           restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
-      # The layout suite needs POSIX pty/termios, so pyte installs on Linux only; it self-skips elsewhere.
+      # Linking, not downloading, dominates Windows time, so the installed
+      # trees are cached directly. A lockfile change produces a new key.
+      - name: Cache installed packages
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            dashboard/app/node_modules
+          key: >-
+            modules-${{ runner.os }}-${{ hashFiles('bun.lock',
+            'dashboard/app/bun.lock', '.bun-version') }}
+      - name: Install
+        run: bun install --frozen-lockfile
+      # The layout suite needs POSIX pty/termios, so pyte installs on Linux
+      # only; it self-skips elsewhere.
       - name: Install pyte
         if: runner.os == 'Linux'
-        run: python3 -m pip install --quiet pyte
-      # Lint on Linux only, before the suite, so a lint error fails fast on this job's install.
+        # Pinned: upstream releases cannot break the layout suite.
+        run: python3 -m pip install --quiet pyte==0.8.2
       - name: Lint
-        if: runner.os == 'Linux'
-        run: bun install --frozen-lockfile && bun run lint
-      - run: bun run verify
+        if: matrix.os == 'ubuntu-26.04'
+        run: bun run lint
+      # Windows skips the dashboard build: the pack test is Linux-only now,
+      # and the single-file vite build is the slowest step on the runner.
+      - name: Type-check and test
+        if: runner.os == 'Windows'
+        run: bunx tsc && bun run test
+      - name: Build and test
+        if: runner.os != 'Windows'
+        run: bun run verify
+
+  # macOS covers the darwin branches, but the primary developers run the
+  # suite locally, so it rides on pull requests only.
+  macos:
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: >-
+            bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock',
+            'dashboard/app/bun.lock', '.bun-version') }}
+          restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build and test
+        run: bun run verify

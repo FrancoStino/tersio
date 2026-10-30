@@ -1,6 +1,6 @@
 # npm pack/publish consults this file instead of .gitignore.
-# Only the generated Dashboard runtime ships.
+# What ships is decided by the `files` allowlist in package.json; this file
+# must simply not fight it. The old `dashboard/*` + `!dashboard/dist/`
+# negation did not survive npm 11's packlist, which is what hid the
+# dashboard build from `npm install -g .` installs.
 test/
-dashboard/*
-!dashboard/dist/
-!dashboard/dist/**

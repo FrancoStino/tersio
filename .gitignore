@@ -6,8 +6,10 @@ node_modules
 # macOS
 .DS_Store
 
-# Build output
-dist
+# Build output; scoped so bare `dist` cannot match nested dirs. npm packs both
+# via .npmignore (which npm reads instead of this file) plus the files allowlist.
+/dist/
+dashboard/dist/
 skills/
 graphify-out/
 temp/
