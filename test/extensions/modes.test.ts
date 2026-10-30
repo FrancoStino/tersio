@@ -18,9 +18,9 @@ import {
   setSharedComboMode,
 } from "../../extensions/shared/session-state.ts";
 import type { ExtensionApi, ExtensionCtx, SessionEntry } from "../../extensions/shared/types.ts";
-import { readCavemanDefault, readPluginSettings } from "../../extensions/shared/plugin-settings.ts";
+import { readCavemanDefault } from "../../extensions/shared/plugin-settings.ts";
 import { ruleBodyProblem, ruleDir } from "../../extensions/shared/utils.ts";
-import { cliEnv, fakeExecutable, fakeRtkBin, hasSqlite, isWindows, withHome } from "../helpers/env.ts";
+import { cliEnv, withHome } from "../helpers/env.ts";
 
 // fileURLToPath, not `.pathname`: a URL pathname on Windows is `/D:/...`, which path.join doubles into `D:\D:\...`.
 process.env.HOME = fileURLToPath(new URL("../definitely-missing-home/modes", import.meta.url));
@@ -785,11 +785,11 @@ test("caveman and rtk flags override the combo preset", () => {
 });
 
 test("ruleDir keeps a self-contained tree and falls back to the package's own extension dir", () => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const source = path.join(root, "extensions", "pstack");
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const source = path.join(repoRoot, "extensions", "pstack");
   expect(ruleDir("pstack", source)).toBe(source);
   // An empty dir stands in for dist, whose tree holds compiled JS only.
-  const bare = mkdtempSync(path.join(root, "test", "rule-dir-"));
+  const bare = mkdtempSync(path.join(repoRoot, "test", "rule-dir-"));
   try {
     const resolved = ruleDir("pstack", bare);
     expect(resolved).toBe(source);

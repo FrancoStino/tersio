@@ -125,7 +125,7 @@ test("the agent adapter keeps every model, not just the folded five", () => {
   expect(r.all).toHaveLength(9);
   expect(r.otherCount).toBe(4);
   const g = r.all.map((row) => row.gco2);
-  expect([...g].sort((a, b) => b - a)).toEqual(g);
+  expect([...g].toSorted((a, b) => b - a)).toEqual(g);
 });
 
 test("the agent adapter names the routing service and the parameter provenance", () => {

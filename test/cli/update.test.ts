@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { expect, test, vi } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,39 +32,12 @@ const { parseChecksum, runAddonUpdate } = await import(updaterUrl.href);
 const HOME = os.homedir();
 const PLUGINS_DIR = path.join(HOME, ".omp", "plugins");
 
-interface FakePi {
-  registerCommand(name: string, config: { handler: CommandHandler }): void;
-  getHandler(): CommandHandler | null;
-  setLabel(): void;
-  exec(cmd: string, args: string[], opts: { cwd: string }): Promise<{ stdout: string; stderr: string; code: number }>;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  ui: { notify(): void };
-}
-
-type CommandHandler = (args: string, ctx: FakeCtx) => Promise<string>;
 type ExecMock = (cmd: string, args: string[], opts: { cwd: string }) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 interface FakeCtx {
   cwd: string;
-  ui: { notify(): void };
+  ui: { notify(message: string): void };
 }
-
-const createFakePi = (execMock: ExecMock): FakePi & { getHandler(): CommandHandler | null } => {
-  let capturedHandler: CommandHandler | null = null;
-  return {
-    registerCommand: (name, config) => {
-      if (name === "ai-addons") capturedHandler = config.handler;
-    },
-    getHandler: () => capturedHandler,
-    setLabel: () => {},
-    exec: execMock,
-    cwd: PLUGINS_DIR,
-    // A fake host descriptor, not a child process: nothing to sandbox here.
-    env: { ...process.env },
-    ui: { notify: () => {} },
-  };
-};
 
 const createFakeCtx = (): FakeCtx & { shown: string[] } => {
   const shown: string[] = [];
@@ -145,14 +118,14 @@ const PROBE = "import('" + updateJs + "').then(async (m) => {"
 
 type Env = Record<string, string | undefined>;
 
-function setup(registryUrl: string, cache: unknown, releases = deadReleases.TERSIO_RELEASES_URL): { dir: string; env: Env } {
+function setup(feedUrl: string, cache: unknown, releases = deadReleases.TERSIO_RELEASES_URL): { dir: string; env: Env } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "tersio-update-check-"));
   const home = path.join(dir, "home");
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   if (cache !== null) {
     writeFileSync(path.join(home, ".omp", "plugins", "tersio-update-check.json"), JSON.stringify(cache), "utf8");
   }
-  const env: Env = cliEnv(home, { TERSIO_UPDATE_URL: registryUrl, TERSIO_RELEASES_URL: releases });
+  const env: Env = cliEnv(home, { TERSIO_UPDATE_URL: feedUrl, TERSIO_RELEASES_URL: releases });
   return { dir, env };
 }
 

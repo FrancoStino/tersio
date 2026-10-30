@@ -93,7 +93,7 @@ test("every path the index names resolves to a shipped file", () => {
   for (const n of named) expect(onDisk.has(n), `rule.md names ${n}, which the tree does not ship`).toBe(true);
   // And every entry in the Principles section has its leaf on disk, keyed on the leaf's own H1 title.
   const leafTitles = new Set(
-    tree.filter((p) => /^principles\//.test(rel(p))).map((p) => (/^#\s+(.+)$/m.exec(read(p))?.[1] ?? "").trim().toLowerCase()),
+    tree.filter((p) => rel(p).startsWith('principles/')).map((p) => (/^#\s+(.+)$/m.exec(read(p))?.[1] ?? "").trim().toLowerCase()),
   );
   const principlesSection = body.slice(body.indexOf("## Principles"), body.indexOf("## Autonomy"));
   for (const m of principlesSection.matchAll(/\*\*([A-Z][^*]+?)\.\*\*/g)) {

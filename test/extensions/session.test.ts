@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -83,7 +83,7 @@ function fakeCtx(): {
   const commands = new Map<string, { execute: (input: never) => Promise<void> }>();
   const prompts: Array<{ sessionID: string; text: string }> = [];
   const store = new Map<string, unknown>();
-  const skills: Array<{ id: string }> = [];
+  const skills: Array<{ id: string; name: string; description: string; path: string; content: string }> = [];
   const ctx = {
     storage: {
       get: async (key: string): Promise<unknown> => store.get(key),
@@ -164,7 +164,7 @@ test("the opencode entry registers the bundled ponytail skills", async () => {
     const { ctx, skills } = fakeCtx();
     await setup(ctx);
 
-    expect(skills.map((skill) => skill.id).sort()).toEqual([...names].sort());
+    expect(skills.map((skill) => skill.id).toSorted()).toEqual([...names].toSorted());
     for (const skill of skills) {
       // A folded description that leaked its marker or newline reads to the model as a truncated one.
       expect(skill.description, `${skill.id} description is one line`).not.toMatch(/[\n>]/);
@@ -437,6 +437,7 @@ interface TestCtx {
   sessionManager: { getBranch: () => SessionEntry[] };
   ui: {
     notify(message: string): void;
+    setStatus(name: string, value: string | undefined): void;
   };
   reload(): Promise<void>;
 }
@@ -830,9 +831,9 @@ test("only the omp host is told about the rtk proxy daemon", async () => {
   // The proxy daemon can only carry omp's model traffic, so only omp hears about it.
   expect(instruction(await inject(instantiate(rtkSessionExtension), MARKED_PROMPT))).toMatch(/rtk llm-proxy setup/);
 
-  const piHost = instantiate(rtkSessionExtension) as TestPi & { hostId?: string };
-  piHost.hostId = "pi";
-  const piResult = (await piHost.handlers.get("before_agent_start")!({ systemPrompt: MARKED_PROMPT }, undefined)) as { systemPrompt?: unknown };
+  const piAsHost = instantiate(rtkSessionExtension) as TestPi & { hostId?: string };
+  piAsHost.hostId = "pi";
+  const piResult = (await piAsHost.handlers.get("before_agent_start")!({ systemPrompt: MARKED_PROMPT }, undefined)) as { systemPrompt?: unknown };
   const piText = typeof piResult?.systemPrompt === "string" ? piResult.systemPrompt : "";
   expect(piText).toMatch(/RTK guidance active/);
   expect(piText).not.toMatch(/llm-proxy/);
@@ -1104,14 +1105,14 @@ test("no tersio command handler resolves a value", async () => {
     install(pi);
     // Without this the loop below would pass vacuously for an extension that registered nothing.
     expect(pi.commands.size, `${name} must register at least one command`).toBeGreaterThan(0);
-    for (const [command, handler] of pi.commands) {
-      expect(await handler("", ctx), `/${command} in ${name} must resolve undefined`).toBeUndefined();
-      seen.push(`/${command}`);
+    for (const [cmd, handler] of pi.commands) {
+      expect(await handler("", ctx), `/${cmd} in ${name} must resolve undefined`).toBeUndefined();
+      seen.push(`/${cmd}`);
     }
   }
   // The mode switches the tree owns, so a dropped registration fails here rather than passing quietly.
-  for (const command of ["/caveman", "/pstack", "/rtk", "/combo", "/ponytail", "/tersio"]) {
-    expect(seen, `${command} must be registered`).toContain(command);
+  for (const registered of ["/caveman", "/pstack", "/rtk", "/combo", "/ponytail", "/tersio"]) {
+    expect(seen, `${registered} must be registered`).toContain(registered);
   }
 });
 
@@ -1412,7 +1413,7 @@ function firstRunHarness(selection: string | undefined, hasUI = true): { handler
     on: (event: string, handler: (event: unknown, ctx: ExtensionCtx) => Promise<unknown>) => { handlers.set(event, handler); },
     appendEntry: (customType: string, data: Record<string, unknown>) => { entries.push({ type: "custom", customType, data }); },
   } as unknown as ExtensionApi;
-  const ctx = {
+  const bareCtx = {
     hasUI,
     sessionManager: { getBranch: () => entries },
     ui: {
@@ -1422,7 +1423,7 @@ function firstRunHarness(selection: string | undefined, hasUI = true): { handler
     },
   } as unknown as ExtensionCtx;
   comboToggleExtension(pi);
-  return { handlers, entries, prompts, ctx };
+  return { handlers, entries, prompts, ctx: bareCtx };
 }
 
 function readSettings(home: string): Record<string, unknown> {
@@ -1621,11 +1622,12 @@ interface statusTestCtx {
   hasUI: boolean;
   notifications: string[];
   sessionManager: { getBranch: () => SessionEntry[] };
-  ui: { notify(message: string): void };
+  ui: {
+    notify(message: string): void;
+    setStatus(name: string, value: string | undefined): void;
+  };
   reload(): Promise<void>;
 }
-
-type statusExtensionCtx = statusTestCtx;
 
 function statusFakePi(entries: SessionEntry[] = []): statusTestPi {
   const commands = new Map<string, CommandHandler>();
@@ -1669,8 +1671,8 @@ function statusInstantiate(factory: (pi: ExtensionApi) => void, entries: Session
   return pi;
 }
 
-async function statusFire(pi: statusTestPi, event: string, ctx: statusTestCtx): Promise<void> {
-  await pi.handlers.get(event)!({}, ctx);
+async function statusFire(pi: statusTestPi, event: string, target: statusTestCtx): Promise<void> {
+  await pi.handlers.get(event)!({}, target);
 }
 
 const SESSION_EVENTS = ["session_start", "session_switch", "session_branch", "session_compact"] as const;
@@ -1679,8 +1681,8 @@ test("a new session announces the status", async () => {
   resetSharedComboState();
   const entries: SessionEntry[] = [];
   const pi = statusInstantiate(comboToggleExtension, entries);
-  const ctx = statusContext(entries);
-  await pi.commands.get("combo")!("max", ctx);
+  const statusCtx = statusContext(entries);
+  await pi.commands.get("combo")!("max", statusCtx);
   await statusFire(pi, "session_start", statusContext(entries));
 
   const pi2 = statusInstantiate(comboToggleExtension, entries);
@@ -1694,8 +1696,8 @@ test("every session event announces the status, and an unchanged state stays sil
     resetSharedComboState();
     const entries: SessionEntry[] = [];
     const pi = statusInstantiate(comboToggleExtension, entries);
-    const ctx = statusContext(entries);
-    await pi.commands.get("combo")!("balanced", ctx);
+    const statusCtx = statusContext(entries);
+    await pi.commands.get("combo")!("balanced", statusCtx);
 
     const fresh = statusContext(entries);
     const worker = statusInstantiate(comboToggleExtension, entries);
@@ -1732,9 +1734,9 @@ test("a subagent session announces the inherited status", async () => {
   // A worker's branch carries no Tersio entries, and no UI of its own.
   for (const factory of [comboToggleExtension, cavemanSessionExtension, rtkSessionExtension]) {
     const worker = statusInstantiate(factory);
-    const ctx = statusContext([], false);
-    await statusFire(worker, "session_start", ctx);
-    expect(statuses(ctx.notifications)).toEqual([
+    const workerCtx = statusContext([], false);
+    await statusFire(worker, "session_start", workerCtx);
+    expect(statuses(workerCtx.notifications)).toEqual([
       "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
     ]);
   }
@@ -1744,8 +1746,8 @@ test("the status survives compaction and still matches the live state", async ()
   resetSharedComboState();
   const entries: SessionEntry[] = [];
   const pi = statusInstantiate(comboToggleExtension, entries);
-  const ctx = statusContext(entries);
-  await pi.commands.get("combo")!("lite", ctx);
+  const statusCtx = statusContext(entries);
+  await pi.commands.get("combo")!("lite", statusCtx);
 
   const afterCompact = statusContext(entries);
   const worker = statusInstantiate(comboToggleExtension, entries);
@@ -1766,11 +1768,11 @@ test("persisted entries win over the configured default", async () => {
     { type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } },
   ];
   const pi = statusInstantiate(comboToggleExtension, entries);
-  const ctx = statusContext(entries);
-  await statusFire(pi, "session_start", ctx);
+  const statusCtx = statusContext(entries);
+  await statusFire(pi, "session_start", statusCtx);
 
   // HOME points at a missing dir, so any default read here is "off".
-  expect(statuses(ctx.notifications)).toEqual([
+  expect(statuses(statusCtx.notifications)).toEqual([
     "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   ]);
 });
@@ -1779,9 +1781,9 @@ test("a mode command reports the new state, and /tersio status agrees", async ()
   resetSharedComboState();
   const entries: SessionEntry[] = [];
   const combo = statusInstantiate(comboToggleExtension, entries);
-  const ctx = statusContext(entries);
-  await combo.commands.get("combo")!("max", ctx);
-  expect(statuses(ctx.notifications)).toEqual([
+  const statusCtx = statusContext(entries);
+  await combo.commands.get("combo")!("max", statusCtx);
+  expect(statuses(statusCtx.notifications)).toEqual([
     "🧩 COMBO MAX: 🪨 caveman=ULTRA | 🗜️ rtk=ON | 🍃 headroom=OFF | 🧠 ponytail=ULTRA | 🥔 pstack=OFF",
   ]);
 
@@ -1797,11 +1799,11 @@ test("the status never reaches the model context", async () => {
   resetSharedComboState();
   const entries: SessionEntry[] = [];
   const combo = statusInstantiate(comboToggleExtension, entries);
-  const ctx = statusContext(entries);
-  await combo.commands.get("combo")!("max", ctx);
+  const statusCtx = statusContext(entries);
+  await combo.commands.get("combo")!("max", statusCtx);
 
   const injected = await combo.handlers.get("before_agent_start")!(
-    { systemPrompt: "Base." }, ctx,
+    { systemPrompt: "Base." }, statusCtx,
   ) as { systemPrompt?: string[] } | undefined;
 
   // Only the ponytail block may be injected; the status line is display-only.
@@ -1833,14 +1835,14 @@ process.env.TERSIO_USAGE_FILE = path.join(tersioDir, "usage.jsonl");
 type tersioHandler = (args: string, ctx: ExtensionCtx) => Promise<void>;
 
 function tersioHarness(execImpl?: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>) {
-  let command: tersioHandler = async () => { };
+  let capturedHandler: tersioHandler = async () => { };
   const appended: Array<{ type: string; data: Record<string, unknown> }> = [];
   const notifications: string[] = [];
   const execCalls: Array<{ cmd: string; args: string[] }> = [];
   let reloaded = 0;
   tersioCommandsExtension({
     setLabel() { },
-    registerCommand(_name: string, config: { handler: tersioHandler }) { command = config.handler; },
+    registerCommand(_name: string, config: { handler: tersioHandler }) { capturedHandler = config.handler; },
     appendEntry(type: string, data: Record<string, unknown>) { appended.push({ type, data }); },
     exec: async (cmd: string, args: string[]) => {
       execCalls.push({ cmd, args });
@@ -1848,13 +1850,13 @@ function tersioHarness(execImpl?: (cmd: string, args: string[]) => Promise<{ std
       return { stdout: "", stderr: "", code: 0 };
     },
   } as unknown as ExtensionApi);
-  const ctx = {
+  const harnessCtx = {
     hasUI: true,
     sessionManager: { getBranch: () => [] },
     ui: { setStatus() { }, notify(m: string) { notifications.push(m); } },
     reload: async () => { reloaded += 1; },
   } as unknown as ExtensionCtx;
-  return { command, appended, notifications, execCalls, reloaded: () => reloaded, ctx };
+  return { command: capturedHandler, appended, notifications, execCalls, reloaded: () => reloaded, ctx: harnessCtx };
 }
 
 test("/tersio help lists every subcommand", async () => {

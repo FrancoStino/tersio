@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -59,10 +59,12 @@ test("larger models cost more per output token", () => {
   expect(opus > sonnet && sonnet > haiku && haiku > 0, `${opus} > ${sonnet} > ${haiku} > 0`).toBeTruthy();
 });
 
-test("served figure is the single-stream ceiling over concurrency", () => {
+test("served figure uses the batch model; the ceiling stays single-stream", () => {
   const f = footprintFor("claude-sonnet-5", 10000);
   expect(f.concurrency).toBe(SERVING_CONCURRENCY);
-  expect(Math.abs(f.gco2 * SERVING_CONCURRENCY - f.gco2Ceiling) < 1e-9).toBeTruthy();
+  // EcoLogits 0.11 folds batching into the regression itself, so the served
+  // figure is smaller than the single-stream ceiling but is not a division of it.
+  expect(f.gco2 > 0 && f.gco2Ceiling > f.gco2).toBeTruthy();
   expect(f.energyWh > 0).toBeTruthy();
 });
 
@@ -183,7 +185,7 @@ test("the space-bunny aliases resolve to one free model", () => {
     expect(canonicalModelId(model), model).toBe("space-bunny");
   }
   // The feed keys it openrouter/stealth/space-bunny-alpha at zero.
-  const live = { fetchedAt: Date.now(), exact: { "openrouter/stealth/space-bunny-alpha": [0, 0, 0, 0] } };
+  const live = { fetchedAt: Date.now(), exact: { "openrouter/stealth/space-bunny-alpha": [0, 0, 0, 0] as [number, number, number, number] } };
   // The feed only keys the alpha tail, so the plain prefixed id stays unpriced.
   const priced = spellings.filter((m) => m.toLowerCase() !== "opencode/opencode/space-bunny");
   for (const model of priced) {

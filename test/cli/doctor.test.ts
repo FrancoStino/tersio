@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -281,9 +281,9 @@ test("doctor --fix removes manifest-loaded combo and Ponytail registrations", ()
   const home = missingHome();
   try {
     const agentDir = path.join(home, ".omp", "agent");
-    const extDir = path.join(agentDir, "extensions");
+    const agentExt = path.join(agentDir, "extensions");
     const ponytailExt = path.join(home, ".omp", "plugins", "node_modules", "@dietrichgebert", "ponytail", "pi-extension", "index.js");
-    mkdirSync(extDir, { recursive: true });
+    mkdirSync(agentExt, { recursive: true });
     writeFileSync(path.join(agentDir, "config.yml"), `extensions:\n  - ./extensions/combo/index.ts\n  - ${ponytailExt}\n`, "utf8");
 
     const repair = spawnSync(process.execPath, [installer, "doctor", "--fix", "registrations", "--yes"], {
@@ -319,11 +319,11 @@ test("doctor --fix rejects an invalid scope", () => {
 test("doctor reports the rtk binary version", () => {
   const home = missingHome();
   try {
-    const extDir = path.join(home, ".omp", "agent", "extensions");
-    mkdirSync(extDir, { recursive: true });
+    const agentExt = path.join(home, ".omp", "agent", "extensions");
+    mkdirSync(agentExt, { recursive: true });
     const binDir = path.join(home, "fake-bin");
     mkdirSync(binDir, { recursive: true });
-    const rtkBin = fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
+    fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
 
     const result = spawnSync(process.execPath, [installer, "doctor"], {
       cwd: root,
@@ -395,7 +395,7 @@ test("doctor warns that rtk_run needs an exec-capable host", () => {
   try {
     const binDir = path.join(home, "fake-bin");
     mkdirSync(binDir, { recursive: true });
-    const rtkBin = fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
+    fakeExecutable(binDir, isWindows() ? "rtk.exe" : "rtk", "echo rtk 0.49.0", "echo rtk 0.49.0");
 
     const result = spawnSync(process.execPath, [installer, "doctor"], {
       cwd: root,
@@ -530,7 +530,7 @@ function fakeOpencode(dir: string, status: string, pids: string[] = []): string 
   return bin;
 }
 
-function runDoctor(home: string, bin: string): { status: number; stdout: string } {
+function runDoctor(home: string, bin: string): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [installer, "doctor"], {
     cwd: root,
     encoding: "utf8",

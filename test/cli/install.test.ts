@@ -391,7 +391,7 @@ test("apply-update without flags preserves stored combo defaults", () => {
 
 // The OMP agent tree holds rtk's wiring only; an install drops older extension copies omp would merge.
 const PACKAGE_VERSION = (JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { version: string }).version;
-const extDir = (home: string): string => path.join(home, ".omp", "agent", "extensions");
+const agentExtDir = (home: string): string => path.join(home, ".omp", "agent", "extensions");
 const pluginExt = (home: string): string => path.join(home, ".omp", "plugins", "node_modules", "@krtclcdy", "tersio", "extensions");
 
 // These two track upstream, so a networked install may fetch a newer revision than the bundle holds.
@@ -423,7 +423,7 @@ function runOmpInstall(home: string, extraEnv: Record<string, string>, ...args: 
 /** A throwaway home whose agent tree looks like the live one before the fix. */
 function tempHome(): string {
   const home = mkdtempSync(path.join(os.tmpdir(), "tersio-omp-owner-"));
-  const ext = extDir(home);
+  const ext = agentExtDir(home);
   mkdirSync(path.join(home, ".omp", "plugins"), { recursive: true });
   for (const dir of RETIRED) {
     mkdirSync(path.join(ext, dir), { recursive: true });
@@ -465,14 +465,14 @@ test("dry run reports the retired copies and removes nothing", () => {
   const home = tempHome();
   try {
     pluginPresent(home);
-    const before = readdirSync(extDir(home)).toSorted();
+    const before = readdirSync(agentExtDir(home)).toSorted();
     const result = runOmpInstall(home, {}, "--dry-run", "--yes", "--verbose");
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Add-ons load from: the OMP plugin manifest/);
     expect(result.stdout).toMatch(/Retired agent copies — remove/);
     // The manifest decides what omp loads, so the install reports the manifest write it would make.
     expect(result.stdout).toMatch(/would write .*@krtclcdy[\\/]tersio[\\/]package\.json/);
-    expect(readdirSync(extDir(home)).toSorted()).toEqual(before);
+    expect(readdirSync(agentExtDir(home)).toSorted()).toEqual(before);
   } finally {
     rmTree(home);
   }
@@ -489,11 +489,11 @@ test("a registered plugin writes the plugin tree and drops the agent copies", ()
     // omp loads no OpenCode entry, but the package ships one, so the install writes it as the repair does.
     expect(existsSync(path.join(pluginExt(home), "server.ts")), "the package entry lands too").toBe(true);
     for (const dir of RETIRED) {
-      expect(existsSync(path.join(extDir(home), dir)), `${dir} removed`).toBe(false);
+      expect(existsSync(path.join(agentExtDir(home), dir)), `${dir} removed`).toBe(false);
     }
     // rtk's wiring and anything foreign survive, and the config keeps its entries.
-    expect(existsSync(path.join(extDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
-    expect(existsSync(path.join(extDir(home), "herdr")), "foreign dir kept").toBe(true);
+    expect(existsSync(path.join(agentExtDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
+    expect(existsSync(path.join(agentExtDir(home), "herdr")), "foreign dir kept").toBe(true);
     expect(readFileSync(path.join(home, ".omp", "agent", "config.yml"), "utf8")).toMatch(/rtk\.ts/);
     expectTreeByteIdentical(pluginExt(home), treeFilesFor("opencode"));
   } finally {
@@ -529,9 +529,9 @@ test("without the plugin the agent tree is the fallback and keeps its copies", (
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/Add-ons load from: the agent tree/);
     for (const dir of RETIRED) {
-      expect(existsSync(path.join(extDir(home), dir)), `${dir} kept as the fallback`).toBe(true);
+      expect(existsSync(path.join(agentExtDir(home), dir)), `${dir} kept as the fallback`).toBe(true);
     }
-    expect(existsSync(path.join(extDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
+    expect(existsSync(path.join(agentExtDir(home), "rtk.ts")), "rtk wiring kept").toBe(true);
   } finally {
     rmTree(home);
   }
@@ -874,7 +874,7 @@ test.runIf(hasSqlite())("sqlite message rows land in the ledger under the openco
       expect(tokens?.messages).toBe(2);
       expect(tokens?.byHost[MODEL_KEY]?.opencode?.input).toBe(300);
       // The msg id is the row primary key, so a request drawer can find the row.
-      expect(tokens?.recent.map((r: { id?: string }) => r.id).sort()).toEqual(["msg_a1", "msg_a2"]);
+      expect(tokens?.recent.map((r: { id?: string }) => r.id).toSorted()).toEqual(["msg_a1", "msg_a2"]);
       expect(tokens?.byModel[MODEL_KEY].input).toBe(300);
       // A second sync re-reads the overlap window only; the row count must not double.
       expect(syncUsageDb()).toBe(true);
@@ -983,7 +983,7 @@ test.runIf(hasSqlite())("tool names are read from content parts and backfill a s
       let tokens = readUsageDb()?.tokens;
       expect(tokens?.messages).toBe(2);
       // Names come from the parts, not from the row the tokens live on.
-      expect(Object.keys(tokens?.byTool ?? {}).sort()).toEqual(["read", "shell"]);
+      expect(Object.keys(tokens?.byTool ?? {}).toSorted()).toEqual(["read", "shell"]);
 
       // Pre-tools store: every row at `[]` and the marker cleared; one sync must re-read and not double any row.
       const usageDb = process.env.TERSIO_USAGE_DB as string;
@@ -991,7 +991,7 @@ test.runIf(hasSqlite())("tool names are read from content parts and backfill a s
       expect(syncUsageDb()).toBe(true);
       tokens = readUsageDb()?.tokens;
       expect(tokens?.messages).toBe(2);
-      expect(Object.keys(tokens?.byTool ?? {}).sort()).toEqual(["read", "shell"]);
+      expect(Object.keys(tokens?.byTool ?? {}).toSorted()).toEqual(["read", "shell"]);
     });
   } finally {
     rmTree(dir);
@@ -1030,7 +1030,9 @@ function packedFiles(): Set<string> {
   return files;
 }
 
-test("packed tarball carries both .js (CLI runtime) and .ts (OMP) for every CLI-used extension module", () => {
+// Packing needs built assets, and the release packs on Linux, so the pack
+// checks run there only; other platforms skip the dashboard build in CI.
+test.skipIf(process.platform !== "linux")("packed tarball carries both .js (CLI runtime) and .ts (OMP) for every CLI-used extension module", () => {
   const bases = cliExtensionBases();
   expect(bases.size > 0, "expected cli/*.ts to import extension modules").toBe(true);
   const packed = packedFiles();
@@ -1038,13 +1040,13 @@ test("packed tarball carries both .js (CLI runtime) and .ts (OMP) for every CLI-
   expect(packed).toContain("dashboard/dist/brand.webp");
   expect(packed).not.toContain("dashboard/app/src/App.tsx");
   expect(packed).not.toContain("dashboard/legacy/template.html");
-  for (const base of [...bases].sort()) {
+  for (const base of [...bases].toSorted()) {
     expect(packed, `missing compiled runtime: dist/extensions/${base}.js`).toContain(`dist/extensions/${base}.js`);
     expect(packed, `missing OMP source: extensions/${base}.ts`).toContain(`extensions/${base}.ts`);
   }
 });
 
-test("packed tarball carries every Caveman rule body", () => {
+test.skipIf(process.platform !== "linux")("packed tarball carries every Caveman rule body", () => {
   const packed = packedFiles();
   for (const name of ["rule.md", "rule-lite.md", "rule-megacave-lite.md", "rule-megacave-ultra.md", "rule-ultra.md", "rule-megacave.md"]) {
     expect(packed, `manifest-loaded Caveman must receive ${name}`).toContain(`extensions/caveman/${name}`);
@@ -1075,14 +1077,14 @@ test.skipIf(process.platform === "win32")("the packed tarball boots and reports 
 });
 
 // An imported module missing from the manifest only fails at host load time.
-const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+const rootPkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
   keywords: string[];
   omp: { extensions: string[]; skills: string[] };
   // Optional: pi loads the tree by convention; keywords make the package discoverable in the gallery.
   pi?: { extensions?: string[]; skills?: string[] };
 };
 
-const entries = [...pkg.omp.extensions, ...(pkg.pi?.extensions ?? [])];
+const entries = [...rootPkg.omp.extensions, ...(rootPkg.pi?.extensions ?? [])];
 
 function relativeImports(file: string): string[] {
   const body = readFileSync(path.join(root, file), "utf8");
@@ -1148,13 +1150,13 @@ test("every installed module pi scans exports a factory", async () => {
 });
 
 test("the package keeps the pi keywords, so the gallery can find it", () => {
-  expect(pkg.keywords).toContain("pi");
-  expect(pkg.keywords).toContain("pi-package");
+  expect(rootPkg.keywords).toContain("pi");
+  expect(rootPkg.keywords).toContain("pi-package");
 });
 
 test("no manifest points at a dependency path, which npm hoists out of the package", () => {
   // The bundled ponytail declares its own skills; a path through node_modules never exists in an installed package.
-  for (const entry of [...pkg.omp.extensions, ...(pkg.pi?.extensions ?? [])]) {
+  for (const entry of [...rootPkg.omp.extensions, ...(rootPkg.pi?.extensions ?? [])]) {
     expect(entry, "manifest entries resolve inside the published package").not.toContain("node_modules/");
   }
 });

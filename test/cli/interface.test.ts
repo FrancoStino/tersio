@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -222,20 +222,20 @@ function tempHome(): string {
   return mkdtempSync(path.join(os.tmpdir(), "tersio-hosts-"));
 }
 
-function seedPiPackage(home: string, version = "2.23.0"): void {
-  const agent = path.join(home, ".pi", "agent");
-  const pkg = path.join(agent, "npm", "node_modules", "@krtclcdy", "tersio");
-  mkdirSync(pkg, { recursive: true });
-  writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version }), "utf8");
-  writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ packages: [`npm:@krtclcdy/tersio@${version}`] }), "utf8");
+function seedPiPackage(home: string, pkgVersion = "2.23.0"): void {
+  seedHostPackage(home, ".pi", pkgVersion);
 }
 
-function seedPigPackage(home: string, version = "2.23.0"): void {
-  const agent = path.join(home, ".pig", "agent");
+function seedPigPackage(home: string, pkgVersion = "2.23.0"): void {
+  seedHostPackage(home, ".pig", pkgVersion);
+}
+
+function seedHostPackage(home: string, agentDirName: string, pkgVersion: string): void {
+  const agent = path.join(home, agentDirName, "agent");
   const pkg = path.join(agent, "npm", "node_modules", "@krtclcdy", "tersio");
   mkdirSync(pkg, { recursive: true });
-  writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version }), "utf8");
-  writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ packages: [`npm:@krtclcdy/tersio@${version}`] }), "utf8");
+  writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "@krtclcdy/tersio", version: pkgVersion }), "utf8");
+  writeFileSync(path.join(agent, "settings.json"), JSON.stringify({ packages: [`npm:@krtclcdy/tersio@${pkgVersion}`] }), "utf8");
 }
 
 function run(home: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
