@@ -359,24 +359,15 @@ export function Topbar({
   onShare: () => void;
   onQuickStart: () => void;
 }) {
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const onScroll = (): void => setScrolled(window.scrollY > 4);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
   const { state, isMobile } = useSidebar();
   return (
     <header
       className={cn(
         // Fixed across the whole window like the OMP stats reference: the brand section sits over the
         // rail, so bar and sidebar share one surface and one color.
-        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 border-b px-3 transition-[border-color] duration-200",
+        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 px-3",
         "bar-veil",
         "grain",
-        scrolled ? "border-line" : "border-transparent",
       )}
     >
       <div
