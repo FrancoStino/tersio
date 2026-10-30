@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { agentJson, headroomDashboardPlan, headroomProxyAnswers, headroomProxyRequests, healthJson, isHeadroomWrapTarget, isVendorTool, json, statusJson } from '../../cli/dashboard.ts';
+import { agentJson, awaitHeadroomProxy, headroomDashboardPlan, headroomProxyAnswers, lanUrls, proxyChildAlive, resolveBind, headroomProxyRequests, healthJson, isHeadroomWrapTarget, isVendorTool, json, statusJson } from '../../cli/dashboard.ts';
 import { createServer } from 'node:http';
 import { withHome } from '../helpers/env.ts';
 
@@ -46,6 +46,26 @@ test('json refuses a pre-serialized string, so a folded route cannot double-enco
   expect(() => json(res, 200, healthJson())).toThrow(/jsonText/);
 });
 
+// Every interface is the default, so a phone can open it; `local` is the opt-out.
+test('the dashboard binds every interface unless loopback is asked for', () => {
+  expect(resolveBind(null)).toBe('0.0.0.0');
+  expect(resolveBind('')).toBe('0.0.0.0');
+  expect(resolveBind('lan')).toBe('0.0.0.0');
+  expect(resolveBind('0.0.0.0')).toBe('0.0.0.0');
+  expect(resolveBind('192.168.1.20')).toBe('192.168.1.20');
+  expect(resolveBind('not an address')).toBe('0.0.0.0');
+  expect(resolveBind('local')).toBe('127.0.0.1');
+  expect(resolveBind('localhost')).toBe('127.0.0.1');
+  expect(lanUrls(8080, '127.0.0.1')).toEqual([]);
+  expect(lanUrls(8080, '192.168.1.20')).toEqual(['http://192.168.1.20:8080']);
+});
+// A killed child keeps exitCode null and reports a signal, so liveness must read both fields.
+test('a signalled proxy child no longer counts as running', () => {
+  expect(proxyChildAlive({ exitCode: null, signalCode: null })).toBe(true);
+  expect(proxyChildAlive({ exitCode: 0, signalCode: null })).toBe(false);
+  expect(proxyChildAlive({ exitCode: null, signalCode: 'SIGTERM' })).toBe(false);
+  expect(proxyChildAlive(null)).toBe(false);
+});
 // The dashboard command prints its URL with the proxy down, so the drawer only opens a port that answers.
 test('the proxy probe tells a live port from a refused one', async () => {
   const server = createServer((_req, res) => { res.writeHead(200); res.end('ok'); });
@@ -66,6 +86,18 @@ test('the dashboard plan redirects only when the proxy answers', () => {
   expect(headroomDashboardPlan(null, false)).toEqual({ kind: 'explain', port: '8787' });
 });
 
+// A started proxy takes a few seconds to answer, so the wait retries instead of reading one probe.
+test('the proxy wait retries until the port answers, then gives up', async () => {
+  let probes = 0;
+  const late = await awaitHeadroomProxy(async () => { probes += 1; return probes === 3; }, 5, 1);
+  expect(late).toBe(true);
+  expect(probes).toBe(3);
+
+  let dry = 0;
+  const never = await awaitHeadroomProxy(async () => { dry += 1; return false; }, 2, 1);
+  expect(never).toBe(false);
+  expect(dry).toBe(3);
+});
 // Closing the tab must not pull the proxy out from under a routed session.
 test('the stop guard reads the proxy traffic counters, and fails safe', async () => {
   const start = async (payload: string): Promise<{ url: string; close: () => Promise<void> }> => {

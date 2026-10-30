@@ -80,7 +80,7 @@ function flagValue(name: string): string | undefined {
 const COMMANDS: Record<string, true> = { install: true, update: true, doctor: true, uninstall: true, dashboard: true, upstream: true, mcp: true, version: true, help: true };
 /** Flags whose next token is a value, so `--host omp` never reads `omp` as the command. */
 const VALUE_FLAGS = new Set([
-  '--host', '--port', '--export', '--currency', '--scope', '--write',
+  '--host', '--bind', '--port', '--export', '--currency', '--scope', '--write',
   '--combo-default', '--caveman-default', '--ponytail-default', '--pstack-default', '--headroom-default', '--rtk-default',
 ]);
 const args = process.argv.slice(2);
@@ -105,6 +105,14 @@ const dashboard = command === 'dashboard';
 const mcp = command === 'mcp';
 const upstream = command === 'upstream' || args.includes('--upstream');
 const dashboardPort = Number.parseInt(flagValue('--port') ?? '', 10) || 0;
+// The dashboard listens on loopback unless asked otherwise: `--lan`, `--bind <addr>`, or `--host lan`.
+// `--host` names an agent for install, so only a value that is not an agent id reads as an address.
+const hostArg = flagValue('--host');
+const dashboardBind = args.includes('--local')
+  ? '127.0.0.1'
+  : args.includes('--lan')
+    ? 'lan'
+    : flagValue('--bind') ?? (hostArg && !['omp', 'pi', 'pig', 'opencode'].includes(hostArg) ? hostArg : null);
 const dashboardOpen = args.includes('--open');
 const dashboardExport = flagValue('--export') ?? null;
 // Display currency: --currency flag, then the stored default, then USD.
@@ -157,15 +165,15 @@ export interface ExecOptions {
 }
 
 /** Windows has no real `omp`, `npm`, or `pgrep`: `.cmd` shims throw EINVAL when spawned, so a bare name wraps through cmd.exe only when a `<name>.cmd` really sits on PATH. */
-export function shimCommand(cmd: string, args: string[]): { cmd: string; args: string[] } {
-  if (!IS_WINDOWS) return { cmd, args };
+export function shimCommand(cmd: string, argv: string[]): { cmd: string; args: string[] } {
+  if (!IS_WINDOWS) return { cmd, args: argv };
   if (/\.(?:cmd|bat)$/i.test(cmd)) {
-    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...argv] };
   }
   if (hasCmdShim(cmd)) {
-    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] };
+    return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...argv] };
   }
-  return { cmd, args };
+  return { cmd, args: argv };
 }
 
 function hasCmdShim(cmd: string): boolean {
@@ -173,8 +181,8 @@ function hasCmdShim(cmd: string): boolean {
   return (process.env.PATH || '').split(path.delimiter).some((dir) => dir && existsSync(path.join(dir, `${cmd}.cmd`)));
 }
 
-async function execP(cmd: string, args: string[], opts: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
-  const shim = shimCommand(cmd, args);
+async function execP(cmd: string, argv: string[], opts: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
+  const shim = shimCommand(cmd, argv);
   return execFileP(shim.cmd, shim.args, {
     timeout: opts.timeout || 120000,
     encoding: 'utf8',
@@ -415,7 +423,7 @@ export {
   install, update, showVersion, showHelp, applyUpdate, args,
   dryRun, yes, assumeYes, verbose, doctor, fix, uninstall, dashboard, upstream,
   allowUnverified,
-  dashboardPort, dashboardOpen, dashboardExport, currency, currencyGiven,
+  dashboardPort, dashboardBind, dashboardOpen, dashboardExport, currency, currencyGiven,
   removePonytail, keepPonytail, removeRtk,
   comboDefaultFlag, cavemanDefaultFlag, ponytailDefaultFlag, pstackDefaultFlag, headroomDefaultFlag, rtkDefaultFlag, profileFlagsGiven,
   debug, execFileP, execP, writeIfChanged, normalizeExtensionsKey,

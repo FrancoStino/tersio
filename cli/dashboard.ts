@@ -2,9 +2,12 @@
 import { spawn } from 'node:child_process';
 import { readActivity, recordActivity } from './activity.ts';
 import { execFileSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import type { Socket } from 'node:net';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
@@ -25,7 +28,7 @@ import { normalizeComboLevel } from '../extensions/shared/session-state.ts';
 import { ACCENT_DEFAULTS, CAVEMAN_DEFAULTS, COMBO_PRESET_MODES, HEADROOM_DEFAULTS, PONYTAIL_DEFAULTS, PSTACK_DEFAULTS } from './common.ts';
 import { PACKAGE_NAME } from './common.ts';
 import { detectHosts } from './hosts.ts';
-import { findPackageRoot, homeDir, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { findPackageRoot, homeDir, openCommand, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
 import { resetCounts, resetStatistics } from './reset.ts';
@@ -45,19 +48,43 @@ const WRAP_BINARY: Record<string, string> = {
   vscode: 'code', 'vscode-claude': 'code', cline: 'code', continue: 'code', 'grok-build': 'grok', copilot: 'gh',
 };
 
-/** Whether a wrap target's binary sits somewhere on PATH (plus the user-script dir pip installs to). */
+/** Whether a wrap target's binary resolves: PATH first, then the directory the installer owns for it. */
+const WRAP_MANAGED_DIR: Record<string, string> = {
+  omp: path.join(homeDir(), '.bun', 'bin'),
+  opencode: path.join(homeDir(), '.opencode', 'bin'),
+};
+
 async function binaryExists(name: string): Promise<boolean> {
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  const extra = path.join(homeDir(), '.local', 'bin');
-  if (!dirs.includes(extra)) dirs.push(extra);
-  for (const dir of dirs) {
-    if (existsSync(path.join(dir, name))) return true;
+  return resolveHostBinary(WRAP_BINARY[name] ?? name, WRAP_MANAGED_DIR[name] ?? path.join(homeDir(), '.local', 'bin')) !== null;
+}
+
+/** The listen address: every interface by default, so a phone can open it. `local` keeps it loopback. */
+export function resolveBind(bind?: string | null): string {
+  const value = (bind ?? '').trim().toLowerCase();
+  if (value === '' ) return '0.0.0.0';
+  if (value === 'local' || value === 'loopback' || value === 'localhost' || value === '127.0.0.1') return '127.0.0.1';
+  if (value === 'lan' || value === 'all' || value === '*' || value === '0.0.0.0') return '0.0.0.0';
+  if (value === '::' || value === '::1') return value;
+  // A value that is neither an address nor a known word keeps the default: every interface.
+  return /^[0-9a-f:.]+$/i.test(value) ? value : '0.0.0.0';
+}
+
+/** Every address a phone on this network can type, printed beside the loopback one. */
+export function lanUrls(port: number, host: string): string[] {
+  if (host !== '0.0.0.0' && host !== '::') return host === '127.0.0.1' ? [] : [`http://${host}:${port}`];
+  const urls: string[] = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const iface of list ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) urls.push(`http://${iface.address}:${port}`);
+    }
   }
-  return false;
+  return urls;
 }
 
 export interface DashboardOptions {
   port: number;
+  /** Listen address: absent means every interface, `local` means loopback. */
+  bind?: string | null;
   open: boolean;
   exportFile: string | null;
   /** The resolved display currency: --currency, then the stored default, then USD. */
@@ -97,10 +124,10 @@ async function brandDataUri(): Promise<string> {
 const DEFAULT_AGENT_RANGE: RangeKey = '24h';
 
 /** Poll memo TTL: every poll re-reads the aggregate, so a repeat poll reuses the last answer. */
-const AGENT_REFRESH_MS = 5000;
+const AGENT_REFRESH_MS = 30_000;
 
 /** A sync walks every transcript, so it runs at most this often even while a poll outruns it. */
-const AGENT_SYNC_MS = 15_000;
+const AGENT_SYNC_MS = 60_000;
 
 let agentMemo: { range: RangeKey; view: AgentView; offset: number; stamp: string; at: number; value: AgentStats } | null = null;
 
@@ -120,11 +147,53 @@ function storeStamp(): string {
   return `${fileStamp(statsDbPath())}|${fileStamp(agentDbPath())}`;
 }
 
+/** One cache file per range and view, so a restarted server serves what the last one built. */
+function agentCacheFile(range: RangeKey, view: AgentView, offset: number): string {
+  return path.join(tersioHome(), 'cache', 'agent', `${range}-${view}-${offset}.json`);
+}
+
+/** A cached payload is reused only while the store it was built from is unchanged. */
+function readAgentCache(file: string, stamp: string): AgentStats | null {
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as { stamp?: string; value?: AgentStats };
+    if (raw.stamp !== stamp || !raw.value) return null;
+    return raw.value;
+  } catch {
+    return null;
+  }
+}
+
+function writeAgentCache(file: string, stamp: string, value: AgentStats): void {
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ stamp, value }));
+  } catch { /* a cache that cannot write only costs the next rebuild */ }
+}
+
+/** Keep the cache small: the newest entries are the ones a page opens on. */
+function pruneAgentCache(): void {
+  const dir = path.join(tersioHome(), 'cache', 'agent');
+  try {
+    const names = readdirSync(dir)
+      .map((name) => ({ name, at: statSync(path.join(dir, name)).mtimeMs }))
+      .sort((a, b) => b.at - a.at);
+    for (const entry of names.slice(24)) rmSync(path.join(dir, entry.name), { force: true });
+  } catch { /* no cache yet */ }
+}
+
 /** Syncs before reading past the throttle; without it a page misses pi and OpenCode rows. */
 function agentStats(range: RangeKey, view: AgentView = 'all', offset = 0): AgentStats {
+  const stamp = storeStamp();
   const held = agentMemo;
-  if (held && held.range === range && held.view === view && held.offset === offset && held.stamp === storeStamp() && Date.now() - held.at < AGENT_REFRESH_MS) {
+  if (held && held.range === range && held.view === view && held.offset === offset && held.stamp === stamp && Date.now() - held.at < AGENT_REFRESH_MS) {
     return held.value;
+  }
+  // A payload built from this exact store is reused across restarts, so a page never waits for the scan again.
+  const file = agentCacheFile(range, view, offset);
+  const cached = readAgentCache(file, stamp);
+  if (cached) {
+    agentMemo = { range, view, offset, stamp, at: Date.now(), value: cached };
+    return cached;
   }
   if (Date.now() - lastSyncAt >= AGENT_SYNC_MS) {
     lastSyncAt = Date.now();
@@ -133,7 +202,10 @@ function agentStats(range: RangeKey, view: AgentView = 'all', offset = 0): Agent
     } catch { /* a store that will not write still reads the rows it already holds */ }
   }
   const value = readAgentStats(range, view, Date.now(), offset);
-  agentMemo = { range, view, offset, stamp: storeStamp(), at: Date.now(), value };
+  const builtStamp = storeStamp();
+  agentMemo = { range, view, offset, stamp: builtStamp, at: Date.now(), value };
+  writeAgentCache(file, builtStamp, value);
+  pruneAgentCache();
   return value;
 }
 
@@ -204,6 +276,11 @@ export function isVendorTool(tool: string): tool is 'headroom' | 'rtk' {
 /** The proxy this dashboard started for its own link; a user-started one is never touched. */
 let dashboardProxy: { child: import('node:child_process').ChildProcess; port: string } | null = null;
 process.once('exit', () => { try { dashboardProxy?.child.kill('SIGTERM'); } catch { /* gone */ } });
+
+/** A child that exited, or took a signal, is gone. `exitCode` stays null for a signalled child, so both fields must be read. */
+export function proxyChildAlive(child: { exitCode: number | null; signalCode: NodeJS.Signals | null } | null | undefined): boolean {
+  return child !== null && child !== undefined && child.exitCode === null && child.signalCode === null;
+}
 
 /** The one Headroom install job, so the Tools page can poll until the binary appears or the pip run fails. */
 const headroomJob: { startedAt: number; code: number | null; error: string | null } = { startedAt: 0, code: null, error: null };
@@ -291,34 +368,22 @@ function spawnCli(command: 'install' | 'uninstall' | 'update', host: string): bo
   return true;
 }
 
-// Local-only health: find each agent on PATH, run `--version`, report both.
-function binOnPath(bin: string): string | null {
-  const names = process.platform === 'win32' ? [`${bin}.cmd`, `${bin}.exe`, `${bin}.bat`, bin] : [bin];
-  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
-    for (const name of names) {
-      const candidate = path.join(dir, name);
-      try {
-        if (statSync(candidate).isFile()) return candidate;
-      } catch { /* continue searching PATH */ }
-    }
-  }
-  return null;
-}
-
+// Local-only health: find each agent, run `--version`, report both. The probes read the managed
+// install dirs the doctor uses, so a dashboard started with a minimal PATH still finds the agents.
 function ompPath(): string | null {
-  return binOnPath('omp');
+  return resolveHostBinary('omp');
 }
 
 function piPath(): string | null {
-  return binOnPath('pi');
+  return resolveHostBinary('pi', path.join(homeDir(), '.local', 'bin'));
 }
 
 function pigPath(): string | null {
-  return binOnPath('pig');
+  return resolveHostBinary('pig', path.join(homeDir(), '.local', 'bin'));
 }
 
 function opencodePath(): string | null {
-  return binOnPath('opencode');
+  return resolveHostBinary('opencode', path.join(homeDir(), '.opencode', 'bin'));
 }
 
 // omp prints `omp/18.4.1`, pi prints a bare `0.87.1`; both read as name/version.
@@ -435,7 +500,9 @@ function diagReport(): DoctorReport | null {
 // The old report sat loose in the data home; read it once, then keep it in state.json.
 function migratedDiag(): Partial<DoctorReport> | null {
   const home = homeDir();
-  const old = takeLegacy(path.join(home, '.tersio', 'diag.json'), (raw) => JSON.parse(raw) as Partial<DoctorReport>);
+  const old = takeLegacy(path.join(home, '.tersio', 'diag.json'), (raw) => {
+    try { return JSON.parse(raw) as Partial<DoctorReport>; } catch { return null; }
+  });
   if (old) patchState({ diag: old });
   return old;
 }
@@ -624,6 +691,7 @@ function saveDefaults(body: Record<string, unknown>): Promise<
     .filter((key) => String(body[key]) === 'inherit');
   if (inherited.length > 0 && !body.host) return { ok: false, error: 'inherit applies to one agent — pass a host' };
   if (String(body.comboDefault) === 'inherit') {
+    // SAFETY: the typed profile omits 'inherit', but the request validated it above and the shared store accepts it.
     Object.assign(profile as unknown as Record<string, unknown>, { comboDefault: 'inherit', cavemanDefault: 'inherit', rtkDefault: 'inherit', ponytailDefault: 'inherit' });
     events.push('Combo back to the shared defaults');
     changedFields.push('comboDefault', 'cavemanDefault', 'rtkDefault', 'ponytailDefault');
@@ -670,6 +738,7 @@ function saveDefaults(body: Record<string, unknown>): Promise<
   }
   if (body.rtkDefault !== undefined) {
     if (body.rtkDefault !== 'inherit' && typeof body.rtkDefault !== 'boolean') return { ok: false, error: 'rtk default must be true, false, or inherit' };
+    // SAFETY: rtkDefault is validated above as a boolean or the literal 'inherit', which the store accepts.
     (profile as unknown as Record<string, unknown>).rtkDefault = body.rtkDefault;
     events.push(body.rtkDefault === 'inherit' ? 'RTK back to the shared default' : `RTK to ${body.rtkDefault ? 'on' : 'off'}`);
     changedFields.push('rtkDefault');
@@ -761,6 +830,23 @@ function jsonText(res: http.ServerResponse, code: number, text: string): void {
   res.end(text);
 }
 
+/** The largest replies are serialized JSON, so gzip them when the client asks: the agent payload shrinks about six times. */
+function jsonGzip(req: http.IncomingMessage, res: http.ServerResponse, code: number, text: string): void {
+  const accepts = String(req.headers['accept-encoding'] ?? '').includes('gzip');
+  if (!accepts || text.length < 4096) {
+    jsonText(res, code, text);
+    return;
+  }
+  const body = gzipSync(text);
+  res.writeHead(code, {
+    'Content-Type': 'application/json',
+    'Content-Encoding': 'gzip',
+    Vary: 'Accept-Encoding',
+    'Content-Length': body.length,
+  });
+  res.end(body);
+}
+
 /** The request body as an object; a missing or malformed one reads as empty, as every route assumed. */
 async function bodyOf(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   try {
@@ -805,9 +891,21 @@ export async function headroomProxyAnswers(url: string, budgetMs = 1500): Promis
   }
 }
 
+/** Waits for a proxy Tersio just started: probes until it answers or the tick budget runs out. */
+export async function awaitHeadroomProxy(probe: () => Promise<boolean>, ticks = 120, waitMs = 250): Promise<boolean> {
+  let answered = await probe();
+  for (let tick = 0; tick < ticks && !answered; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    answered = await probe();
+  }
+  return answered;
+}
+
+/** The last lines of a command's output, trimmed to non-empty ones. */
+const tail = (text: string): string[] => text.trim().split('\n').filter(Boolean);
+
 /** Runs a headroom command and returns its last lines; a failure carries the same tail. */
 async function headroomRun(bin: string, args: string[], timeout: number): Promise<{ ok: boolean; lines: string[] }> {
-  const tail = (text: string): string[] => text.trim().split('\n').filter(Boolean);
   try {
     const run = await execFileP(bin, args, { timeout });
     return { ok: true, lines: tail(`${run.stdout}\n${run.stderr}`) };
@@ -818,25 +916,20 @@ async function headroomRun(bin: string, args: string[], timeout: number): Promis
 }
 
 function openBrowser(url: string): void {
-  // `start` is a cmd builtin, not an executable: spawning it by name fails with ENOENT.
-  const [cmd, args]: [string, string[]] = process.platform === 'darwin'
-    ? ['open', [url]]
-    : process.platform === 'win32'
-      ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'start', '', url]]
-      : ['xdg-open', [url]];
-  spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  const [cmd, argv] = openCommand(url);
+  spawn(cmd, argv, { detached: true, stdio: 'ignore' }).unref();
 }
 
 // Replacers throughout: session data holds `$'` (shell quoting) and `</script>`, which String.replace would mangle.
-function escapeInline(json: string): string {
-  return json.replace(/<\/(script)/gi, '<\\/$1');
+function escapeInline(raw: string): string {
+  return raw.replace(/<\/(script)/gi, '<\\/$1');
 }
 
 // Our own JSON.stringify output, so a parse failure means a bad value: name it.
-function parseOwnJson(json: string, field: string): Record<string, unknown> {
+function parseOwnJson(raw: string, field: string): Record<string, unknown> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(json);
+    parsed = JSON.parse(raw);
   } catch {
     throw new Error(`dashboard snapshot ${field} is not valid JSON`);
   }
@@ -863,6 +956,7 @@ async function exportDashboard(exportFile: string, currency: CurrencyCode): Prom
 }
 
 async function runDashboard(options: DashboardOptions): Promise<void> {
+  const host = resolveBind(options.bind);
   if (options.exportFile) {
     await exportDashboard(options.exportFile, options.currency);
     return;
@@ -1009,6 +1103,20 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       json(res, 200, { ok: true, present: resolveHeadroomBinary() !== null, ...headroomInstallState() });
       return;
     }
+    // Whether Headroom's dashboard proxy answers, so its footer can show a live dot and a stop control.
+    if (req.url === '/api/headroom/proxy' && req.method === 'GET') {
+      // A live child this server owns answers at once; anything else needs a probe.
+      let running = proxyChildAlive(dashboardProxy?.child);
+      if (!running) {
+        const ports = new Set<string>(['8787']);
+        if (dashboardProxy) ports.add(dashboardProxy.port);
+        for (const port of ports) {
+          if (await headroomProxyAnswers(`http://127.0.0.1:${port}/`, 400)) { running = true; break; }
+        }
+      }
+      json(res, 200, { running, owned: dashboardProxy !== null });
+      return;
+    }
     // Which headroom wrap targets exist on this machine, so the drawer only offers what can run.
     if (req.url === '/api/headroom/wrap' && req.method === 'GET') {
       const bin = resolveHeadroomBinary();
@@ -1058,16 +1166,23 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const bin = resolveHeadroomBinary();
       const run = bin ? await headroomRun(bin, ['dashboard', '--no-open'], 30_000) : null;
       const url = run?.lines.join(' ').match(/https?:\/\/\S+/)?.[0] ?? null;
-      let answered = url !== null && await headroomProxyAnswers(url);
+      const miss = headroomDashboardPlan(url, false);
+      const fallbackPort = miss.kind === 'explain' ? miss.port : '8787';
+      // The URL the command printed is the target; with none, the default port still proves a proxy is up.
+      const probe = (budgetMs = 1500): Promise<boolean> => headroomProxyAnswers(url ?? `http://127.0.0.1:${fallbackPort}/`, budgetMs);
+      let answered = await probe();
+      // A child that already exited is no proxy: without this, every later click fell through to the explain page.
+      if (!answered && dashboardProxy !== null && !proxyChildAlive(dashboardProxy.child)) dashboardProxy = null;
       // Nothing listening: start one Tersio owns, so closing the tab can end it again.
-      if (!answered && bin && !dashboardProxy) {
-        dashboardProxy = { child: spawn(bin, ['proxy'], { stdio: 'ignore', windowsHide: true }), port: url ? new URL(url).port || '8787' : '8787' };
+      if (!answered && bin && !proxyChildAlive(dashboardProxy?.child)) {
+        dashboardProxy = { child: spawn(bin, ['proxy'], { stdio: 'ignore', windowsHide: true }), port: fallbackPort };
         recordActivity('agent', 'Headroom proxy started for the dashboard');
-        for (let tick = 0; tick < 60 && !answered; tick += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          answered = url !== null && await headroomProxyAnswers(url, 500);
-        }
       }
+      // A cold start loads headroom's model set, so the wait runs past the first few seconds.
+      if (!answered && dashboardProxy) answered = await awaitHeadroomProxy(probe);
+      const starting = proxyChildAlive(dashboardProxy?.child);
+      // Nothing answered and nothing is coming: forget the child, so the next click starts a fresh one.
+      if (!answered && !starting) dashboardProxy = null;
       const plan = headroomDashboardPlan(url, answered);
       if (plan.kind === 'redirect') {
         res.writeHead(302, { Location: plan.url, 'Cache-Control': 'no-store' });
@@ -1075,10 +1190,13 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(`<!doctype html><meta charset="utf-8"><title>Headroom dashboard</title>
+      const wait = starting ? '<meta http-equiv="refresh" content="4">' : '';
+      const heading = starting ? 'Headroom&rsquo;s proxy is starting' : 'Headroom&rsquo;s proxy is not running';
+      const lead = starting ? 'This page reloads itself when the proxy answers.' : 'Start it, then reload this page.';
+      res.end(`<!doctype html><meta charset="utf-8">${wait}<title>Headroom dashboard</title>
 <body style="font:14px/1.5 system-ui,sans-serif;padding:2rem;background:#141414;color:#e8e8e8">
-<h1 style="font-size:1rem;margin:0 0 .5rem">Headroom&rsquo;s proxy is not running</h1>
-<p style="margin:0 0 .75rem">Start it, then reload this page.</p>
+<h1 style="font-size:1rem;margin:0 0 .5rem">${heading}</h1>
+<p style="margin:0 0 .75rem">${lead}</p>
 <pre style="background:#222;padding:.75rem;border-radius:6px;margin:0 0 .75rem">headroom proxy</pre>
 <p style="color:#8a8a8a;margin:0">It prints <code>http://127.0.0.1:${plan.port}</code> when it is ready.</p>`);
       return;
@@ -1164,7 +1282,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       }
       if (tool === 'rtk') {
         const entry = process.argv[1];
-        const host = detectHosts().find((entry) => entry.installed)?.id;
+        const host = detectHosts().find((candidate) => candidate.installed)?.id;
         if (!entry || !host) {
           json(res, 400, { ok: false, error: 'no installed agent to refresh rtk through' });
           return;
@@ -1203,7 +1321,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
           return;
         }
         try {
-          existsSync(`${found}.bak`) ? unlinkSync(`${found}.bak`) : undefined;
+          if (existsSync(`${found}.bak`)) unlinkSync(`${found}.bak`);
           unlinkSync(found);
           recordActivity('agent', 'RTK uninstalled');
           json(res, 200, { ok: true, detail: 'the rtk binary is removed — its hooks skip a missing rtk' });
@@ -1318,7 +1436,7 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       return;
     }
     if (req.url === '/api/agent' || req.url?.startsWith('/api/agent?')) {
-      jsonText(res, 200, agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
+      jsonGzip(req, res, 200, agentJson(rangeFrom(req.url), viewFrom(req.url), offsetFrom(req.url)));
       return;
     }
     if (req.url?.startsWith('/api/agent/session')) {
@@ -1396,27 +1514,66 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
   });
   await new Promise<void>((resolve, reject) => {
     let stopping = false;
+    let signals = 0;
+    let settled = false;
+    // A browser tab holds keep-alive sockets, and a close that waits for them never releases the port.
+    const sockets = new Set<Socket>();
+    const settle = (): void => {
+      if (!settled) { settled = true; resolve(); }
+    };
     const rejectOnce = (err: Error): void => {
       if (!stopping) reject(err);
     };
     const stop = (): void => {
+      signals += 1;
+      // A second Ctrl-C skips the grace: the operator asked twice.
+      if (signals > 1) {
+        try { server.closeAllConnections(); } catch { /* a runtime without the call */ }
+        for (const socket of sockets) { try { socket.destroy(); } catch { /* gone */ } }
+        try { dashboardProxy?.child.kill('SIGKILL'); } catch { /* already gone */ }
+        process.exit(130);
+      }
       if (stopping) return;
       stopping = true;
-      server.close(() => resolve());
-      server.closeIdleConnections();
+      try { dashboardProxy?.child.kill('SIGTERM'); } catch { /* already gone */ }
+      server.close(settle);
+      try { server.closeIdleConnections(); } catch { /* a runtime without the call */ }
+      // A request still in flight gets a moment; after that every socket is cut and the port is free.
+      const cut = setTimeout(() => {
+        try { server.closeAllConnections(); } catch { /* a runtime without the call */ }
+        for (const socket of sockets) { try { socket.destroy(); } catch { /* gone */ } }
+        settle();
+      }, 300);
+      cut.unref();
     };
 
+    server.on('connection', (socket: Socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
     server.once('error', rejectOnce);
-    server.listen(options.port, '127.0.0.1', () => {
+    server.listen(options.port, host, () => {
       try { process.title = 'tersio dashboard'; } catch { /* non-POSIX shells keep node */ }
       const address = server.address();
       const port = typeof address === 'object' && address ? address.port : options.port;
       const url = `http://127.0.0.1:${port}`;
       console.log(`[ok] Dashboard live → ${url} (Ctrl-C to stop)`);
+      for (const lan of lanUrls(port, host)) console.log(`  [lan] ${lan}`);
+
       // The cadence only matters while a server is up, so the watch starts with it.
       startUpdateWatch();
+      // The first page load should not pay for a cold read: warm the default range once the port is up.
+      // Warm the two ranges a page opens on, one per tick so the port stays responsive.
+      const warm: RangeKey[] = process.env.TERSIO_WARM === '0' ? [] : ['24h', '7d', 'all'];
+      const warmNext = (index: number): void => {
+        const range = warm[index];
+        if (!range) return;
+        try { agentStats(range); } catch { /* the request path retries it */ }
+        setTimeout(() => warmNext(index + 1), 800);
+      };
+      setTimeout(() => warmNext(0), 250);
       if (options.open) openBrowser(url);
     });
   });

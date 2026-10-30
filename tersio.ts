@@ -1,17 +1,12 @@
 #!/usr/bin/env node
 // Install Tersio add-ons on any OMP device; see help for commands.
 import {
-  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, args, commandArg, dashboard, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
+  PACKAGE_BIN, PACKAGE_VERSION, applyUpdate, commandArg, dashboard, dashboardBind, dashboardExport, dashboardOpen, dashboardPort, doctor, mcp, showHelp, showVersion, uninstall, unknownCommand, update, upstream,
   currency,
 } from './cli/common.ts';
 import { closeRL } from './cli/interactive.ts';
-import { runInstall } from './cli/install.ts';
-import { runDoctor } from './cli/doctor.ts';
-import { preferBun, runMcpServer } from './cli/mcp.ts';
-import { runLatestUpdate } from './cli/update.ts';
-import { runUninstall } from './cli/uninstall.ts';
-import { runUpstream } from './cli/upstream.ts';
-import { runDashboard } from './cli/dashboard.ts';
+// Each command loads its own module: the installer never pays for the dashboard tree, and a version
+// check never pays for the installer. The imports stay static here so a missing file fails loudly.
 
 function printHelp(): void {
   console.log(`Usage: ${PACKAGE_BIN} [command] [options]
@@ -20,7 +15,7 @@ Commands:
   install      Install the add-ons for one agent (--host omp|pi|opencode|pig, or ask at a terminal)
   update       Refresh the CLI and add-ons (RTK binary, Caveman rule, Ponytail; --host limits to one agent)
   doctor       Check the current installation (--fix repairs, --dry-run previews)
-  dashboard     Open the Dashboard (localhost only)
+  dashboard     Open the Dashboard (every interface, so a phone can reach it)
   mcp           Start the Tersio MCP server on stdio, for any MCP client
   uninstall    Remove the managed extensions
   version      Print the package version
@@ -41,6 +36,8 @@ Options:
   --verbose
   --port <n> (dashboard: pin port, default ephemeral)
   --open (dashboard: open browser)
+  --local (dashboard: listen on loopback only)
+  --bind <addr> (dashboard: listen address; default every interface, so a phone can open it)
   --export <file> (dashboard: write HTML file instead of serving)
   --currency <code> (dashboard: display currency; flag wins, then tersio settings default, then USD)
   --version, -v
@@ -69,12 +66,14 @@ async function main(): Promise<void> {
   }
 
   if (update && !applyUpdate) {
+    const { runLatestUpdate } = await import('./cli/update.ts');
     await runLatestUpdate();
     closeRL();
     return;
   }
 
   if (mcp) {
+    const { preferBun, runMcpServer } = await import('./cli/mcp.ts');
     // Bun runs the server when it is on PATH; the client spawned node, so the hand-off happens here.
     await preferBun();
     await runMcpServer();
@@ -83,29 +82,34 @@ async function main(): Promise<void> {
   }
 
   if (doctor) {
+    const { runDoctor } = await import('./cli/doctor.ts');
     await runDoctor();
     closeRL();
     return;
   }
 
   if (upstream) {
+    const { runUpstream } = await import('./cli/upstream.ts');
     await runUpstream();
     closeRL();
     return;
   }
 
   if (dashboard) {
-    await runDashboard({ port: dashboardPort, open: dashboardOpen, exportFile: dashboardExport, currency });
+    const { runDashboard } = await import('./cli/dashboard.ts');
+    await runDashboard({ port: dashboardPort, bind: dashboardBind, open: dashboardOpen, exportFile: dashboardExport, currency });
     closeRL();
     return;
   }
 
 
   if (uninstall) {
+    const { runUninstall } = await import('./cli/uninstall.ts');
     await runUninstall();
     closeRL();
     return;
   }
+  const { runInstall } = await import('./cli/install.ts');
   await runInstall();
 }
 
