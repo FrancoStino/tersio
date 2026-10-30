@@ -1030,7 +1030,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'opencode'));
     await capture('headroom', () => lifecycleHeadroom(targetHost, headroomEnabled, profile, quiet));
     await capture('settings', async () => {
-      await writePluginSettings(profile, installOptions);
+      await writePluginSettings(profile, installOptions, { keepSharedModes: hostExplicit });
       if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
@@ -1043,7 +1043,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
     await capture('pi tree', () => stepPiLayer(installOptions));
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pi'));
     await capture('settings', async () => {
-      await writePluginSettings(profile, installOptions);
+      await writePluginSettings(profile, installOptions, { keepSharedModes: hostExplicit });
       if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
     });
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
@@ -1055,7 +1055,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (targetHost === 'pig') {
     await capture('pig tree', () => stepPigLayer(installOptions));
     await capture('rtk', () => stepRtk(BUN_BIN_DIR, installOptions, 'pig'));
-    await capture('settings', () => writePluginSettings(profile, installOptions));
+    await capture('settings', () => writePluginSettings(profile, installOptions, { keepSharedModes: hostExplicit }));
     if (failures.length > 0) console.log(`\nDone with ${failures.length} failure(s) — see [fail] lines above.`);
     else console.log(comboHint('PiG', profile.comboDefault));
     closeRL();
@@ -1088,7 +1088,7 @@ async function runInstall(forcedHost?: HostId): Promise<void> {
   if (ownsTree) await capture('plugin manifest', () => syncPluginManifest(path.dirname(pluginExtDir), installOptions));
   if (ownsTree) await capture('retired agent copies', () => stepRetireAgentCopies(userExtDir, installOptions));
   if (selfPlugin) await capture('settings', async () => {
-    await writePluginSettings(profile, installOptions);
+    await writePluginSettings(profile, installOptions, { keepSharedModes: hostExplicit });
     if (hostExplicit && (choseDefaults || headroomEnabled)) await saveHostDefaults(targetHost, chosenFields, headroomEnabled ? { ...profile, headroomDefault: 'on' } : profile, installOptions);
   });
 

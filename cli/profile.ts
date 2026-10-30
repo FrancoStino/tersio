@@ -171,21 +171,27 @@ async function mirrorPonytailDefault(mode: string, options: WriteOptions): Promi
 }
 
 // Persist profile where every host reads it. `omp plugin config get` no longer reports it; `tersio settings` does.
-async function writePluginSettings(profile: Profile, options: WriteOptions): Promise<void> {
+async function writePluginSettings(profile: Profile, options: WriteOptions, opts: { keepSharedModes?: boolean } = {}): Promise<void> {
   const file = tersioSettingsFile();
   const before = parseStored(await readTextIfExists(file));
   const stored = before ?? {};
   // A host section may hold `inherit`; the shared store never does, so its stored value stands.
   const mode = (key: HostDefaultField, value: unknown): Record<string, unknown> => (String(value) === 'inherit' ? {} : { [key]: value });
+  // A host-scoped run keeps the shared mode values: its choices belong in the host section only.
+  const modes: Record<string, unknown> = opts.keepSharedModes
+    ? {}
+    : {
+        ...mode('comboDefault', profile.comboDefault),
+        ...mode('cavemanDefault', profile.cavemanDefault),
+        ...mode('rtkDefault', profile.rtkDefault),
+        ...mode('ponytailDefault', profile.ponytailDefault),
+        ...mode('pstackDefault', profile.pstackDefault),
+        ...mode('headroomDefault', profile.headroomDefault),
+      };
   const values = {
     ...stored,
-    ...mode('comboDefault', profile.comboDefault),
+    ...modes,
     comboSetupComplete: true,
-    ...mode('cavemanDefault', profile.cavemanDefault),
-    ...mode('rtkDefault', profile.rtkDefault),
-    ...mode('ponytailDefault', profile.ponytailDefault),
-    ...mode('pstackDefault', profile.pstackDefault),
-    ...mode('headroomDefault', profile.headroomDefault),
     currency: profile.currency,
     backupSchedule: profile.backupSchedule,
     devTools: profile.devTools,

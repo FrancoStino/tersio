@@ -325,6 +325,31 @@ test("install --host pig writes the pig tree and no OMP files", () => {
 
 
 // OMP's plugin manifest has no skills field, so install registers the bundled skills root and uninstall removes it.
+// A host install seeds its profile from pi's section; writing that merged view back would move pi's preset to everyone.
+test("a host install keeps its override out of the shared store", () => {
+  const home = tempHome();
+  try {
+    const dir = path.join(home, ".tersio");
+    mkdirSync(dir, { recursive: true });
+    const settings = path.join(dir, "settings.json");
+    writeFileSync(settings, JSON.stringify({ comboDefault: "balanced", hosts: { pi: { comboDefault: "lite" } } }), "utf8");
+
+    const first = run(home, ["install", "--host", "pi", "--yes"]);
+    expect(first.status, first.stderr).toBe(0);
+    const afterFirst = JSON.parse(readFileSync(settings, "utf8")) as { comboDefault?: string; hosts?: Record<string, Record<string, unknown>> };
+    expect(afterFirst.comboDefault, "the shared default stays shared").toBe("balanced");
+    expect(afterFirst.hosts?.pi?.comboDefault, "pi keeps its own override").toBe("lite");
+
+    const second = run(home, ["install", "--host", "pi", "--yes", "--combo-default", "max"]);
+    expect(second.status, second.stderr).toBe(0);
+    const afterSecond = JSON.parse(readFileSync(settings, "utf8")) as { comboDefault?: string; hosts?: Record<string, Record<string, unknown>> };
+    expect(afterSecond.comboDefault).toBe("balanced");
+    expect(afterSecond.hosts?.pi?.comboDefault).toBe("max");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("the OMP install registers the bundled skills with OMP", () => {
   const home = tempHome();
   try {

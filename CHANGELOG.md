@@ -8,6 +8,7 @@
  - **Fresher parts under the hood.** Everything the dashboard and CLI build on is up to date.
 
 ### Fixed
+ - **A host install no longer moves its overrides into the shared store.** `tersio install --host pi --combo-default max` writes pi's section and leaves the shared default alone, so every other agent keeps what it had.
  - **The right brand picture for every model.** Models running through Codex now show their own maker's logo — DeepSeek, GLM, and Beam included — instead of Codex's, and Codex itself gets its own logo too.
  - The drawer's **Headroom dashboard** button opens Headroom's own savings view in a new tab. The link is a plain navigation to a Tersio route that probes the proxy and redirects, so a popup blocker cannot swallow it; when nothing answers it starts a proxy Tersio owns, and closing that tab stops that proxy only while it has served no traffic. A proxy you started yourself, one that has served requests, or one that cannot report is never touched.
  - The install flow offers Headroom only for the agents it can route (OMP and OpenCode). pi and PiG get a note instead of a prompt, and their own section starts with the mode off.
