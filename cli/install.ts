@@ -26,6 +26,7 @@ import {
   httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, sha256File, shimCommand,
 } from '../extensions/shared/utils.ts';
 import { ensureProxy, proxyEnvLines } from '../extensions/shared/headroom-proxy.ts';
+import { setStoredWrap } from '../extensions/shared/headroom-wraps.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
@@ -579,8 +580,9 @@ async function maybeInstallHeadroom(profile: Profile, quiet: boolean, host: Host
       if (answer.status === 'selected' && answer.value === 'proxy') {
         try {
           const state = await ensureProxy(bin);
+          setStoredWrap(host, true);
           const envs = proxyEnvLines(state.port);
-          console.log(`  Headroom — proxy live on port ${state.port} (shared by every agent)`);
+          console.log(`  Headroom — proxy live on port ${state.port} (shared by every agent); the switch in the dashboard drawer records it`);
           for (const env of envs) console.log(`    ${env}`);
           return true;
         } catch (e) {

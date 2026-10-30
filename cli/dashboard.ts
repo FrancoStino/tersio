@@ -9,6 +9,7 @@ import os from 'node:os';
 import type { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, proxyAnswers, proxyEnvLines, readProxyState, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
+import { setStoredWrap } from '../extensions/shared/headroom-wraps.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
@@ -1151,11 +1152,13 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       if (PROXY_HOSTS.includes(name)) {
         if (body.action === 'unwrap') {
           const stopped = stopOwnedProxy();
+          setStoredWrap(name, false);
           json(res, 200, { ok: true, detail: stopped ? 'the headroom proxy Tersio started is stopped' : 'nothing Tersio owns is running; headroom' + String.fromCharCode(39) + 's own proxy is left alone' });
           return;
         }
         try {
           const state = await ensureProxy(bin);
+          setStoredWrap(name, true);
           const envs = proxyEnvLines(state.port);
           json(res, 200, { ok: true, detail: name + ' routes through the headroom proxy on port ' + state.port + ' - set ' + envs[0] + ' (or ' + envs[1] + ') in the agent' + String.fromCharCode(39) + 's environment; one proxy serves every agent' });
         } catch (e) {
