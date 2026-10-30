@@ -255,7 +255,7 @@ export function AppSidebar({
   // z-30 keeps the rail under the fixed topbar, which paints the brand over the rail's top strip.
   return (
     // The rail merges with the page bg and starts below the fixed topbar, like the OMP stats reference.
-    <Sidebar collapsible="icon" className="z-30 bg-transparent text-ink [&>[data-slot=sidebar-inner]]:rounded-tr-xl [&>[data-slot=sidebar-inner]]:rounded-b-xl">
+    <Sidebar collapsible="icon" className="z-30 bg-transparent text-ink [&>[data-slot=sidebar-inner]]:rounded-tl-xl [&>[data-slot=sidebar-inner]]:rounded-bl-xl">
       {/* The brand lives in the topbar, which spans the rail; this spacer keeps nav rows below that bar. */}
       <SidebarHeader className="h-12 shrink-0" />
       <SidebarContent className="relative">
@@ -327,7 +327,7 @@ export function AppSidebar({
           );
         })}
       </SidebarContent>
-      <SidebarFooter className="relative gap-2 overflow-hidden rounded-b-xl border-t border-line p-2">
+      <SidebarFooter className="relative gap-2 overflow-hidden rounded-bl-xl border-t border-line p-2">
         <div aria-hidden="true" className="chrome-texture pointer-events-none absolute inset-0" />
         {agentPending ? (
           <div aria-hidden="true" className="flex h-8 items-center gap-2 rounded-md px-2">
@@ -384,7 +384,7 @@ export function Topbar({
       className={cn(
         // Fixed across the whole window like the OMP stats reference: the brand section sits over the
         // rail, so bar and sidebar share one surface and one color.
-        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 overflow-hidden rounded-tr-xl px-3",
+        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 overflow-hidden rounded-t-xl px-3",
         "bar-veil",
         "grain",
       )}
@@ -423,7 +423,7 @@ export function Topbar({
                 Tersio <span className="font-normal text-dim">Dashboard</span>
               </span>
             ) : (
-              <Skeleton className="h-3.5 w-28 rounded-[4px]" />
+              <Skeleton className={cn("h-3.5 w-28 rounded-[4px]", isMobile && "hidden")} />
             )}
             <SidebarTrigger className="ml-auto size-8 shrink-0 text-dim hover:text-ink" aria-label="Collapse navigation" />
           </>
