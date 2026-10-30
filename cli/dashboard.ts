@@ -176,7 +176,7 @@ function pruneAgentCache(): void {
   try {
     const names = readdirSync(dir)
       .map((name) => ({ name, at: statSync(path.join(dir, name)).mtimeMs }))
-      .sort((a, b) => b.at - a.at);
+      .toSorted((a, b) => b.at - a.at);
     for (const entry of names.slice(24)) rmSync(path.join(dir, entry.name), { force: true });
   } catch { /* no cache yet */ }
 }
@@ -956,7 +956,7 @@ async function exportDashboard(exportFile: string, currency: CurrencyCode): Prom
 }
 
 async function runDashboard(options: DashboardOptions): Promise<void> {
-  const host = resolveBind(options.bind);
+  const listenHost = resolveBind(options.bind);
   if (options.exportFile) {
     await exportDashboard(options.exportFile, options.currency);
     return;
@@ -1554,13 +1554,13 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);
     server.once('error', rejectOnce);
-    server.listen(options.port, host, () => {
+    server.listen(options.port, listenHost, () => {
       try { process.title = 'tersio dashboard'; } catch { /* non-POSIX shells keep node */ }
       const address = server.address();
       const port = typeof address === 'object' && address ? address.port : options.port;
       const url = `http://127.0.0.1:${port}`;
       console.log(`[ok] Dashboard live → ${url} (Ctrl-C to stop)`);
-      for (const lan of lanUrls(port, host)) console.log(`  [lan] ${lan}`);
+      for (const lan of lanUrls(port, listenHost)) console.log(`  [lan] ${lan}`);
 
       // The cadence only matters while a server is up, so the watch starts with it.
       startUpdateWatch();
