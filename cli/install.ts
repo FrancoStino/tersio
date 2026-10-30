@@ -2,7 +2,6 @@
 import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   BUN_BIN_DIR, BUN_BIN, COMBO_PRESET_MODES, HOME, IS_WINDOWS, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR, OMP_BIN,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, args,
@@ -15,7 +14,7 @@ import {
 } from './common.ts';
 import type { InstallOptions, WriteOptions } from './common.ts';
 import {
-  askInteractiveChoice, askInteractiveConfirm, closeRL, execNetwork, tty, withInteractiveSpinner, withInteractiveTask, sayTagged } from './interactive.ts';
+  askInteractiveChoice, askInteractiveConfirm, closeRL, execNetwork, tty, withInteractiveTask, sayTagged } from './interactive.ts';
 import { printWelcome } from './banner.ts';
 import { checkForUpdate, runLatestUpdate } from './update.ts';
 import { runUninstall } from './uninstall.ts';
@@ -24,7 +23,7 @@ import { runDashboard } from './dashboard.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, wireRtkPig } from './rtk-wiring.ts';
 import {
   RTK_RELEASE_API, fetchJson, findFile, httpsGet,
-  findPackageRoot, httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, rtkPlatformSpec, sha256File, shimCommand,
+  httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, sha256File, shimCommand,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
@@ -161,7 +160,6 @@ async function downloadRtkChecksums(release: RtkRelease): Promise<string | null>
 }
 
 // Fails closed: an unverifiable RTK binary runs with the user's privileges. `--allow-unverified` opts out.
-async function verifyRtkArchive(archivePath: string, assetName: string, checksumsText: string | null): Promise<boolean> {
   const unverified = (reason: string): boolean => {
     if (allowUnverified) {
       sayTagged(`  [warn] ${reason} — installing anyway (--allow-unverified)`);
@@ -171,6 +169,7 @@ async function verifyRtkArchive(archivePath: string, assetName: string, checksum
     sayTagged('  [hint] RTK not installed. Retry with --allow-unverified to accept an unverified binary.');
     return false;
   };
+async function verifyRtkArchive(archivePath: string, assetName: string, checksumsText: string | null): Promise<boolean> {
   if (!checksumsText) return unverified(`No checksums.txt published for ${assetName}`);
   const expected = parseChecksum(checksumsText, assetName);
   if (!expected) return unverified(`checksums.txt has no entry for ${assetName}`);
@@ -318,14 +317,14 @@ async function stepRtk(binDir: string, options: InstallOptions, target: HostId =
           return;
         }
         update('Installing binary');
-        const found = await findFile(extractDir, RTK_BINARY_NAME);
-        if (!found) {
+        const binary = await findFile(extractDir, RTK_BINARY_NAME);
+        if (!binary) {
           sayTagged(`  [fail] Could not find ${RTK_BINARY_NAME} in extracted archive`);
           return;
         }
         await fs.mkdir(path.dirname(binDest), { recursive: true });
         await fs.copyFile(binDest, `${binDest}.bak`).catch(() => { });
-        await fs.copyFile(found, binDest);
+        await fs.copyFile(binary, binDest);
         if (!IS_WINDOWS) {
           await fs.chmod(binDest, 0o755);
           debug(`chmod 755 ${binDest}`);
@@ -526,6 +525,7 @@ async function resolveProfile(opts: { quiet?: boolean; host?: HostId | null } = 
   }
 
   // Explicit flags always win over the Combo preset; `inherit` hands those fields back to the shared store.
+  // SAFETY: a flag may set the literal 'inherit', which the stored type omits but the shared store accepts.
   const mutable = profile as unknown as Record<string, unknown>;
   if (comboDefaultFlag !== undefined) mutable.comboDefault = comboDefaultFlag;
   // A stored per-mode choice survives installs and updates; only a chosen preset rewrites it. pstack stays opt-in, so a preset never touches it.
@@ -618,8 +618,8 @@ async function stepOmpSkills(packageRoot: string, options: InstallOptions): Prom
   if (!existsSync(skillsDir)) return;
   const settingsPath = path.join(OMP_AGENT_DIR, 'settings.json');
   const before = parseJsonObject<Record<string, unknown>>(await readTextIfExists(settingsPath)) ?? {};
-  const skills = { ...((before.skills as Record<string, unknown> | undefined) ?? {}) };
-  const dirs = Array.isArray(skills.customDirectories) ? [...(skills.customDirectories as string[])] : [];
+  const skills = { ...(before.skills as Record<string, unknown> | undefined) };
+  const dirs = Array.isArray(skills.customDirectories) ? (skills.customDirectories as string[]).slice() : [];
   const at = dirs.findIndex((dir) => typeof dir === 'string' && dir.includes('tersio') && dir.endsWith('skills'));
   if (at >= 0 && dirs[at] === skillsDir) return;
   if (at >= 0) dirs[at] = skillsDir; else dirs.push(skillsDir);
@@ -672,7 +672,7 @@ async function runCommandMenu(): Promise<void> {
       closeRL();
       process.exit(130);
     }
-    console.log(`\n  [update] staying on ${PACKAGE_VERSION} — run ` + '`tersio update`' + ` anytime`);
+    console.log(`\n  [update] staying on ${PACKAGE_VERSION} — run \`tersio update\` anytime`);
   }
   updatePromptDone = true;
   // The menu reads the check it just ran: a pending release names its version beside the update row,
@@ -775,14 +775,6 @@ function hostEntry(id: HostId): HostEntry {
 /** pi discovers a subdirectory only through an index file or a package.json with `pi.extensions`, so rtk/ needs one or both files stay dead. */
 async function stepPiRtkManifest(extDir: string, options: WriteOptions): Promise<void> {
   await syncTreeFiles(extDir, [PI_RTK_MANIFEST], options);
-}
-
-/** The directory a host's install writes, for the plan line a reinstall prints. */
-function resolvedHostPath(host: HostId): string {
-  if (host === 'pi') return path.join(piAgentDir(), 'extensions');
-  if (host === 'pig') return path.join(pigAgentDir(), 'extensions');
-  if (host === 'opencode') return path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
-  return path.join(OMP_PLUGINS_DIR, 'node_modules', ...PACKAGE_NAME.split('/'), 'extensions');
 }
 
 // pi auto-discovers `<agent-dir>/extensions/**/index.ts`, so this route writes the same tree and registers nothing.

@@ -8,7 +8,7 @@ import {
 } from './common.ts';
 import { PONYTAIL_PKG } from './manifest.ts';
 import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } from './interactive.ts';
-import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
+import { detectHosts, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';

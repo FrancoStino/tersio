@@ -1,22 +1,22 @@
 // cli/doctor.ts — installation health checks.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
-  HOME, OMP_AGENT_DIR, OMP_PLUGINS_DIR, PACKAGE_NAME, PACKAGE_VERSION,
+  HOME, OMP_AGENT_DIR, PACKAGE_NAME, PACKAGE_VERSION,
   args, dryRun, fix, yes,
   BUN_BIN_DIR, OMP_BIN,
-  execP, parseJsonObject, relTime, shimCommand,
+  execP, relTime, shimCommand,
 } from './common.ts';
 import { configEntries } from './profile.ts';
-import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, pigPonytailPackageDir, piTersioSource, pigTersioSource } from './hosts.ts';
+import { detectHosts, hostExtensionsDir, ompPackageDir, piPonytailPackageDir, pigPonytailPackageDir } from './hosts.ts';
 import type { DetectedHost } from './hosts.ts';
 import { GENERATED_TREE_FILES } from './manifest.ts';
 import { askInteractiveChoice, askInteractiveConfirm, runInteractivePhase } from './interactive.ts';
 import { usageDbPath } from '../extensions/shared/usage-store.ts';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
 import { readHeadroomDoctor } from '../extensions/shared/headroom-gain.ts';
-import { fetchJson, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
+import { piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { sqliteScript, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import { OMP_SUBAGENT_MARKER } from '../extensions/shared/session-state.ts';
 import { PI_PONYTAIL_FILES, PONYTAIL_BUNDLE_FILES, PONYTAIL_VERSION, TREE_FILES, TREE_PSTACK_FILES, isObsoleteTreeFile, treeFileText, treeFilesFor } from './manifest.ts';
@@ -48,11 +48,31 @@ interface DoctorSummary {
   missing: number;
 }
 
+/** Zero-padded two-digit number, for the doctor's date rows. */
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function absDate(ms: number): string {
+  const d = new Date(ms);
+  const h24 = d.getHours();
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}-${d.getFullYear()}, ${pad2(h24 % 12 || 12)}:${pad2(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
+}
+
+// An unused host is not a fault: out of the tally, carrying only the one line that installs it.
+function reportUnused(label: string, detail: string): void {
+  console.log(`  —  ${label}: not installed ${detail}`);
+}
+
+// Session defaults come from tersio's store; naming the source keeps a harness from reading as a second default.
+function shortKey(key: string): string {
+  return key.replace('Default', '');
+}
+
 async function runDoctor(recheck = false): Promise<DoctorSummary> {
   console.log('\n=== Tersio Doctor ===');
 
   // OMP loads the plugin from its plugins dir; pi from its npm dir, per its settings.json.
-  const pluginsDir = OMP_PLUGINS_DIR;
   const rtkBin = resolveRtkBinary();
   // Headroom is the user's own opt-in install, so the row only reports it and never installs.
   const headroomBin = resolveHeadroomBinary();
@@ -180,7 +200,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const opencodeServiceProbe: Promise<{ status: string; live: boolean } | null> = opencodeBin
     ? Promise.resolve(serviceState())
     : Promise.resolve(null);
-  const [[ompPkgText, configText], [cavemanIndexText, rtkIndexText, updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime, headroomVersionRaw], [opencodeService]] = await runInteractivePhase('Checking installation', () => Promise.all([
+  const [[_ompPkgText, configText], [_cavemanIndexText, _rtkIndexText, _updaterIndexText, ponytailPkgText], [cavemanRuleText, cavemanLiteText, cavemanMegacaveLiteText, cavemanMegacaveUltraText, cavemanUltraText, cavemanMegacaveText, pstackRuleText, pstackTreeFiles, ruleMtime, rtkBinText, rtkMtime, rtkVersion, ponytailMtime, pricesMtime, headroomVersionRaw], opencodeService] = await runInteractivePhase('Checking installation', () => Promise.all([
     Promise.all([
       probes.ompPkgText,
       probes.configText,
@@ -208,17 +228,11 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
       probes.pricesMtime,
       headroomVersionProbe,
     ]),
-    Promise.all([opencodeServiceProbe]),
+    opencodeServiceProbe,
   ]));
 
   // Success rows stay quiet (no path echoes); failures print the expected path or fix so they stay actionable.
   const tally = { ok: 0, missing: 0, warn: 0 };
-  function absDate(ms: number): string {
-    const d = new Date(ms);
-    const q = (n: number): string => String(n).padStart(2, '0');
-    const h24 = d.getHours();
-    return `${q(d.getMonth() + 1)}-${q(d.getDate())}-${d.getFullYear()}, ${q(h24 % 12 || 12)}:${q(d.getMinutes())} ${h24 >= 12 ? 'PM' : 'AM'}`;
-  }
   function check(label: string, ok: boolean, detail = ''): void {
     if (ok) { tally.ok++; console.log(`  ✅ ${label}: ok${detail ? ` ${detail}` : ''}`); }
     else { tally.missing++; console.log(`  ❌ ${label}: MISSING${detail ? ` ${detail}` : ''}`); }
@@ -226,10 +240,6 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   function warnLine(label: string, detail: string): void {
     tally.warn++;
     console.log(`  ⚠️ ${label}: warn ${detail}`);
-  }
-  // An unused host is not a fault: out of the tally, carrying only the one line that installs it.
-  function unused(label: string, detail: string): void {
-    console.log(`  —  ${label}: not installed ${detail}`);
   }
 
   // A Windows failure names its cause here: several rows below silently degrade when the
@@ -258,7 +268,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
     if (!host.installed) {
       // A pi declaration without tree or package is a broken install: a counted row, not "not installed".
       if (host.declared) check(host.label, false, `declared (${host.declared}) but not installed`);
-      else unused(host.label, `· ${host.installCmd}`);
+      else reportUnused(host.label, `· ${host.installCmd}`);
       continue;
     }
     // One line per host, omp style: kind and version, no path echo.
@@ -267,11 +277,10 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   }
 
   // Session defaults come from tersio's store; naming the source keeps a harness from reading as a second default.
-  const short = (key: string): string => key.replace('Default', '');
-  console.log(`  Defaults: ${configEntries(null).map((row) => `${short(row.key)}=${row.value}`).join(' · ')}`);
+  console.log(`  Defaults: ${configEntries(null).map((row) => `${shortKey(row.key)}=${row.value}`).join(' · ')}`);
   for (const host of hosts.filter((entry) => entry.installed)) {
     const overrides = configEntries(host.id).filter((row) => row.source === 'override' || row.source === 'invalid');
-    if (overrides.length > 0) console.log(`  ${host.label} overrides: ${overrides.map((row) => `${short(row.key)}=${row.value}${row.source === 'invalid' ? ' (invalid)' : ''}`).join(' · ')}`);
+    if (overrides.length > 0) console.log(`  ${host.label} overrides: ${overrides.map((row) => `${shortKey(row.key)}=${row.value}${row.source === 'invalid' ? ' (invalid)' : ''}`).join(' · ')}`);
   }
 
   // A version apart means omp can load a tree of two releases.
@@ -368,7 +377,7 @@ async function runDoctor(recheck = false): Promise<DoctorSummary> {
   const rtkAge = rtkMtime ? `(updated ${relTime(Date.now() - rtkMtime.mtimeMs)} · ${absDate(rtkMtime.mtimeMs)})` : '';
   check('RTK binary', rtkBin !== null, rtkBinText === null ? 'not found in PATH' : [rtkVersion, rtkAge].filter(Boolean).join(' '));
   // rtk_run needs a host exec API, which doctor cannot assume.
-  if (rtkBin === null) unused('RTK exec', '· install Tersio to place rtk in ~/.bun/bin');
+  if (rtkBin === null) reportUnused('RTK exec', '· install Tersio to place rtk in ~/.bun/bin');
   else if (!hosts.some((host) => host.installed && (host.id === 'omp' || host.id === 'opencode'))) warnLine('RTK exec', 'no installed host exposes an exec API — rtk_run is unavailable; call rtk from bash instead');
   if (rtkBinText !== null && !rtkVersion) warnLine('RTK version', 'unavailable — binary may not be executable');
   // Headroom is the user's own opt-in install, so the line stays informational: out of the tally either way.
@@ -447,9 +456,6 @@ function ompBinary(): string | null {
   const managed = path.join(BUN_BIN_DIR, OMP_BIN);
   return existsSync(managed) ? managed : null;
 }
-
-// The rule bodies a per-host tree carries. rule.md and rule-lite.md are bundled forks; the others track upstream.
-const CAVEMAN_BODIES = ['rule.md', 'rule-lite.md', 'rule-megacave-lite.md', 'rule-megacave-ultra.md', 'rule-ultra.md', 'rule-megacave.md'] as const;
 
 /** `"installed < latest"` when npm answers, else null: silence means "no row", not "stale". */
 async function ponytailLatestGap(local: string): Promise<string | null> {

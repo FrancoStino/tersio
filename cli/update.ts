@@ -1,13 +1,13 @@
 // cli/update.ts — update check, per-add-on plan, latest-installer run.
-import { promises as fs, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   BUN_BIN, HOME, IS_WINDOWS, NPM_BIN, OMP_PLUGINS_DIR,
   PACKAGE_BIN, PACKAGE_NAME, PACKAGE_VERSION,
-  args, assumeYes, dryRun, execP, parseJsonObject, verbose,
+  args, dryRun, execP, parseJsonObject, verbose,
 } from './common.ts';
-import { askInteractiveChoice, closeRL, execNetwork, sayTagged, tty } from './interactive.ts';
+import { execNetwork, sayTagged } from './interactive.ts';
 import { readTextIfExists, resolveHeadroomBinary, resolveRtkBinary, tersioDataPath } from '../extensions/shared/utils.ts';
 import { patchState, readState, takeLegacy } from '../extensions/shared/state.ts';
 import { refreshPrices } from '../extensions/shared/pricing.ts';
@@ -21,7 +21,7 @@ import {
   httpsGet, normalizeRtkVersion, sha256Hex,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease } from '../extensions/shared/utils.ts';
-import { detectHosts, hostOptions, parseHostArg } from './hosts.ts';
+import { parseHostArg } from './hosts.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
 
 const UPDATE_CHECK_TTL_MS = 6 * 60 * 60 * 1000;
@@ -116,9 +116,9 @@ async function settle<T>(work: Promise<T>, ms: number): Promise<T | null> {
 }
 
 // Inherited stdio, so a child spinner cannot corrupt this parent's.
-async function execInherit(cmd: string, args: string[]): Promise<void> {
+async function execInherit(cmd: string, argv: string[]): Promise<void> {
   const code = await new Promise<number>((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: 'inherit' });
+    const child = spawn(cmd, argv, { stdio: 'inherit' });
     child.on('error', reject);
     child.on('close', resolve);
   });
@@ -180,19 +180,24 @@ async function cavemanRemoteRule(signal: AbortSignal): Promise<{ tag: string; ha
 }
 
 // Current → latest per add-on. Probes are capped and nullable; the plan prints `unknown` for anything unreachable.
+// rule.md ships with the release; only the tracked bodies can go stale.
+const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
+
 async function probeUpdatePlan(release: LatestRelease | null): Promise<UpdatePlan> {
   const rtkBin = resolveRtkBinary();
   // Ponytail ships inside this package; the separate sibling the old probe read was removed on install.
   const ponytailPkg = path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'ponytail', 'package.json');
-  // rule.md ships with the release; only the tracked bodies can go stale.
-  const tersioRule = (name: string) => path.join(OMP_PLUGINS_DIR, 'node_modules', '@krtclcdy', 'tersio', 'extensions', 'caveman', name);
   const controller = new AbortController();
   const headroomBin = resolveHeadroomBinary();
   const [rtkLocal, rtkRelease, headroomLocal, headroomRelease, ruleLocal, ruleRemote, ponytailLocalText] = await Promise.all([
     settle(rtkBin ? execP(rtkBin, ['--version'], { timeout: 5000 }).then((r) => normalizeRtkVersion(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
-    settle(httpsGet(RTK_RELEASE_API, { signal: controller.signal }).then((text) => normalizeRtkVersion((JSON.parse(text) as RtkRelease).tag_name) || null), 1500),
+    settle(httpsGet(RTK_RELEASE_API, { signal: controller.signal }).then((text) => {
+      try { return normalizeRtkVersion((JSON.parse(text) as RtkRelease).tag_name) || null; } catch { return null; }
+    }), 1500),
     settle(headroomBin ? execP(headroomBin, ['--version'], { timeout: 5000 }).then((r) => normalizeHeadroom(r.stdout.trim() || r.stderr.trim()) || null) : Promise.resolve(null), 6000),
-    settle(httpsGet(HEADROOM_RELEASE_API, { signal: controller.signal }).then((text) => normalizeHeadroom((JSON.parse(text) as { tag_name?: string }).tag_name) || null), 1500),
+    settle(httpsGet(HEADROOM_RELEASE_API, { signal: controller.signal }).then((text) => {
+      try { return normalizeHeadroom((JSON.parse(text) as { tag_name?: string }).tag_name) || null; } catch { return null; }
+    }), 1500),
     Promise.all([readTextIfExists(tersioRule('rule-ultra.md')), readTextIfExists(tersioRule('rule-megacave.md'))])
       .then((texts) => (texts.every(Boolean) ? texts.map((t) => sha256Hex(t as string).slice(0, 8)).join('+') : null)),
     settle(cavemanRemoteRule(controller.signal), 1500),

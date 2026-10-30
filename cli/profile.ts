@@ -170,23 +170,26 @@ async function mirrorPonytailDefault(mode: string, options: WriteOptions): Promi
   } catch { /* upstream's config is best-effort; its own default stands */ }
 }
 
+// A host section may hold `inherit`; the shared store never does, so a stored value stands and 'inherit' writes nothing.
+function modeSection(key: HostDefaultField, value: unknown): Record<string, unknown> {
+  return String(value) === 'inherit' ? {} : { [key]: value };
+}
+
 // Persist profile where every host reads it. `omp plugin config get` no longer reports it; `tersio settings` does.
 async function writePluginSettings(profile: Profile, options: WriteOptions, opts: { keepSharedModes?: boolean } = {}): Promise<void> {
   const file = tersioSettingsFile();
   const before = parseStored(await readTextIfExists(file));
   const stored = before ?? {};
-  // A host section may hold `inherit`; the shared store never does, so its stored value stands.
-  const mode = (key: HostDefaultField, value: unknown): Record<string, unknown> => (String(value) === 'inherit' ? {} : { [key]: value });
   // A host-scoped run keeps the shared mode values: its choices belong in the host section only.
   const modes: Record<string, unknown> = opts.keepSharedModes
     ? {}
     : {
-        ...mode('comboDefault', profile.comboDefault),
-        ...mode('cavemanDefault', profile.cavemanDefault),
-        ...mode('rtkDefault', profile.rtkDefault),
-        ...mode('ponytailDefault', profile.ponytailDefault),
-        ...mode('pstackDefault', profile.pstackDefault),
-        ...mode('headroomDefault', profile.headroomDefault),
+        ...modeSection('comboDefault', profile.comboDefault),
+        ...modeSection('cavemanDefault', profile.cavemanDefault),
+        ...modeSection('rtkDefault', profile.rtkDefault),
+        ...modeSection('ponytailDefault', profile.ponytailDefault),
+        ...modeSection('pstackDefault', profile.pstackDefault),
+        ...modeSection('headroomDefault', profile.headroomDefault),
       };
   const values = {
     ...stored,
@@ -223,14 +226,14 @@ export async function saveHostDefaults(host: HostId, fields: ReadonlyArray<HostD
   const before = parseStored(await readTextIfExists(file)) ?? {};
   const flat = before as Record<string, unknown>;
   const section: Record<string, string | boolean> = {};
-  for (const field of [...new Set(fields)]) {
+  for (const field of new Set(fields)) {
     const value = profile[field];
     // Equality with the flat key is inheritance, not an override, so the section never freezes the shared value.
     if (flat[field] === undefined || flat[field] !== value) section[field] = value as string | boolean;
   }
-  const hosts = { ...((before.hosts as Record<string, Record<string, unknown>> | undefined) ?? {}) };
-  const merged: Record<string, string | boolean> = { ...((hosts[host] as Record<string, string | boolean> | undefined) ?? {}), ...section };
-  for (const field of [...new Set(fields)]) {
+  const hosts = { ...(before.hosts as Record<string, Record<string, unknown>> | undefined) };
+  const merged: Record<string, string | boolean> = { ...(hosts[host] as Record<string, string | boolean> | undefined), ...section };
+  for (const field of new Set(fields)) {
     // `inherit` is a removal, not a value this section stores.
     if (profile[field] === 'inherit') delete merged[field];
   }
@@ -270,6 +273,7 @@ export function configEntries(host: HostId | null): Array<{ key: ConfigKey; valu
   const stored = parseStored(readTextIfExistsSync(tersioSettingsFile())) ?? {};
   const flat = stored as Record<string, unknown>;
   const own = (host ? (stored.hosts as Record<string, Record<string, unknown>> | undefined)?.[host] : undefined) ?? {};
+  // SAFETY: the stored section may hold the literal 'inherit' or invalid values, which the Profile type omits; the reader validates each below.
   const effective = storedProfileSync(host) as unknown as Record<string, string | boolean>;
   return CONFIG_KEYS.map((key) => {
     const overridden = own[key] !== undefined && own[key] !== 'inherit';

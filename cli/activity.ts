@@ -65,7 +65,7 @@ export function readActivity(limit = 500): ActivityEntry[] {
         if (typeof parsed.at === 'number' && typeof parsed.title === 'string') entries.push(parsed);
       } catch { /* skip the damaged line */ }
     }
-    return entries.reverse();
+    return entries.toReversed();
   } catch {
     return [];
   }

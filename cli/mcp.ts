@@ -285,9 +285,12 @@ export async function preferBun(): Promise<void> {
   process.exit(code ?? 1);
 }
 
+function mcpSend(msg: unknown): void {
+  process.stdout.write(`${JSON.stringify(msg)}\n`);
+}
+
 /** Serves one client over stdio and exits when the client disconnects. */
 export async function runMcpServer(): Promise<void> {
-  const send = (msg: unknown): void => { process.stdout.write(`${JSON.stringify(msg)}\n`); };
   const lines = createInterface({ input: process.stdin });
   let queue: Promise<void> = Promise.resolve();
   lines.on('line', (line) => {
@@ -299,7 +302,7 @@ export async function runMcpServer(): Promise<void> {
     } catch { /* a malformed line is dropped; the client's own timeout surfaces it */ }
     // A client may call tools in parallel, and the printing tools patch the console, so one
     // handler at a time; an overlapping patch could leak a print onto the wire.
-    if (message) queue = queue.then(() => handleMessage(message, send));
+    if (message) queue = queue.then(() => handleMessage(message, mcpSend));
   });
   // The server never outlives its client: a closed stream ends the process.
   lines.on('close', () => process.exit(0));

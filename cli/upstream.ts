@@ -449,7 +449,8 @@ export function driftOf(pinned: TreeResult, head: TreeResult, upstreamPaths: str
   const tracked = new Set(upstreamPaths);
   const dirs = new Set([...tracked].map((up) => `${path.posix.dirname(up)}/`));
   // A new skill directory sits beside the tracked ones, so the parent of a tracked directory is watched too.
-  for (const dir of [...dirs]) {
+  // A snapshot: parents added below must not extend this pass.
+  for (const dir of Array.from(dirs)) {
     const parent = path.posix.dirname(dir);
     if (parent && parent !== '.' && parent !== '/') dirs.add(`${parent}/`);
   }

@@ -2,19 +2,18 @@ import { existsSync, promises as fs } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
-  BUN_BIN_DIR, BUN_BIN, HOME, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
+  BUN_BIN_DIR, HOME, NPM_BIN, OMP_AGENT_DIR, OMP_PLUGINS_DIR,
   PACKAGE_NAME, PACKAGE_VERSION, RTK_BINARY_NAME, removeExtensionFromConfig,
   dryRun, verbose,
   debug,
-  execP, parseJsonObject, readPluginsPackage,
+  execP, readPluginsPackage,
   shimCommand,
 } from './common.ts';
 import { execNetwork, sayTagged } from './interactive.ts';
 import { wireRtkOmp, wireRtkOpencode, wireRtkPi, wireRtkPig, ensureRtkInConfig } from './rtk-wiring.ts';
 import {
-  RTK_RELEASE_API, fetchJson, findFile, findPackageRoot, httpsGet,
+  RTK_RELEASE_API, fetchJson, findFile, httpsGet,
   httpsDownload, parseChecksum, readTextIfExists, resolveHostBinary, rtkPlatformSpec, sha256File,
 } from '../extensions/shared/utils.ts';
 import type { RtkRelease } from '../extensions/shared/utils.ts';
@@ -105,8 +104,6 @@ async function obsoleteDirs(dest: string, id: 'omp' | 'pi' | 'opencode' | 'pig')
 }
 
 // A written tree is the install for both hosts, so --fix restores it for whichever hosts have it.
-async function fixExtensionTrees(): Promise<void> {
-  // The entry imports @opencode/plugin, which pi, pig and omp lack, so one shared filter keeps repairs out of their trees.
   const forHost = (id: string): readonly string[] => treeFilesFor(id as 'omp' | 'pi' | 'opencode' | 'pig');
   // Older trees nested the entry; a repair under the old filter may have left it at the root, so remove both strays.
   const scrubOpencodeEntry = async (dest: string): Promise<void> => {
@@ -117,6 +114,10 @@ async function fixExtensionTrees(): Promise<void> {
       sayTagged(`  [rm] foreign ${target}`);
     }
   };
+  const ruleFile = (f: string): boolean => /^caveman\/rule.*\.md$/.test(f);
+
+async function fixExtensionTrees(): Promise<void> {
+  // The entry imports @opencode/plugin, which pi, pig and omp lack, so one shared filter keeps repairs out of their trees.
   for (const host of detectHosts()) {
     const dest = hostExtensionsDir(host.id);
     // Repair a partly-present tree: a half-written one is this run's case, and it reads as "not installed".
@@ -129,7 +130,7 @@ async function fixExtensionTrees(): Promise<void> {
     const missing = await syncTreeFiles(dest, forHost(host.id), { dryRun, verbose });
     for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
     // Writing the current tree repairs stale and missing at once; dropped debris needs removal, else it survives.
-    const debris = (await obsoleteFiles(dest, host.id as 'omp' | 'pi' | 'opencode' | 'pig')).sort();
+    const debris = (await obsoleteFiles(dest, host.id as 'omp' | 'pi' | 'opencode' | 'pig')).toSorted();
     for (const rel of debris) {
       const at = path.join(dest, ...rel.split('/'));
       if (dryRun) { sayTagged(`  [dry-run] would remove debris ${at}`); continue; }
@@ -149,7 +150,6 @@ async function fixExtensionTrees(): Promise<void> {
 
 // On OpenCode the tree is inert without its entry in opencode.json, and the rtk plugin entry is redundant beside it.
 async function fixOpencodeEntry(): Promise<void> {
-  const { HOME } = await import('./common.ts');
   const dir = path.join(HOME, '.config', 'opencode', 'plugins', 'tersio');
   const configPath = path.join(HOME, '.config', 'opencode', 'opencode.json');
   // The loader resolves <pluginDir>/server.ts: an entry at the extensions root leaves a shim to a nested copy.
@@ -181,12 +181,11 @@ async function fixExtensions(pluginsDir: string): Promise<void> {
   await fs.mkdir(pluginExtDir, { recursive: true });
 
   // Rule bodies are never overwritten: they can be newer upstream fetches.
-  const ruleFile = (f: string): boolean => /^caveman\/rule.*\.md$/.test(f);
   const missing = await syncTreeFiles(pluginExtDir, TREE_FILES, { dryRun, verbose }, (file: string) => ruleFile(file) && existsSync(path.join(pluginExtDir, ...file.split('/'))));
   for (const from of missing) sayTagged(`  [warn] bundled source missing: ${from}`);
 
   // omp loads this tree, so its debris is what doctor reports: the package tree, compared against every entry.
-  const debris = (await obsoleteFiles(pluginExtDir, 'opencode')).sort();
+  const debris = (await obsoleteFiles(pluginExtDir, 'opencode')).toSorted();
   for (const rel of debris) {
     const at = path.join(pluginExtDir, ...rel.split('/'));
     if (dryRun) { sayTagged(`  [dry-run] would remove debris ${at}`); continue; }

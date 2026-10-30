@@ -2,8 +2,6 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
-import os from 'node:os';
-import path from 'node:path';
 
 const CURRENCY_CODES = [
   'USD',
