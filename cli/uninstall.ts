@@ -11,6 +11,7 @@ import { askInteractiveChoice, closeRL, confirmDestructive, tty, sayTagged } fro
 import { detectHosts, parseHostArg } from './hosts.ts';
 import type { HostEntry, HostId } from './hosts.ts';
 import { piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary } from '../extensions/shared/utils.ts';
+import { stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 
 interface UninstallOptions {
@@ -177,6 +178,8 @@ async function removeHeadroomBinary(shouldDryRun: boolean): Promise<void> {
   // Undo the agent-side wraps first: a removed binary behind a headroom-managed config strands the agent.
   const headroomBin = resolveHeadroomBinary();
   if (headroomBin && !shouldDryRun) {
+    // The shared proxy Tersio started dies with the binary: route nothing at a dead endpoint.
+    if (stopOwnedProxy()) sayTagged(`  [rm] Headroom proxy stopped`);
     for (const target of ['omp', 'opencode']) {
       try {
         await execP(headroomBin, ['unwrap', target], { timeout: 90_000 });

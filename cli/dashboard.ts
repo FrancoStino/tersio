@@ -8,6 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import type { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
+import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, proxyAnswers, proxyEnvLines, readProxyState, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
@@ -38,9 +39,12 @@ import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentReque
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
 
 /** The tools headroom can wrap (`headroom wrap --help`), and the binary each one runs under. */
+/** The tools headroom can wrap, plus the agents that route through its shared proxy instead. */
 const WRAP_TARGETS = [
   'omp', 'claude', 'codex', 'copilot', 'vscode', 'vscode-claude', 'aider', 'openclaude', 'vibe',
   'grok', 'cursor', 'grok-build', 'cline', 'continue', 'goose', 'openhands', 'openclaw', 'opencode',
+  'antigravity', 'zcode',
+  ...PROXY_HOSTS,
 ] as const;
 
 
@@ -1120,11 +1124,18 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
     // Which headroom wrap targets exist on this machine, so the drawer only offers what can run.
     if (req.url === '/api/headroom/wrap' && req.method === 'GET') {
       const bin = resolveHeadroomBinary();
-      const targets = await Promise.all(WRAP_TARGETS.map(async (name) => ({
+      // Labels come from headroom's own help, so a tool it gains appears here without a Tersio release.
+      const discovered = bin !== null ? await discoverWrapTargets(bin) : null;
+      const staticNames = WRAP_TARGETS.filter((name) => !PROXY_HOSTS.includes(name));
+      const names = [...new Set([...(discovered?.map((entry) => entry.name) ?? []), ...staticNames, ...PROXY_HOSTS])];
+      const targets = await Promise.all(names.map(async (name) => ({
         name,
-        available: bin !== null && await binaryExists(WRAP_BINARY[name] ?? name),
+        label: discovered?.find((entry) => entry.name === name)?.label ?? name,
+        kind: PROXY_HOSTS.includes(name) ? 'proxy' : 'wrap',
+        available: bin !== null && (PROXY_HOSTS.includes(name) || await binaryExists(WRAP_BINARY[name] ?? name)),
       })));
-      json(res, 200, { ok: bin !== null, targets });
+      const state = readProxyState();
+      json(res, 200, { ok: bin !== null, targets, proxy: { running: state !== null || await proxyAnswers(), port: state?.port ?? HEADROOM_PROXY_PORT } });
       return;
     }
     // The automated wrap: one documented command per tool, run detached, so nobody copies it by hand.
@@ -1134,6 +1145,22 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const bin = resolveHeadroomBinary();
       if (!bin || !isHeadroomWrapTarget(name)) {
         json(res, 400, { ok: false, error: 'unknown wrap target or no headroom binary' });
+        return;
+      }
+      // The agents headroom cannot wrap route through its shared proxy: one process, every agent.
+      if (PROXY_HOSTS.includes(name)) {
+        if (body.action === 'unwrap') {
+          const stopped = stopOwnedProxy();
+          json(res, 200, { ok: true, detail: stopped ? 'the headroom proxy Tersio started is stopped' : 'nothing Tersio owns is running; headroom' + String.fromCharCode(39) + 's own proxy is left alone' });
+          return;
+        }
+        try {
+          const state = await ensureProxy(bin);
+          const envs = proxyEnvLines(state.port);
+          json(res, 200, { ok: true, detail: name + ' routes through the headroom proxy on port ' + state.port + ' - set ' + envs[0] + ' (or ' + envs[1] + ') in the agent' + String.fromCharCode(39) + 's environment; one proxy serves every agent' });
+        } catch (e) {
+          json(res, 200, { ok: false, error: (e as Error).message });
+        }
         return;
       }
       if (body.action === 'unwrap') {

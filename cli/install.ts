@@ -25,6 +25,7 @@ import {
   RTK_RELEASE_API, fetchJson, findFile, httpsGet,
   httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, sha256File, shimCommand,
 } from '../extensions/shared/utils.ts';
+import { ensureProxy, proxyEnvLines } from '../extensions/shared/headroom-proxy.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
 import { CAVEMAN_PIN } from './upstream.ts';
@@ -562,12 +563,34 @@ const HEADROOM_HOSTS: readonly HostId[] = ['omp', 'opencode'];
 
 async function maybeInstallHeadroom(profile: Profile, quiet: boolean, host: HostId): Promise<boolean> {
   if (!HEADROOM_HOSTS.includes(host)) {
+    const bin = resolveHeadroomBinary();
+    if (bin === null) {
+      if (!quiet && !dryRun && !applyUpdate) {
+        sayTagged(`  [note] Headroom has no ${hostEntry(host).label} integration yet — install headroom first, then Tersio can route ${hostEntry(host).label} through its shared proxy`);
+      }
+      return false;
+    }
+    // Every agent headroom cannot wrap still rides the one shared proxy: start it, print the paste.
     if (!quiet && !dryRun && !applyUpdate) {
-      sayTagged(`  [note] Headroom has no ${hostEntry(host).label} integration yet — it is offered for OMP and OpenCode`);
+      const answer = await askInteractiveChoice(` 🍃 Headroom has no ${hostEntry(host).label} integration — route it through the shared proxy?`, [
+        { value: 'proxy', label: 'Start the shared proxy', hint: 'one proxy serves every agent; headroom wraps the others directly' },
+        { value: 'skip', label: 'Skip (optional)', hint: 'enable later from the dashboard' },
+      ], 'proxy');
+      if (answer.status === 'selected' && answer.value === 'proxy') {
+        try {
+          const state = await ensureProxy(bin);
+          const envs = proxyEnvLines(state.port);
+          console.log(`  Headroom — proxy live on port ${state.port} (shared by every agent)`);
+          for (const env of envs) console.log(`    ${env}`);
+          return true;
+        } catch (e) {
+          sayTagged(`  [warn] ${(e as Error).message}`);
+          return false;
+        }
+      }
     }
     return false;
-  }
-  if (!tty() || dryRun || applyUpdate || assumeYes) {
+  }  if (!tty() || dryRun || applyUpdate || assumeYes) {
     // No prompt to answer, but a fresh install still gets one line about the optional mode.
     if (!quiet && !dryRun && !applyUpdate && profile.headroomDefault !== 'on') {
       sayTagged('  [note] Headroom is optional: enable it later with /headroom on, or from the dashboard');
