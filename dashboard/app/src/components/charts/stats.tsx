@@ -121,8 +121,8 @@ export function Stat({
         className={cn(
           "mono truncate font-bold tabular-nums",
           size === "sm" ? "mt-0.5 text-sm" : "mt-1 text-lg",
-          tone === "bad" && "text-danger",
-          tone === "warn" && "text-[var(--warn-border)]",
+          tone === "bad" && "text-severe",
+          tone === "warn" && "text-warn-text",
           tone === "good" && "text-accent",
         )}
       >

@@ -85,7 +85,7 @@ const MODE_GLYPHS = [
 ] as const;
 
 /** The combo preset this machine starts sessions with and the modes under it; a click opens the Quick start. */
-export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null; onOpen: () => void; loading?: boolean }) {
+export function ModeBanner({ modes, onOpen, loading, full }: { modes: ModeState | null; onOpen: () => void; loading?: boolean; full?: boolean }) {
   const level = modes?.comboLevel ?? modes?.comboDefault ?? "off";
   const on = level !== "off";
   const label = on ? `COMBO ${level.toUpperCase()}` : "COMBO OFF";
@@ -140,6 +140,7 @@ export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null
       title={`${label}: ${MODE_GLYPHS.map((m) => `${m.label}=${modes ? m.level(modes) : "OFF"}`).join(", ")}. Open the Quick start to change it.`}
       className={cn(
         "mono flex h-8 min-w-0 max-w-[540px] cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition-[background,border-color] duration-200 hover:bg-track",
+        full && "w-full max-w-none",
         on ? "border-ink/25 bg-panel" : "border-line bg-panel/60",
       )}
     >
@@ -147,7 +148,7 @@ export function ModeBanner({ modes, onOpen, loading }: { modes: ModeState | null
       <span className={cn("shrink-0", on ? "font-semibold text-ink" : "text-dim")}>{label}:</span>
       {/* The modes ride a marquee: shown from `sm` up, scrolling only when the row outgrows the bar.
           Reduced motion freezes the row, and the button's title still names every mode. */}
-      <span ref={boxRef} className="hidden min-w-0 overflow-hidden sm:block">
+      <span ref={boxRef} className={cn("min-w-0 overflow-hidden", full ? "block" : "hidden sm:block")}>
         <span ref={trackRef} className={cn("flex w-max items-center", scroll && "animate-tick")}>
           {row("single")}
           {scroll && row("loop")}
@@ -240,6 +241,9 @@ export function AppSidebar({
   onSection,
   agentAvailable,
   agentPending,
+  modes,
+  modesLoaded,
+  onQuickStart,
   onSettings,
   onResize,
 }: {
@@ -247,6 +251,9 @@ export function AppSidebar({
   onSection: (section: SectionId) => void;
   agentAvailable: boolean;
   agentPending: boolean;
+  modes: ModeState | null;
+  modesLoaded: boolean;
+  onQuickStart: () => void;
   onSettings: () => void;
   onResize?: (width: number, final: boolean) => void;
 }) {
@@ -257,7 +264,17 @@ export function AppSidebar({
     // The rail merges with the page bg and starts below the fixed topbar, like the OMP stats reference.
     <Sidebar collapsible="icon" className="z-30 bg-transparent text-ink [&>[data-slot=sidebar-inner]]:rounded-tl-xl [&>[data-slot=sidebar-inner]]:rounded-bl-xl">
       {/* The brand lives in the topbar, which spans the rail; this spacer keeps nav rows below that bar. */}
-      <SidebarHeader className="h-12 shrink-0" />
+      <SidebarHeader className="relative h-12 shrink-0 px-3 md:px-0">
+        <div aria-hidden="true" className="chrome-texture pointer-events-none absolute inset-0 md:hidden" />
+        {/* The drawer keeps the brand row the fixed topbar shows on desktop. */}
+        <div className="relative flex h-full items-center gap-2.5 md:hidden">
+          <img src="brand.webp" alt="" width="24" height="24" className="size-6 shrink-0 rounded-[8px]" />
+          <span className="min-w-0 truncate text-sm font-semibold tracking-tight">
+            Tersio <span className="font-normal text-dim">Dashboard</span>
+          </span>
+          <SidebarTrigger className="ml-auto size-8 shrink-0 text-dim hover:text-ink" aria-label="Close navigation" />
+        </div>
+      </SidebarHeader>
       <SidebarContent className="relative">
         <div
           aria-hidden="true"
@@ -329,6 +346,9 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter className="relative gap-2 overflow-hidden rounded-bl-xl border-t border-line p-2">
         <div aria-hidden="true" className="chrome-texture pointer-events-none absolute inset-0" />
+        <div className="md:hidden">
+          <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} full />
+        </div>
         {agentPending ? (
           <div aria-hidden="true" className="flex h-8 items-center gap-2 rounded-md px-2">
             <Skeleton className="size-4 shrink-0 rounded-[4px]" />
@@ -384,7 +404,7 @@ export function Topbar({
       className={cn(
         // Fixed across the whole window like the OMP stats reference: the brand section sits over the
         // rail, so bar and sidebar share one surface and one color.
-        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 overflow-hidden rounded-t-xl px-3",
+        "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 overflow-hidden px-3 max-md:h-14",
         "bar-veil",
         "grain",
       )}
@@ -425,12 +445,19 @@ export function Topbar({
             ) : (
               <Skeleton className={cn("h-3.5 w-28 rounded-[4px]", isMobile && "hidden")} />
             )}
-            <SidebarTrigger className="ml-auto size-8 shrink-0 text-dim hover:text-ink" aria-label="Collapse navigation" />
+            {modesLoaded ? (
+              <SidebarTrigger className="ml-auto size-8 shrink-0 text-dim hover:text-ink" aria-label="Collapse navigation" />
+            ) : (
+              <Skeleton className="ml-auto size-8 shrink-0 rounded-lg" />
+            )}
           </>
         )}
       </div>
-      {/* The banner names the modes; the rail's nav rows start below this bar. */}
-      <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
+      {/* The banner names the modes; the rail's nav rows start below this bar. On phones it moves
+          into the drawer footer, above Settings. */}
+      <div className="min-w-0 max-md:hidden">
+        <ModeBanner modes={modes} onOpen={onQuickStart} loading={!modesLoaded} />
+      </div>
       {/* The right group never shrinks: it holds the three buttons a narrow viewport still needs,
           and the banner truncates instead. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -452,7 +479,7 @@ export function Topbar({
         ) : (
           <Skeleton className="size-8 rounded-lg" />
         )}
-        <ThemeToggle />
+        {modesLoaded ? <ThemeToggle /> : <Skeleton className="size-8 rounded-lg" />}
       </div>
     </header>
   );
@@ -553,11 +580,37 @@ export function Shell({
         onSection={onSection}
         agentAvailable={agentAvailable}
         agentPending={agentPending || !modesLoaded}
+        modes={modes}
+        modesLoaded={modesLoaded}
+        onQuickStart={() => onSection("how-to")}
         onSettings={onSettings}
         onResize={resizeSidebar}
       />
-      <SidebarInset className="min-w-0 bg-transparent px-2 pb-2 pt-14">
-        {/* The whole content side sits in one huge card below the fixed topbar; the rail merges with that bg. */}
+      <SidebarInset className="min-w-0 bg-transparent px-2 pb-2 pt-14 max-md:pt-16">
+        {/* Fillets at the bar/content corners: the same layers as the bar itself, placed behind the
+            card so only the crescent outside the card's radius shows. The inner disc is repainted
+            with the page color, which keeps the 8px gutter ring. */}
+        {(["left", "right"] as const).map((side) => (
+          <div
+            key={side}
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute top-12 z-0 size-[22px] bar-veil grain max-md:top-14",
+              side === "left" ? "left-0" : "right-0",
+            )}
+          >
+            <div aria-hidden="true" className="chrome-texture pointer-events-none absolute inset-0" />
+            <div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-0 bg-(--bg)",
+                side === "left"
+                  ? "[mask-image:radial-gradient(circle_at_100%_100%,black_21.5px,transparent_22px)]"
+                  : "[mask-image:radial-gradient(circle_at_0%_100%,black_21.5px,transparent_22px)]",
+              )}
+            />
+          </div>
+        ))}
         <div className="shine relative min-h-[calc(100dvh-4rem)] overflow-clip rounded-xl border border-line bg-panel">
           <div
             className="pointer-events-none absolute inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_80%_at_50%_0%,black_40%,transparent_88%)]"

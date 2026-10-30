@@ -73,12 +73,14 @@ export function portPoint(box: Box, side: PortSide): Point {
   return [box.x + box.w / 2, box.y + box.h];
 }
 
-/** The two ports an edge uses, chosen by the target's direction from the source — n8n lets lines leave any side. */
+/** The two ports an edge uses. The axis with the smaller clear gap wins, so a diagonal target never
+ *  produces a hairpin: side-by-side cards keep a run of at least 24px, else the line turns vertical. */
 export function edgePorts(s: Box, t: Box): { from: PortSide; to: PortSide } {
-  const dx = t.x + t.w / 2 - (s.x + s.w / 2);
-  const dy = t.y + t.h / 2 - (s.y + s.h / 2);
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? { from: "right", to: "left" } : { from: "left", to: "right" };
-  return dy >= 0 ? { from: "bottom", to: "top" } : { from: "top", to: "bottom" };
+  const hGap = t.x >= s.x ? t.x - (s.x + s.w) : s.x - (t.x + t.w);
+  const vGap = t.y >= s.y ? t.y - (s.y + s.h) : s.y - (t.y + t.h);
+  const horizontal = hGap >= 24 && (vGap < 0 || hGap <= vGap);
+  if (horizontal) return t.x >= s.x ? { from: "right", to: "left" } : { from: "left", to: "right" };
+  return t.y >= s.y ? { from: "bottom", to: "top" } : { from: "top", to: "bottom" };
 }
 
 const PORT_NORMAL: Record<PortSide, Point> = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
@@ -135,7 +137,34 @@ export function alignDrag(id: string, next: Box, boxes: ReadonlyArray<readonly [
 }
 
 /** The connector arcs around any card that sits between its ports, so long links stay smooth. */
-export function edgePath(s: Box, t: Box, others: ReadonlyArray<Box>): string {
+/** Points along a cubic curve, enough to test every card the line could graze. */
+function curveSamples(sp: Point, c1: Point, c2: Point, tp: Point, steps: number): Point[] {
+  const out: Point[] = [];
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps;
+    const u = 1 - t;
+    out.push([
+      u * u * u * sp[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * tp[0],
+      u * u * u * sp[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * tp[1],
+    ]);
+  }
+  return out;
+}
+
+/** True when no card sits on the sampled curve; the gap keeps lines from grazing a border. */
+function curveClears(points: ReadonlyArray<Point>, obstacles: ReadonlyArray<Box>, pad: number): boolean {
+  for (const [x, y] of points) {
+    for (const b of obstacles) {
+      if (x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad) return false;
+    }
+  }
+  return true;
+}
+
+const hits = (b: Box, boxes: ReadonlyArray<Box>, pad: number): boolean =>
+  boxes.some((o) => b.x < o.x + o.w + pad && b.x + b.w > o.x - pad && b.y < o.y + o.h + pad && b.y + b.h > o.y - pad);
+
+export function edgePath(s: Box, t: Box, others: ReadonlyArray<Box>, groups: ReadonlyArray<Box> = []): string {
   const ports = edgePorts(s, t);
   const sp = portPoint(s, ports.from);
   const tp = portPoint(t, ports.to);
@@ -146,48 +175,46 @@ export function edgePath(s: Box, t: Box, others: ReadonlyArray<Box>): string {
   const uy = dy / len;
   const nx = -uy;
   const ny = ux;
-  // The largest clearance any between-ports card needs; the arc lifts to that card's clearer side.
-  let lift = 0;
-  let dir = 0;
-  for (const b of others) {
-    const cx = b.x + b.w / 2;
-    const cy = b.y + b.h / 2;
-    const along = (cx - sp[0]) * ux + (cy - sp[1]) * uy;
-    const perp = (cx - sp[0]) * nx + (cy - sp[1]) * ny;
-    const alongHalf = (Math.abs(ux) * b.w + Math.abs(uy) * b.h) / 2;
-    const perpHalf = (Math.abs(nx) * b.w + Math.abs(ny) * b.h) / 2;
-    // Only a card that overlaps the run between the ports deflects: off to the side or past an
-    // endpoint is none of this line's business.
-    if (along + alongHalf < 0 || along - alongHalf > len) continue;
-    const clearance = perpHalf + 24;
-    if (Math.abs(perp) >= clearance) continue;
-    const needed = clearance - Math.abs(perp);
-    if (needed > lift) {
-      lift = needed;
-      dir = -Math.sign(perp || 1);
-    }
-  }
-  const reach = Math.max(48, len * 0.45);
+  // A long reach bows a short gap into a loop; keep the handles proportional to the run.
+  const reach = Math.min(96, Math.max(32, len * 0.35));
   const outFrom = PORT_NORMAL[ports.from];
   const outTo = PORT_NORMAL[ports.to];
-  const c1: Point = [sp[0] + outFrom[0] * reach + nx * lift * dir, sp[1] + outFrom[1] * reach + ny * lift * dir];
-  const c2: Point = [tp[0] + outTo[0] * reach + nx * lift * dir, tp[1] + outTo[1] * reach + ny * lift * dir];
-  return `M${sp[0]} ${sp[1]} C${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${tp[0]} ${tp[1]}`;
+  const at = (lift: number): { c1: Point; c2: Point } => ({
+    c1: [sp[0] + outFrom[0] * reach + nx * lift, sp[1] + outFrom[1] * reach + ny * lift],
+    c2: [tp[0] + outTo[0] * reach + nx * lift, tp[1] + outTo[1] * reach + ny * lift],
+  });
+  // A line must miss every card, and should miss every folder band it does not belong to. The first
+  // lift that clears both wins; failing that, the first that clears the cards; failing that, the widest.
+  const foreign = groups.filter((g) => !hits(s, [g], 0) && !hits(t, [g], 0));
+  const lifts = [0, 36, -36, 72, -72, 108, -108, 144, -144, 180, -180, 216, -216];
+  let cardSafe: { c1: Point; c2: Point } | null = null;
+  let chosen = at(0);
+  for (const lift of lifts) {
+    const curve = at(lift);
+    chosen = curve;
+    const points = curveSamples(sp, curve.c1, curve.c2, tp, 28);
+    if (!curveClears(points, others, 14)) continue;
+    cardSafe = curve;
+    if (curveClears(points, foreign, 6)) break;
+  }
+  const pick = cardSafe ?? chosen;
+  return `M${sp[0]} ${sp[1]} C${pick.c1[0]} ${pick.c1[1]}, ${pick.c2[0]} ${pick.c2[1]}, ${tp[0]} ${tp[1]}`;
 }
 
-/** The n8n reading: columns left to right, the shared chain on the main line, the traffic layer above, agents below. */
+/** The default view: a 2x2 mode block (pstack/rtk over caveman/ponytail), headroom above, output right, hosts in a row below. */
 export function defaultPositions(installedHosts: ReadonlyArray<string>): Record<string, Box> {
   const positions: Record<string, Box> = {
-    prompt: { x: 40, y: 296, w: NODE_W, h: NODE_H },
-    headroom: { x: 320, y: 120, w: NODE_W, h: NODE_H },
-    output: { x: 1440, y: 296, w: NODE_W, h: NODE_H },
+    prompt: { x: 40, y: 320, w: NODE_W, h: NODE_H },
+    caveman: { x: 320, y: 320, w: NODE_W, h: NODE_H },
+    pstack: { x: 320, y: 200, w: NODE_W, h: NODE_H },
+    rtk: { x: 592, y: 200, w: NODE_W, h: NODE_H },
+    ponytail: { x: 592, y: 320, w: NODE_W, h: NODE_H },
+    headroom: { x: 464, y: 56, w: NODE_W, h: NODE_H },
+    output: { x: 904, y: 320, w: NODE_W, h: NODE_H },
   };
-  CHAIN.forEach((id, i) => {
-    positions[id] = { x: 320 + i * 280, y: 296, w: NODE_W, h: NODE_H };
-  });
   // The agent band: the host card is taller because it lists its live modes.
   installedHosts.forEach((host, i) => {
-    positions[`host-${host}`] = { x: 600, y: 456 + i * 176, w: NODE_W, h: NODE_H + 48 };
+    positions[`host-${host}`] = { x: 320 + i * 272, y: 504, w: NODE_W, h: NODE_H + 48 };
   });
   return positions;
 }
@@ -380,6 +407,8 @@ export const ABOUT: Partial<Record<NodeId, string>> = {
 
 export interface HostState {
   installed: Record<string, boolean>;
+  /** The harness itself is on this machine, whatever state Tersio's tree is in. */
+  present: Record<string, boolean>;
   versions: Record<string, string | null>;
 }
 

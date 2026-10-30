@@ -122,7 +122,7 @@ export function CarbonPage({ agent }: { agent: AgentStats }) {
           value={
             <span className="flex items-center gap-2">
               ~{fmtCo2(r.totalG)}
-              <Icon name={zone[0]} className={`size-3.5 shrink-0 ${zone[2] === "good" ? "text-accent" : zone[2] === "bad" ? "text-danger" : "text-[var(--warn-border)]"}`} />
+              <Icon name={zone[0]} className={`size-3.5 shrink-0 ${zone[2] === "good" ? "text-accent" : zone[2] === "bad" ? "text-severe" : "text-warn-text"}`} />
             </span>
           }
           tone={TONE[zone[2]]}

@@ -10,14 +10,13 @@ import type { ModeState } from "./shell";
 import { useToast } from "../toaster";
 import { AddAgentDialog } from "./how-to-node-ui";
 import { PipelineCanvas, PipelineSkeleton } from "./how-to-canvas";
-import { HOSTS, readHosts, versionOf } from "./pipeline-model";
+import { readHosts, versionOf } from "./pipeline-model";
 import type { HostAction, HostState, NodeId } from "./pipeline-model";
 
 export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; onModesChanged: () => void }) {
   const toast = useToast();
-  const [hostState, setHostState] = useState<HostState>({ installed: {}, versions: {} });
+  const [hostState, setHostState] = useState<HostState>({ installed: {}, present: {}, versions: {} });
   const [busy, setBusy] = useState<NodeId | null>(null);
-  const missingHosts = HOSTS.filter((host) => hostState.installed[host.id] === false);
   const [hostsLoaded, setHostsLoaded] = useState(false);
   // An exported file has no server: /settings never answers, so the documented every-node-lit reading holds
   // there instead of a permanent skeleton.
@@ -33,10 +32,10 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
       .finally(() => setHostsLoaded(true));
     void fetchHealth().then((report) => {
       if (!report) return;
-      setHostState((s) => ({
-        ...s,
-        versions: { omp: versionOf(report.omp), pi: versionOf(report.pi), opencode: versionOf(report.opencode) },
-      }));
+      const versions = { omp: versionOf(report.omp), pi: versionOf(report.pi), pig: versionOf(report.pig), opencode: versionOf(report.opencode) };
+      // Presence is the resolved binary, not the probe: a probe can fail while the harness is there.
+      const paths = { omp: report.ompPath, pi: report.piPath, pig: report.pigPath, opencode: report.opencodePath };
+      setHostState((s) => ({ ...s, versions, present: Object.fromEntries(Object.entries(paths).map(([id, p]) => [id, Boolean(p)])) }));
     });
   }, []);
 
@@ -119,7 +118,8 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
       {pipelinePending ? null : (
         <div className="pointer-events-none absolute left-4 top-3 z-10 max-w-xl">
           <h1 className="font-display text-lg leading-tight font-bold tracking-tight">Quick start</h1>
-          <p className="mono mt-1 text-[11px] leading-snug text-dim">
+          <p className="mono mt-1 hidden text-[11px] leading-snug text-dim max-sm:block">drag to pan · pinch to zoom · tap a node for options</p>
+          <p className="mono mt-1 text-[11px] leading-snug text-dim max-sm:hidden">
             One package, four agents, five modes — the path a turn takes from your prompt to the reply.
             Drag the nodes, and the flow follows; click one for its options. A dimmed node is off or uninstalled.
           </p>
@@ -138,20 +138,19 @@ export function HowToPage({ modes, onModesChanged }: { modes: ModeState | null; 
           />
         )}
       </div>
-      {!pipelinePending && missingHosts.length > 0 ? (
+      {!pipelinePending ? (
         <Button size="sm" variant="outline" className="absolute top-3 right-4 z-10 gap-1.5 bg-panel/90 backdrop-blur" onClick={() => setAddOpen(true)}>
-          <Icon name="plus" className="size-3.5" />
-          Add agent
+          <Icon name="users" className="size-3.5" />
+          Add Agent
         </Button>
       ) : null}
 
       <AddAgentDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        missingHosts={missingHosts}
         hostState={hostState}
         busy={busy}
-        onHostAction={hostAction}
+        onInstall={(host) => hostAction(`host-${host}` as NodeId, "install")}
       />
     </div>
   );

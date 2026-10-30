@@ -444,9 +444,9 @@ function DoctorPane() {
   const schedule = report?.schedule ?? "manual";
   const scheduleLabel = `${schedule[0].toUpperCase()}${schedule.slice(1)}`;
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="pr-2.5 pb-5">
+        <div className="min-w-0 pr-2.5 pb-5">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="m-0 text-[13px] font-semibold">Auto-check</p>
@@ -493,12 +493,12 @@ function DoctorPane() {
           <span>Scan</span>
         </button>
       </div>
-      <Table className="mt-4 border-y border-line">
+      <Table className="mt-4 w-full table-fixed border-y border-line">
         <TableCaption className="sr-only">Diagnosis check results</TableCaption>
         <TableHeader className="sticky top-0 z-10 bg-panel">
           <TableRow>
             <TableHead className="h-9 pl-3 text-[11px] tracking-[0.12em] text-dim uppercase">Check</TableHead>
-            <TableHead className="h-9 w-28 pr-3 text-right text-[11px] tracking-[0.12em] text-dim uppercase">Status</TableHead>
+            <TableHead className="h-9 w-20 pr-3 text-right text-[11px] tracking-[0.12em] text-dim uppercase sm:w-28">Status</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -525,7 +525,7 @@ function DoctorPane() {
                 <TableRow key={r.label}>
                   <TableCell className="py-3 pl-3">
                     <p className="m-0 font-semibold text-ink">{r.label}</p>
-                    {r.detail && <p className="mono mt-0.5 mb-0 max-w-[480px] truncate text-xs text-dim">{r.detail}</p>}
+                    {r.detail && <p className="mono mt-0.5 mb-0 max-w-full truncate text-xs text-dim">{r.detail}</p>}
                   </TableCell>
                   <TableCell className="py-3 pr-3 text-right">
                     <Badge variant={r.ok ? "success" : "destructive"}>
@@ -540,14 +540,14 @@ function DoctorPane() {
       </Table>
         </div>
       </ScrollArea>
-      <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-warn-border bg-warn-soft px-3.5 py-3">
+      <div className="flex shrink-0 items-center justify-between gap-3 rounded-xl border border-warn-border bg-warn-soft px-3.5 py-3 max-sm:flex-col max-sm:items-stretch max-sm:gap-2">
         <div className="min-w-0">
           <p className="m-0 text-[13px] font-semibold">Fix issues</p>
           <p className="mt-0.5 mb-0 text-xs text-dim">Repairs extension files, config registrations, and the bundled ponytail copy. RTK binary and CLI update stay manual.</p>
         </div>
         <button
           type="button"
-          className="mono flex shrink-0 items-center gap-2 text-xs pl-2.5 pr-3 py-2 rounded-xl border border-line text-ink [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96]"
+          className="mono flex shrink-0 items-center gap-2 text-xs pl-2.5 pr-3 py-2 rounded-xl border border-line text-ink [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96] max-sm:w-full max-sm:justify-center"
           aria-label="Fix diagnosed issues"
           disabled={fixing}
           onClick={() => {
@@ -748,6 +748,8 @@ const CREDITS: ReadonlyArray<{ label: string; hint: string; href: string; glyph:
   { label: "RTK", glyph: "🗜️", hint: "rtk-ai, Apache-2.0", href: "https://github.com/rtk-ai/rtk" },
   { label: "Ponytail", glyph: "🧠", hint: "Dietrich Gebert, MIT", href: "https://github.com/DietrichGebert/ponytail" },
   { label: "pstack", glyph: "🥔", hint: "Lauren Tan, ported from cursor/plugins", href: "https://github.com/cursor/plugins" },
+  { label: "Headroom", glyph: "🍃", hint: "headroomlabs-ai — the compression Tersio wraps", href: "https://github.com/headroomlabs-ai/headroom" },
+  { label: "EcoLogits", glyph: "🌍", hint: "mlco2 — informs the Carbon page's estimates", href: "https://github.com/mlco2/ecologits" },
 ];
 
 /** Two settings and the moment's action: how often the dashboard asks, and whether it installs alone. */
@@ -917,8 +919,8 @@ export function SettingsDialog({
   };
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="block h-[min(88vh,800px)] max-h-[calc(100dvh-2rem)] w-[min(920px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] sm:max-w-[920px] gap-0 overflow-hidden rounded-2xl border border-line bg-panel p-0 text-ink shadow-[0_16px_48px_rgba(0,0,0,.35)]" showCloseButton={false} aria-describedby={undefined}>
-        <div className="grid h-full min-h-0 max-h-full grid-cols-[276px_minmax(0,1fr)] max-sm:grid-cols-1">
+      <DialogContent className="block h-[min(88vh,800px)] max-h-[calc(100dvh-2rem)] w-[min(920px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] sm:max-w-[920px] max-sm:h-dvh max-sm:max-h-dvh max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:border-0 gap-0 overflow-hidden rounded-2xl border border-line bg-panel p-0 text-ink shadow-[0_16px_48px_rgba(0,0,0,.35)]" showCloseButton={false} aria-describedby={undefined}>
+        <div className="grid h-full min-h-0 max-h-full grid-cols-[276px_minmax(0,1fr)] max-sm:grid-cols-1 max-sm:grid-rows-[auto_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col gap-2.5 border-r border-line bg-panel px-3 py-4 max-sm:border-r-0 max-sm:border-b" aria-label="Settings sections">
             <div className="flex items-center gap-2 rounded-[10px] border border-line px-2.5 py-2 text-dim">
               <Icon name="search" className="size-4" />
@@ -945,13 +947,21 @@ export function SettingsDialog({
                   <Icon name="x" className="size-3" />
                 </button>
               )}
+              <button
+                type="button"
+                className="ml-1 grid size-7 shrink-0 place-items-center rounded-lg border border-line text-ink sm:hidden"
+                aria-label="Close settings"
+                onClick={onClose}
+              >
+                <Icon name="x" className="size-3.5" />
+              </button>
             </div>
-            <nav id="settings-search-results" className="grid gap-0.5 overflow-y-auto" aria-label="Settings">
+            <nav id="settings-search-results" className="grid gap-0.5 overflow-y-auto max-sm:flex max-sm:flex-row max-sm:gap-1 max-sm:overflow-x-auto max-sm:pb-1" aria-label="Settings">
               {shown.map((p) => {
                 const paneMatches = matches.filter((item) => item.pane === p.id);
                 return (
                   <div key={p.id} className="contents">
-                    <button type="button" className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-ink hover:bg-track ${pane === p.id ? "bg-track font-semibold" : "bg-transparent font-normal"}`} onClick={() => setPane(p.id)}>
+                    <button type="button" className={`flex w-full shrink-0 items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-left text-[13px] text-ink hover:bg-track max-sm:w-auto max-sm:whitespace-nowrap ${pane === p.id ? "bg-track font-semibold" : "bg-transparent font-normal"}`} onClick={() => setPane(p.id)}>
                       <Icon name={p.icon} className="size-4" />
                       <span><HighlightMatch text={p.label} query={normalizedQuery} /></span>
                       {normalizedQuery && <span className="ml-auto text-[10px] text-dim">{paneMatches.length} match{paneMatches.length === 1 ? "" : "es"}</span>}
@@ -973,7 +983,7 @@ export function SettingsDialog({
                 <p className="px-2.5 py-3 text-xs text-dim">No matching settings</p>
               )}
             </nav>
-            <div className="mono mt-auto flex items-center justify-between gap-2 px-2.5 text-[11px] text-dim">
+            <div className="mono mt-auto flex items-center justify-between gap-2 px-2.5 text-[11px] text-dim max-sm:hidden">
               <span className="min-w-0 truncate">{version ? `v${version}` : "Tersio"}</span>
               <SocialLinks className="flex shrink-0 items-center gap-0.5" />
             </div>
@@ -986,14 +996,14 @@ export function SettingsDialog({
               </DialogTitle>
               <button
                 type="button"
-                className="flex shrink-0 items-center p-2 rounded-xl border border-line text-ink [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96]"
+                className="flex shrink-0 items-center rounded-xl border border-line p-2 text-ink [transition:transform_.12s,background_.2s] hover:bg-accent-soft active:scale-[.96] max-sm:hidden"
                 aria-label="Close settings"
                 onClick={onClose}
               >
                 <Icon name="x" className="size-4" />
               </button>
             </div>
-            <div className={`min-h-0 overscroll-contain px-5 pt-4 ${pane === "diagnosis" ? "flex flex-1 overflow-hidden pb-5" : "overflow-y-auto pb-5 [scrollbar-width:thin] [scrollbar-color:var(--line)_transparent]"}`}>
+            <div className={`min-h-0 min-w-0 overscroll-contain px-5 pt-4 ${pane === "diagnosis" ? "flex flex-1 overflow-hidden pb-5" : "overflow-y-auto pb-5 [scrollbar-width:thin] [scrollbar-color:var(--line)_transparent]"}`}>
               {pane === "general" && (
                 <section aria-label="General" className="grid gap-7">
                   <div className="grid gap-7">
@@ -1056,7 +1066,7 @@ export function SettingsDialog({
                 </section>
               )}
               {pane === "diagnosis" && (
-                <section className="min-h-0 flex-1" aria-label="Diagnosis">
+                <section className="min-h-0 min-w-0 flex-1" aria-label="Diagnosis">
                   <DoctorPane />
                 </section>
               )}

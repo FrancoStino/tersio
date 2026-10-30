@@ -703,6 +703,21 @@ export async function postHeadroomWrap(name: string, action: "wrap" | "unwrap" =
   return apiJson("/api/headroom/wrap", { name, action });
 }
 
+/** Whether Headroom's proxy answers right now, and whether Tersio owns it (so it may be stopped here). */
+export interface HeadroomProxyState {
+  running: boolean;
+  owned: boolean;
+}
+
+export async function fetchHeadroomProxy(): Promise<HeadroomProxyState | null> {
+  return apiJson<HeadroomProxyState>("/api/headroom/proxy");
+}
+
+/** Stops the proxy the dashboard link started; a proxy that served traffic stays up. */
+export async function stopHeadroomProxy(): Promise<{ ok?: boolean; stopped?: boolean; kept?: string } | null> {
+  return apiJson("/headroom/dashboard/stop", {});
+}
+
 /** One vendor row from the scorecard: the installed version against the latest release. */
 export interface VendorRow {
   source: string;

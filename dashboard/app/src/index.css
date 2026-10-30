@@ -57,6 +57,8 @@
     --color-danger: var(--danger);
     --color-danger-border: var(--danger-border);
     --color-danger-soft: var(--danger-soft);
+    --color-severe: var(--severe);
+    --color-warn-text: var(--warn-text);
     --color-success: var(--success);
     --color-warn-soft: var(--warn-soft);
     --color-warn-border: var(--warn-border);
@@ -176,6 +178,19 @@
   background-color: var(--bg);
 }
 
+
+/* Film-grain overlay for the chrome surfaces (navbar, rail): one tiled noise tile, blended in. */
+@utility grain {
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.055;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  }
+}
 /* A hint of shine: a hairline highlight along a card's top edge, with a soft sheen fading under it. */
   @utility shine {
     position: relative;
@@ -194,11 +209,12 @@
   :root {
     --bg: #f2f2f3; --panel: #ffffff; --sidebar: var(--bg); --sidebar-foreground: var(--ink); --shine-line: rgba(24, 24, 27, .18); --shine-sheen: rgba(24, 24, 27, .05); --bar-veil: rgba(242, 242, 243, .72); --ink: #18181b; --dim: #52525b;
     --line: rgba(24, 24, 27, .12); --accent: #047857; --accent-soft: rgba(4, 120, 87, .12);
-    --track: rgba(24, 24, 27, .08); --grid: rgba(4, 120, 87, .07);
+    --track: rgba(24, 24, 27, .08); --grid: rgba(4, 120, 87, .15);
     --cell-0: rgba(24, 24, 27, .07);
     --cell-1: rgba(4, 120, 87, .3); --cell-2: rgba(4, 120, 87, .55);
     --cell-3: rgba(4, 120, 87, .8); --cell-4: #047857;
     --danger: #dc2626; --danger-border: rgba(220, 38, 38, .35); --danger-soft: rgba(220, 38, 38, .05);
+    --severe: #e11d48; --warn-text: #b45309;
     --terminal: #ffffff;
     --success: #15803d;
     --warn-soft: rgba(217, 119, 6, .1); --warn-border: rgba(217, 119, 6, .4);
@@ -220,11 +236,12 @@
     :root:not([data-theme="light"]) {
       --bg: #000; --panel: #09090a; --shine-line: rgba(244, 244, 245, .2); --shine-sheen: rgba(244, 244, 245, .04); --bar-veil: rgba(0, 0, 0, .72); --ink: #f4f4f5; --dim: #a1a1aa;
       --line: rgba(255, 255, 255, .09); --accent: #34d399; --accent-soft: rgba(52, 211, 153, .1);
-      --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .05);
+      --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .11);
       --cell-0: rgba(255, 255, 255, .07);
       --cell-1: rgba(52, 211, 153, .3); --cell-2: rgba(52, 211, 153, .55);
       --cell-3: rgba(52, 211, 153, .8); --cell-4: #34d399;
       --danger: #f87171; --danger-border: rgba(248, 113, 113, .3); --danger-soft: rgba(248, 113, 113, .07);
+      --severe: #fb7185; --warn-text: #fbbf24;
       --terminal: #060606;
       --success: #4ade80;
       --background: #0b0b0d; --foreground: #f4f4f5; --card: #101014; --card-foreground: #f4f4f5;
@@ -241,11 +258,12 @@
   html[data-theme="dark"] {
     --bg: #000; --panel: #09090a; --shine-line: rgba(244, 244, 245, .2); --shine-sheen: rgba(244, 244, 245, .04); --bar-veil: rgba(0, 0, 0, .72); --ink: #f4f4f5; --dim: #a1a1aa;
     --line: rgba(255, 255, 255, .09); --accent: #34d399; --accent-soft: rgba(52, 211, 153, .1);
-    --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .05);
+    --track: rgba(255, 255, 255, .07); --grid: rgba(52, 211, 153, .11);
     --cell-0: rgba(255, 255, 255, .07);
     --cell-1: rgba(52, 211, 153, .3); --cell-2: rgba(52, 211, 153, .55);
     --cell-3: rgba(52, 211, 153, .8); --cell-4: #34d399;
     --danger: #f87171; --danger-border: rgba(248, 113, 113, .3); --danger-soft: rgba(248, 113, 113, .07);
+    --severe: #fb7185; --warn-text: #fbbf24;
       --terminal: #060606;
     --success: #4ade80;
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.55);

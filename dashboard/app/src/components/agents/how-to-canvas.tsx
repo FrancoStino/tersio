@@ -16,6 +16,53 @@ import type { Box, EdgeKey, HostAction, HostState, NodeId } from "./pipeline-mod
 import type { Alignment, GuideLine } from "./pipeline-model";
 import type { ModeState } from "./shell";
 
+/** The rect a cluster frame draws: the band's nodes plus room for its label. */
+function clusterBox(ids: NodeId[], boxes: Record<string, Box>): Box | null {
+  const members = ids.map((id) => boxes[id]).filter(Boolean);
+  if (!members.length) return null;
+  const left = Math.min(...members.map((b) => b.x)) - 12;
+  const top = Math.min(...members.map((b) => b.y)) - 30;
+  const right = Math.max(...members.map((b) => b.x + b.w)) + 12;
+  const bottom = Math.max(...members.map((b) => b.y + b.h)) + 12;
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+/** A framed band of nodes; its label is the grip that moves the whole band. */
+function ClusterFrame({
+  label, ids, boxes, onPointerDown, onPointerMove, onPointerUp,
+}: {
+  label: string;
+  ids: NodeId[];
+  boxes: Record<string, Box>;
+  onPointerDown: (event: React.PointerEvent<HTMLSpanElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLSpanElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLSpanElement>) => void;
+}) {
+  const frame = clusterBox(ids, boxes);
+  if (!frame) return null;
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute rounded-2xl border border-dashed border-line bg-card"
+      style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h }}
+    >
+      <span
+        role="button"
+        aria-label={`Move the ${label} group`}
+        title={`Drag to move the ${label} group`}
+        className="mono pointer-events-auto absolute left-2 top-1.5 flex cursor-grab touch-none items-center gap-1 rounded-md border border-line bg-panel px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-dim active:cursor-grabbing"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <Icon name="grip-horizontal" className="size-3" />
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function NodeButton({
   box,
   off,
@@ -147,12 +194,20 @@ export function PipelineCanvas({
   }, []);
   const panDrag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const nodeDrag = useRef<{ id: NodeId; px: number; py: number; origin: Box; moved: boolean } | null>(null);
+  const groupDrag = useRef<{ ids: NodeId[]; px: number; py: number; origins: Record<string, Box>; moved: boolean } | null>(null);
+  // Every finger on the canvas, so two of them pinch. Node drags capture their own pointer and never land here.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; zoom: number; worldX: number; worldY: number } | null>(null);
 
-  // An exported file reads no host list, so every host counts as present there.
+  // An exported file reads no host list, so every host counts as present there. Only a host Tersio is
+  // installed into belongs to the pipeline; a bare harness has no rows to draw.
   const installedKey = HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => h.id).join(",");
   const installed = useMemo(() => installedKey ? installedKey.split(",") : [], [installedKey]);
   const { nodes: nodeIds, edges } = useMemo(() => pipelineGraph(installed), [installed]);
   const noAgents = installed.length === 0;
+  // Two bands read as groups: the modes Tersio applies, and the harnesses they feed. Headroom rides outside.
+  const modeIds = useMemo(() => nodeIds.filter((id) => id !== "prompt" && id !== "output" && id !== "headroom" && !id.startsWith("host-")), [nodeIds]);
+  const hostIds = useMemo(() => nodeIds.filter((id) => id.startsWith("host-")), [nodeIds]);
 
   const boxes = useMemo(() => {
     const defaults = defaultPositions(installed);
@@ -163,6 +218,11 @@ export function PipelineCanvas({
     }
     return merged;
   }, [nodeIds, stored, installed]);
+
+  const groupBoxes = useMemo(
+    () => [clusterBox(modeIds, boxes), clusterBox(hostIds, boxes)].filter((b): b is Box => b !== null),
+    [modeIds, hostIds, boxes],
+  );
 
   // The add-agent node rides the canvas center when no agent exists yet, so the empty state reads
   // as an invitation instead of an empty grid.
@@ -183,18 +243,26 @@ export function PipelineCanvas({
     if (fittedKey.current === key) return;
     fittedKey.current = key;
     const all = noAgents ? [...nodeIds.map((id) => boxes[id]), addBox] : nodeIds.map((id) => boxes[id]);
-    const minX = Math.min(...all.map((b) => b.x));
-    const minY = Math.min(...all.map((b) => b.y));
+    const minX = Math.min(...all.map((b) => b.x)) - 12;
+    const minY = Math.min(...all.map((b) => b.y)) - 30;
     const maxX = Math.max(...all.map((b) => b.x + b.w));
     const maxY = Math.max(...all.map((b) => b.y + b.h));
     const worldW = maxX - minX + 48;
     const worldH = maxY - minY + 48;
-    const fit = Math.min(1, (containerW - 24) / worldW, (containerH - 24) / worldH);
-    setZoom(fit);
-    setPan({
-      x: (containerW - worldW * fit) / 2 - minX * fit,
-      y: (containerH - worldH * fit) / 2 - minY * fit,
-    });
+    // The intro floats over the canvas, so the fit centers in the space below it.
+    const narrow = containerW < 640;
+    const topInset = narrow ? 48 : 104;
+    const fit = Math.min(1, (containerW - 24) / worldW, (containerH - topInset - 24) / worldH);
+    // A phone cannot read a whole-graph fit, so it opens at a readable scale anchored to the top-left
+    // corner; pan and pinch cover the rest.
+    const scaleToUse = narrow ? Math.max(fit, 0.9) : fit;
+    setZoom(scaleToUse);
+    setPan(narrow
+      ? { x: 16 - minX * scaleToUse, y: topInset - minY * scaleToUse }
+      : {
+        x: (containerW - worldW * fit) / 2 - minX * fit,
+        y: topInset + (containerH - topInset - worldH * fit) / 2 - minY * fit,
+      });
   }, [containerW, containerH, installedKey, nodeIds, boxes, addBox, noAgents]);
 
   useLayoutEffect(() => {
@@ -279,6 +347,45 @@ export function PipelineCanvas({
     if (interactiveNode(id)) openNode(id);
   };
 
+  // The cluster label drags every node in its band, so a group keeps its shape.
+  const onGroupPointerDown = (ids: NodeId[]) => (event: React.PointerEvent<HTMLSpanElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+    const origins: Record<string, Box> = {};
+    for (const id of ids) origins[id] = boxes[id];
+    groupDrag.current = { ids, px: event.clientX, py: event.clientY, origins, moved: false };
+  };
+  const onGroupPointerMove = (event: React.PointerEvent<HTMLSpanElement>): void => {
+    const drag = groupDrag.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.px;
+    const dy = event.clientY - drag.py;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    const shifted: Record<string, Box> = {};
+    for (const id of drag.ids) {
+      const origin = drag.origins[id];
+      shifted[id] = {
+        ...origin,
+        x: Math.max(8, snapToGrid(origin.x + dx / scale)),
+        y: Math.max(8, snapToGrid(origin.y + dy / scale)),
+      };
+    }
+    setStored((current) => ({ ...current, ...shifted }));
+  };
+  const onGroupPointerUp = (event: React.PointerEvent<HTMLSpanElement>): void => {
+    const drag = groupDrag.current;
+    groupDrag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag?.moved) {
+      setStored((current) => {
+        const next = { ...current };
+        persist(next);
+        return next;
+      });
+    }
+  };
+
   // The prompt node starts the turn; it moves but opens nothing.
   const interactiveNode = (id: NodeId): boolean => id !== "prompt";
 
@@ -286,6 +393,8 @@ export function PipelineCanvas({
     const defaults = defaultPositions(installed);
     setStored(defaults);
     persist(defaults);
+    // The reset also restores the default view: clearing the key lets the fit run again on the fresh boxes.
+    fittedKey.current = "";
   };
 
   const zoomBy = (factor: number): void => {
@@ -389,18 +498,56 @@ export function PipelineCanvas({
           const target = event.target as HTMLElement;
           if (target.closest("button")) return;
           if (selected) setSelected(null);
-          if (event.pointerType !== "mouse") return;
+          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          event.currentTarget.setPointerCapture(event.pointerId);
+          if (pointers.current.size === 2) {
+            const [a, b] = [...pointers.current.values()];
+            const rect = event.currentTarget.getBoundingClientRect();
+            const midX = (a.x + b.x) / 2 - rect.left;
+            const midY = (a.y + b.y) / 2 - rect.top;
+            pinch.current = {
+              dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+              zoom,
+              worldX: (midX - pan.x) / zoom,
+              worldY: (midY - pan.y) / zoom,
+            };
+            panDrag.current = null;
+            setPanning(false);
+            return;
+          }
+          if (pointers.current.size !== 1) return;
           panDrag.current = { x: event.clientX, y: event.clientY, px: pan.x, py: pan.y };
           setPanning(true);
-          event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
+          if (pointers.current.has(event.pointerId)) pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          const pinchState = pinch.current;
+          if (pinchState && pointers.current.size >= 2) {
+            const [a, b] = [...pointers.current.values()];
+            const rect = event.currentTarget.getBoundingClientRect();
+            const midX = (a.x + b.x) / 2 - rect.left;
+            const midY = (a.y + b.y) / 2 - rect.top;
+            const factor = (Math.hypot(a.x - b.x, a.y - b.y) || 1) / pinchState.dist;
+            const next = Math.min(2.4, Math.max(0.4, pinchState.zoom * factor));
+            setZoom(next);
+            setPan({ x: midX - pinchState.worldX * next, y: midY - pinchState.worldY * next });
+            return;
+          }
           const start = panDrag.current;
           if (!start) return;
           setPan({ x: start.px + (event.clientX - start.x), y: start.py + (event.clientY - start.y) });
         }}
-        onPointerUp={() => { panDrag.current = null; setPanning(false); }}
-        onPointerCancel={() => { panDrag.current = null; setPanning(false); }}
+        onPointerUp={(event) => {
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
+          if (pointers.current.size === 0) { panDrag.current = null; setPanning(false); }
+        }}
+        onPointerCancel={(event) => {
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
+          panDrag.current = null;
+          setPanning(false);
+        }}
         onWheel={(event) => {
           // The canvas owns the wheel: a bare wheel does nothing, and the page behind it never scrolls.
           event.preventDefault();
@@ -414,13 +561,28 @@ export function PipelineCanvas({
           setPan((p) => ({ x: px - (px - p.x) * ratio, y: py - (py - p.y) * ratio }));
           setZoom(next);
         }}
-        onPointerLeave={() => { panDrag.current = null; setPanning(false); }}
         onDragStart={(event) => event.preventDefault()}
       >
         <div
           className="absolute origin-top-left"
           style={{ width: worldW, height: worldH, transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
         >
+          <ClusterFrame
+            label="Default Feedback"
+            ids={modeIds}
+            boxes={boxes}
+            onPointerDown={onGroupPointerDown(modeIds)}
+            onPointerMove={onGroupPointerMove}
+            onPointerUp={onGroupPointerUp}
+          />
+          <ClusterFrame
+            label="AI Agent Harness"
+            ids={hostIds}
+            boxes={boxes}
+            onPointerDown={onGroupPointerDown(hostIds)}
+            onPointerMove={onGroupPointerMove}
+            onPointerUp={onGroupPointerUp}
+          />
           <svg
             className="pointer-events-none absolute inset-0"
             width={worldW}
@@ -435,13 +597,15 @@ export function PipelineCanvas({
                 if (!from || !to) return null;
                 // The path bows around any node the straight run would cross.
                 const others = Object.entries(boxes).filter(([id]) => id !== edge.from && id !== edge.to).map(([, box]) => box);
-                const tp = portPoint(to, edgePorts(from, to).to);
+                const ports = edgePorts(from, to);
+                const sp = portPoint(from, ports.from);
+                const tp = portPoint(to, ports.to);
                 const off = isOff(lit(edge.from as EdgeKey));
                 const touchesFocus = focus === null || focus === edge.from || focus === edge.to;
                 return (
                   <g key={`${edge.from}->${edge.to}`}>
                     <path
-                      d={edgePath(from, to, others)}
+                      d={edgePath(from, to, others, groupBoxes)}
                       className="howto-link"
                       stroke="var(--dim)"
                       strokeWidth={2.5}
@@ -449,13 +613,14 @@ export function PipelineCanvas({
                     />
                     {/* Every connector is a network cable; the moving dash runs only where the source is on. */}
                     <path
-                      d={edgePath(from, to, others)}
+                      d={edgePath(from, to, others, groupBoxes)}
                       className="flow-line howto-link"
                       stroke="var(--accent)"
                       strokeWidth={1.5}
                       data-active={!off}
                       strokeOpacity={off ? 0.5 : touchesFocus ? 0.8 : 0.3}
                     />
+                    <circle cx={sp[0]} cy={sp[1]} r={4} className="fill-panel stroke-[var(--line)]" strokeWidth={1.5} />
                     <circle cx={tp[0]} cy={tp[1]} r={4} className="fill-panel stroke-[var(--line)]" strokeWidth={1.5} />
                   </g>
                 );
@@ -532,19 +697,23 @@ export function PipelineCanvas({
           <button
             type="button"
             onClick={resetLayout}
-            aria-label="Reset the node layout"
-            className="grid size-6 cursor-pointer place-items-center rounded-md text-dim hover:bg-track hover:text-ink"
+            aria-label="Reset the layout and fit the default view"
+            title="Reset the layout and fit the default view"
+            className="mono flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
           >
             <Icon name="rotate-ccw" className="size-3.5" />
+            Default layout
           </button>
           {zoomed ? (
             <button
               type="button"
               onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
-              aria-label="Reset the view"
-              className="mono grid h-6 cursor-pointer place-items-center rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
+              aria-label="Reset the zoom and pan"
+              title="Reset the zoom and pan"
+              className="mono flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-[10px] text-dim hover:bg-track hover:text-ink"
             >
-              reset
+              <Icon name="maximize" className="size-3.5" />
+              Reset view
             </button>
           ) : null}
         </div>
