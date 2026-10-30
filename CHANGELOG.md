@@ -1,13 +1,25 @@
 ## Unreleased
 
 ### Added
+ - **The dashboard opens from a phone.** It listens on every interface by default and prints each LAN address it answers on; `--local` keeps it on loopback, and `--bind <addr>` pins one address.
+ - **The top-three cards lead with tokens.** Each shows the volume in one letter (2.4B, 591.0M) with the request count and share on the line under it, on Models and Providers alike.
  - **A "top three" card on the Models and Providers pages.** It shows the three you use most, each with its brand picture and how much of the work it did.
 
 ### Changed
+ - **The dashboard loads fast.** Agent payloads are gzipped (803KB to 85KB), a built payload is cached on disk per range so a restart serves it in milliseconds, and the server warms the three ranges a page opens on. Cold ranges that were never built keep their existing cost.
+ - **Upstream drift folds by kind.** Changed, added, and removed paths each collapse on their own, so a 400-path block no longer fills the page.
+ - **The mode drawers drop the flow block.** Caveman, pstack, ponytail, and rtk keep their controls and lose the diagram under them.
+ - **Tokscale is no longer credited.** Tersio's token buckets were informed by it once; nothing reads it now, so the credit is gone.
  - **A new dashboard look.** The sidebar and top bar are one seamless surface, and the rest of the page sits inside one big card. Cards get a thin light line at their top edge, and the sidebar becomes a slim icon strip on smaller windows.
  - **Fresher parts under the hood.** Everything the dashboard and CLI build on is up to date.
 
 ### Fixed
+ - **A message counts once.** A branched or resumed transcript repeats the assistant calls it inherited, and every copy was counted: on this machine 19,237 rows became 14,076, 592.6M tokens became 539.8M, and $114.30 became $65.77. The store keeps one row per message id behind a unique index, and writes ignore a row another transcript already carries.
+ - **A parser bump no longer drops history.** The rebuild adds the columns a store is missing and re-reads the transcripts that remain; rows whose transcript already rotated away stay counted.
+ - **A reset hides rows instead of deleting them.** It writes a marker, the views read past it, and `TERSIO_RESET_PURGE=1` keeps the old erasing behaviour.
+ - **Ctrl-C frees the port.** The server tracks every socket, closes idle ones, and destroys the rest after a 300ms grace; a second Ctrl-C leaves at once. The Headroom proxy Tersio started is stopped with it.
+ - **A range wider than the store says where its records start**, so a two-week store no longer reads as data loss.
+ - The snapshot rotation keeps 14 snapshots instead of 6.
  - **A host install no longer moves its overrides into the shared store.** `tersio install --host pi --combo-default max` writes pi's section and leaves the shared default alone, so every other agent keeps what it had.
  - **The right brand picture for every model.** Models running through Codex now show their own maker's logo — DeepSeek, GLM, and Beam included — instead of Codex's, and Codex itself gets its own logo too.
  - The drawer's **Headroom dashboard** button opens Headroom's own savings view in a new tab. The link is a plain navigation to a Tersio route that probes the proxy and redirects, so a popup blocker cannot swallow it; when nothing answers it starts a proxy Tersio owns, and closing that tab stops that proxy only while it has served no traffic. A proxy you started yourself, one that has served requests, or one that cannot report is never touched.
