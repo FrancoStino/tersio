@@ -665,9 +665,16 @@ export async function postPipelinePositions(positions: Record<string, unknown>):
   return (await apiJson<{ ok?: boolean }>("/api/pipeline/positions", { positions }))?.ok === true;
 }
 
-/** Which headroom wrap targets have their binary on this machine. */
-export async function fetchWrapTargets(): Promise<Array<{ name: string; available: boolean }> | null> {
-  const body = await apiJson<{ targets?: Array<{ name: string; available: boolean }> }>("/api/headroom/wrap");
+/** Which headroom wrap targets have their binary on this machine; `proxy` rows route through the shared proxy instead. */
+export interface HeadroomWrapTarget {
+  name: string;
+  label?: string;
+  kind?: "wrap" | "proxy";
+  available: boolean;
+}
+
+export async function fetchWrapTargets(): Promise<Array<HeadroomWrapTarget> | null> {
+  const body = await apiJson<{ targets?: Array<HeadroomWrapTarget> }>("/api/headroom/wrap");
   return body?.targets ?? null;
 }
 

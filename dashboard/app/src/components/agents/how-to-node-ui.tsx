@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "../toaster";
 import { cn } from "cn";
 import { UPCOMING_AGENTS } from "@/lib/agents";
-import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
+import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, type HeadroomWrapTarget, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -586,7 +586,7 @@ function VersionPill({ version }: { version: string | null }) {
 /** The headroom node opens the wrap drawer: one switch per installed tool, run by Tersio itself. */
 export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "onHostAction">) {
   const [detail, setDetail] = useState<string | null>(null);
-  const [wrapTargets, setWrapTargets] = useState<Array<{ name: string; available: boolean }> | null>(null);
+  const [wrapTargets, setWrapTargets] = useState<Array<HeadroomWrapTarget> | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   // Which durable integrations the dashboard has installed; optimistic, kept across drawer opens.
   const [wrapped, setWrapped] = useState<Record<string, true>>(readStoredWraps);
@@ -651,7 +651,8 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
             <p className="m-0 text-[10px] leading-relaxed text-dim">
               Flip the switch and Tersio runs headroom's own integration — no terminal, nothing to copy.
               claude, codex, copilot, and openclaw install durably (`headroom init -g`); the rest wrap that
-              session only, so a shell alias keeps them covered.
+              session only, so a shell alias keeps them covered. pi and PiG have no wrap target, so they
+              route through headroom's one shared proxy instead — flip once, and the address to set is shown.
             </p>
             {wrapTargets === null ? (
               <Skeleton className="h-8 w-full rounded-md" />
@@ -672,7 +673,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
                         : <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />}
                       <span className={cn("mono min-w-0 flex-1 truncate text-[11px]", on ? "text-ink" : "text-dim")}>{target.name}</span>
                       <span className={cn("mono shrink-0 rounded border px-1 py-0.5 text-[9px]", on ? "border-success/40 text-success" : "border-line text-dim")}>
-                        {on ? "wrapped" : "ready"}
+                        {on ? (target.kind === "proxy" ? "routed" : "wrapped") : target.kind === "proxy" ? "via proxy" : "ready"}
                       </span>
                       <span className="relative inline-flex">
                         <Switch
