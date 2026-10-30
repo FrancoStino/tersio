@@ -18,7 +18,7 @@ import type { Column, SeriesSpec } from "@/components/charts";
 import type { AgentModelPerformancePoint, AgentRow, AgentStats } from "@/lib/data";
 import { AGENT_RANGE_LABEL } from "@/lib/data";
 import { TopUsedCards, type TopUsedEntry } from "./top-hero";
-import { PALETTE, fmt, fmtMs, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
+import { PALETTE, coverageNote, fmt, fmtMs, fmtShort, pct, relAge, tsFull, tsLabel } from "@/lib/format";
 import { Icon } from "@/components/icon";
 
 type ShareMode = "share" | "requests";
@@ -237,6 +237,8 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const view = useMemo(() => buildView(agent), [agent]);
+  // A range wider than the store names where its records start.
+  const coverage = coverageNote(view.rows, agent.cutoff);
   const word = bucketWord(agent.bucketMs);
   // The hero ranks by requests; its bar keeps each model's chart color so the page reads as one story.
   const topEntries = useMemo<TopUsedEntry[]>(
@@ -248,6 +250,7 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
           name: row.key,
           detail: row.provider,
           requests: row.requests,
+          tokens: row.total,
           share: row.requests / Math.max(1, view.totalRequests),
           color: view.colors.get(`${row.key}\u0000${row.provider}`),
         })),
@@ -398,7 +401,8 @@ export function ModelsPage({ agent, money }: { agent: AgentStats; money: (v: num
     <Page>
       <PageHeader
         title="Models"
-        description={`Which models did the work in ${AGENT_RANGE_LABEL[agent.range]}, and how fast they answered.`}
+        description={`Which models did the work in ${AGENT_RANGE_LABEL[agent.range]}, and how fast they answered.`
+          + (coverage ? ` · ${coverage}` : "")}
       />
 
       <StatGrid cols={4}>

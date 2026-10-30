@@ -19,6 +19,21 @@ export function fmtShort(n: number): string {
   return String(Math.round(n));
 }
 
+/**
+ * A range wider than the store cannot show what it never held: name where the records actually start.
+ * Within a day of the cutoff the range covers the store, so there is no gap to report.
+ */
+export function coverageNote(rows: ReadonlyArray<{ firstTs: number | null }>, cutoff: number): string | null {
+  let first: number | null = null;
+  for (const row of rows) {
+    if (row.firstTs === null) continue;
+    if (first === null || row.firstTs < first) first = row.firstTs;
+  }
+  if (first === null || !Number.isFinite(cutoff) || cutoff <= 0) return null;
+  if (first <= cutoff + 86_400_000) return null;
+  return `records start ${new Date(first).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
 export function fmtMs(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "–";
   if (ms < 1000) return `${Math.round(ms)}ms`;

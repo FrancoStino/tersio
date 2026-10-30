@@ -1,6 +1,6 @@
 // The "most used" heroes: one stat-band strip, three cells, each over a faded silhouette of its own brand.
 import { BrandSilhouette, ProviderMark, VendorMark } from "@/components/brand";
-import { fmt, pct, providerColor } from "@/lib/format";
+import { fmt, fmtShort, pct, providerColor } from "@/lib/format";
 
 export interface TopUsedEntry {
   /** Model id when kind is "model", provider id when it is "provider". */
@@ -8,6 +8,8 @@ export interface TopUsedEntry {
   /** The second line under the name: a model row names its provider, a provider row its volume. */
   detail?: string;
   requests: number;
+  /** Tokens the row moved; the headline number, since the request count rides the line under it. */
+  tokens: number;
   /** The row's share of the range's requests, 0..1. */
   share: number;
   /** Ink for the rank rule; a page passes its own chart color so the cell matches the charts. */
@@ -54,8 +56,13 @@ export function TopUsedCards({ kind, entries }: { kind: "model" | "provider"; en
                 </span>
               </span>
               <span className="shrink-0 text-right">
-                <span className="mono block text-lg font-bold leading-tight tabular-nums">{fmt(entry.requests)}</span>
-                <span className="mono block text-[11px] text-dim tabular-nums">{pct(entry.share)} of requests</span>
+                <span className="mono block text-lg font-bold leading-tight tabular-nums">
+                  {fmtShort(entry.tokens)}
+                  <span className="ml-1 text-[10px] font-normal text-dim">tokens</span>
+                </span>
+                <span className="mono block text-[11px] text-dim tabular-nums">
+                  {fmt(entry.requests)} · {pct(entry.share)} of requests
+                </span>
               </span>
             </div>
           </div>

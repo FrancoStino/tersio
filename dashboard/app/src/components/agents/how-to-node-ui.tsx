@@ -21,7 +21,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "../toaster";
 import { cn } from "cn";
-import { checkVendor, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, storeWraps, type HealthReport, type VendorRow } from "@/lib/data";
+import { UPCOMING_AGENTS } from "@/lib/agents";
+import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -358,7 +359,7 @@ export function HostDrawer({ node, open, onOpenChange, hostState, busy, onHostAc
           )}
         </div>
         <DrawerFooter className="border-t border-line px-6 pb-4 pt-3.5">
-          <div className="grid w-full grid-cols-2 gap-2">
+          <div className={cn("grid w-full gap-2", installed && "grid-cols-2")}>
             {installed ? (
               <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => start("update")} className="w-full gap-1.5">
                 {busy === node && running === "update" ? <Spinner className="size-3 text-accent" /> : <Icon name="circle-arrow-up" className="size-3.5" />}
@@ -430,9 +431,19 @@ export function VendorFooter({
   const [phase, setPhase] = useState<"idle" | "checking" | "update" | "confirm-uninstall" | "busy">("idle");
   const [busyLabel, setBusyLabel] = useState("");
   const [row, setRow] = useState<VendorRow | null>(null);
+  const [proxy, setProxy] = useState<HeadroomProxyState | null>(null);
   useEffect(() => {
-    if (!open) { setPhase("idle"); setRow(null); }
+    if (!open) { setPhase("idle"); setRow(null); setProxy(null); }
   }, [open]);
+  // The footer dot follows the proxy while the drawer is open, so a link opened elsewhere shows up here.
+  useEffect(() => {
+    if (!open || tool !== "headroom") return;
+    let cancelled = false;
+    const tick = (): void => { void fetchHeadroomProxy().then((state) => { if (!cancelled) setProxy(state); }); };
+    tick();
+    const timer = window.setInterval(tick, 4000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [open, tool]);
   const busy = phase === "busy";
   const updateReady = phase === "update";
   const confirming = phase === "confirm-uninstall";
@@ -475,6 +486,12 @@ export function VendorFooter({
     onAfter();
   };
   const updateLabel = row?.upstream ? `Update to ${row.upstream}` : "Update";
+  const stopProxy = async (): Promise<void> => {
+    const result = await stopHeadroomProxy();
+    if (result?.stopped) toast("Headroom proxy stopped", "The dashboard link starts it again.", "check");
+    else if (result?.ok) toast("Proxy kept running", result.kept ?? "it was not started by Tersio", "circle-alert");
+    setProxy(await fetchHeadroomProxy());
+  };
   const openDashboard = (): void => {
     // A plain navigation tab: the route probes (and may start) Headroom's proxy, so nothing is popup-blocked.
     const tab = window.open("/headroom/dashboard", "_blank");
@@ -527,10 +544,30 @@ export function VendorFooter({
         )}
       </div>
       {tool === "headroom" && installed ? (
-        <Button size="sm" variant="ghost" disabled={busy} onClick={openDashboard} className="w-full gap-1.5 text-dim">
-          <Icon name="gauge" className="size-3.5" />
-          Headroom dashboard
-        </Button>
+        <div className="flex w-full items-center gap-1.5">
+          <Button size="sm" variant="outline" disabled={busy} onClick={openDashboard} className="min-w-0 flex-1 gap-1.5">
+            <Icon name="gauge" className="size-3.5" />
+            Headroom dashboard
+          </Button>
+          <span
+            aria-hidden="true"
+            className={cn("size-1 shrink-0 rounded-full", proxy?.running ? "bg-success" : "bg-line")}
+          />
+          <span className="sr-only">{proxy?.running ? "headroom proxy running" : "headroom proxy not running"}</span>
+          {proxy?.running ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void stopProxy()}
+              aria-label="Stop the headroom proxy"
+              title="Stop the headroom proxy"
+              className="shrink-0 px-2"
+            >
+              <Icon name="circle-stop" className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {row && installed ? (
         <p className="mono m-0 text-center text-[9px] text-dim">
@@ -664,7 +701,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
                     <AgentLogo host={h.id} className="size-3.5 shrink-0" />
                     <span className="mono min-w-0 flex-1 truncate text-[11px] text-ink">{h.label}</span>
                     <span className="mono shrink-0 rounded border border-line px-1 py-0.5 text-[9px] text-dim">
-                      {h.id === "opencode" ? "wraps above" : "no wrap"}
+                      {h.id === "omp" || h.id === "opencode" ? "not detected" : "unsupported"}
                     </span>
                   </div>
                 ))}
@@ -752,58 +789,84 @@ export function RtkDrawer({ open, onOpenChange, modes, busy, onSet, onSaved }: O
   );
 }
 
-/** The add-agent picker: every agent with its install state, so what is missing is obvious at a glance. */
+/** The add-agent picker: only the harnesses found on this machine, plus the coming-soon teasers. */
 export function AddAgentDialog({
-  open, onOpenChange, missingHosts, hostState, busy, onHostAction,
+  open, onOpenChange, hostState, busy, onInstall,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  missingHosts: Array<{ id: string; label: string }>;
   hostState: HostState;
   busy: NodeId | null;
-  onHostAction: (node: NodeId, action: HostAction) => void;
+  onInstall: (host: HostId) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Add an agent</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Icon name="user-plus" className="size-4 text-dim" />
+            Add an agent
+          </DialogTitle>
           <DialogDescription className="text-[11px] leading-relaxed">
-            Installing writes the Tersio tree for the agent and puts its node on the canvas.
+            The agent harnesses on this machine. Claude Code and Codex are coming soon.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">
           {HOSTS.map((host) => {
-            const installed = hostState.installed[host.id] !== false;
-            const missing = missingHosts.some((m) => m.id === host.id);
+            const present = hostState.present[host.id] !== false;
+            // Tersio's tree is what makes a host usable here, so a detected harness without it offers Install.
+            const linked = hostState.installed[host.id] === true;
+            const installing = busy === `host-${host.id}`;
             return (
-              <div key={host.id} className={cn("flex items-center gap-2 rounded-lg border px-2.5 py-2", installed ? "border-line" : "border-dashed border-line")}>
-                <AgentLogo host={host.id as "omp"} className="size-4 shrink-0" />
+              <div
+                key={host.id}
+                aria-disabled={!present}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border px-2.5 py-2",
+                  present ? "border-line" : "border-dashed border-line opacity-55",
+                )}
+              >
+                <AgentLogo host={host.id as "omp"} className={cn("size-4 shrink-0", !present && "grayscale")} />
                 <span className="min-w-0 flex-1 truncate text-[12px]">{host.label}</span>
-                <span
-                  className={cn(
-                    "mono flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[9px]",
-                    installed ? "border-success/40 text-success" : "border-line text-dim",
-                  )}
-                >
-                  <span aria-hidden="true" className={cn("size-1.5 rounded-full", installed ? "bg-success" : "bg-dim")} />
-                  {installed ? versionOf(hostState.versions[host.id]) ?? "installed" : "not installed"}
-                </span>
-                {!installed ? (
+                {present && !linked ? (
+                  <span className="mono shrink-0 text-[9px] text-dim">{versionOf(hostState.versions[host.id]) ?? ""}</span>
+                ) : null}
+                {linked ? (
+                  <span className="mono flex shrink-0 items-center gap-1 rounded border border-success/40 px-1.5 py-0.5 text-[9px] text-success">
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-success" />
+                    {versionOf(hostState.versions[host.id]) ?? "installed"}
+                  </span>
+                ) : present ? (
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy !== null || !missing}
-                    onClick={() => onHostAction(`host-${host.id}` as NodeId, "install")}
-                    className="h-7 gap-1.5 px-2 text-[11px]"
+                    disabled={busy !== null}
+                    onClick={() => onInstall(host.id)}
+                    className="h-6 shrink-0 gap-1 px-1.5 text-[10px]"
                   >
-                    {busy === `host-${host.id}` ? <Spinner className="size-3 text-accent" /> : <Icon name="plus" className="size-3.5" />}
-                    Install
+                    {installing ? <Spinner className="size-3" /> : <Icon name="plus" className="size-3" />}
+                    Add Agent
                   </Button>
-                ) : null}
+                ) : (
+                  <span className="mono flex shrink-0 items-center gap-1 rounded border border-line px-1.5 py-0.5 text-[9px] text-dim">
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-dim" />
+                    not installed
+                  </span>
+                )}
               </div>
             );
           })}
+          {UPCOMING_AGENTS.map((agent) => (
+            <div
+              key={agent.id}
+              aria-disabled="true"
+              className="flex items-center gap-2 rounded-lg border border-dashed border-line px-2.5 py-2 opacity-55"
+            >
+              <AgentLogo host={agent.id} className="size-4 shrink-0 grayscale" />
+              <span className="min-w-0 flex-1 truncate text-[12px]">{agent.name}</span>
+              <span className="mono shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] text-dim">coming soon</span>
+            </div>
+          ))}
         </div>
       </DialogContent>
     </Dialog>

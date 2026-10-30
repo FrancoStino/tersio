@@ -168,59 +168,68 @@ function CopyPin({ value, source }: { value: string; source: string }) {
   );
 }
 
-/** The three shapes of an upstream change, each with its own tone, so a scan reads the kind before the path. */
-const CHANGE_TONE: Record<string, string> = {
-  moved: "border-line text-dim",
-  new: "border-accent/40 text-accent",
-  gone: "border-[var(--danger-border)] text-[var(--danger)]",
-};
+/** The three shapes of an upstream change, in the order a review reads them: what changed, what arrived, what left. */
+const CHANGE_GROUPS: ReadonlyArray<{ key: "moved" | "appeared" | "gone"; label: string; tone: string }> = [
+  { key: "moved", label: "Changed since the pin", tone: "text-dim" },
+  { key: "appeared", label: "Added upstream", tone: "text-accent" },
+  { key: "gone", label: "Removed upstream", tone: "text-[var(--danger)]" },
+];
 
-/** One changed path: the kind on the left, the whole path on the right. Nothing truncates, because the tail is what differs. */
-function ChangeRow({ tag, path }: { tag: string; path: string }) {
+/** A list this short costs more to fold than to read, so it starts open. */
+const SHORT_GROUP = 5;
+
+/** One kind of change as its own fold, so a 400-path block cannot push the rest of the card off screen. */
+function ChangeGroup({ label, tone, paths }: { label: string; tone: string; paths: string[] }) {
+  if (paths.length === 0) return null;
   return (
-    <li className="grid grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2 px-3 py-1">
-      <span className={`mono rounded border px-1 text-center text-[10px] ${CHANGE_TONE[tag] ?? "border-line text-dim"}`}>{tag}</span>
-      <span className="mono text-[11px] leading-snug text-dim [overflow-wrap:anywhere]">{path}</span>
-    </li>
+    <details className="group" open={paths.length <= SHORT_GROUP}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 transition-colors hover:bg-track/40">
+        <Icon name="chevron-right" className="size-3 shrink-0 text-dim transition-transform group-open:rotate-90" />
+        <span className={`mono text-[10px] tracking-[0.14em] uppercase ${tone}`}>{label}</span>
+        <span className="mono text-[10px] tabular-nums text-dim">{fmt(paths.length)}</span>
+      </summary>
+      <ul className="m-0 grid list-none gap-1 pt-0.5 pr-3.5 pb-2.5 pl-9">
+        {paths.map((path) => (
+          <li key={path} className="mono text-[11px] leading-snug text-dim [overflow-wrap:anywhere]">
+            {path}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
-/** The head of one moved file, folded so a long list stays a list. */
+/** The head of one changed file, folded so a long list stays a list. */
 function PreviewFold({ preview }: { preview: Preview }) {
   return (
     <details className="group border-t border-line first:border-t-0">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 hover:bg-track/40">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-1.5 transition-colors hover:bg-track/40">
         <Icon name="chevron-right" className="size-3 shrink-0 text-dim transition-transform group-open:rotate-90" />
-        <span className="mono min-w-0 flex-1 text-[11px] leading-snug text-dim [overflow-wrap:anywhere]">{preview.path}</span>
-        <span className="mono shrink-0 text-[10px] text-dim">{preview.lines} lines</span>
+        <span className="mono min-w-0 flex-1 text-[11px] leading-snug text-dim [overflow-wrap:anywhere] group-hover:text-ink">{preview.path}</span>
+        <span className="mono shrink-0 text-[10px] text-dim">{fmt(preview.lines)} lines</span>
       </summary>
-      <pre className="mono m-0 max-h-64 overflow-auto border-t border-line bg-track/40 px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+      <pre className="mono m-0 max-h-64 overflow-auto border-t border-line bg-track/40 px-3.5 py-2 text-[10px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
         {preview.head}
       </pre>
     </details>
   );
 }
 
-/** One port's upstream drift: what moved, then the heads of the files behind it. */
+/** One port's upstream drift, laid out flat: every changed path under its own heading, then the heads of the files behind them. Only a file head folds, so nothing reads as a scroll box beside an accordion. */
 function MovedPort({ row }: { row: SourceRow }) {
-  const changes = [
-    ...row.moved.map((path) => ({ tag: "moved", path })),
-    ...row.appeared.map((path) => ({ tag: "new", path })),
-    ...row.gone.map((path) => ({ tag: "gone", path })),
-  ];
-  const counts = [
-    row.moved.length ? `${row.moved.length} moved` : "",
-    row.appeared.length ? `${row.appeared.length} new` : "",
-    row.gone.length ? `${row.gone.length} gone` : "",
-  ].filter(Boolean).join(" · ");
+  const total = row.moved.length + row.appeared.length + row.gone.length;
   return (
     <li className="overflow-hidden rounded-xl border border-line">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line px-3 py-2">
-        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line bg-track/20 px-3.5 py-2.5">
+        <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-bold tracking-tight">
           <span aria-hidden="true">{GLYPH[row.source] ?? "•"}</span>
           <span>{row.source}</span>
         </span>
-        {counts ? <span className="mono text-[10px] text-dim">{counts}</span> : null}
+        {total > 0 ? (
+          <span className="mono text-[10px] text-dim">
+            {fmt(total)} {total === 1 ? "path" : "paths"} changed
+          </span>
+        ) : null}
         <span className="ml-auto flex items-center gap-2">
           {row.link ? (
             <a
@@ -236,22 +245,23 @@ function MovedPort({ row }: { row: SourceRow }) {
           {row.candidate ? <CopyPin value={row.candidate} source={row.source} /> : null}
         </span>
       </div>
-      {row.note ? <p className="m-0 px-3 py-2 text-[11px] leading-snug text-dim">{row.note}</p> : null}
-      {changes.length > 0 ? (
-        <ul className="m-0 grid max-h-60 list-none overflow-auto p-0 py-1">
-          {changes.map((change) => (
-            <ChangeRow key={`${change.tag}-${change.path}`} tag={change.tag} path={change.path} />
-          ))}
-        </ul>
-      ) : null}
-      {row.preview.length > 0 ? (
-        <div className="border-t border-line">
-          <p className="mono m-0 px-3 pt-2 pb-1 text-[10px] tracking-[0.14em] text-dim uppercase">Preview</p>
-          {row.preview.map((preview) => (
-            <PreviewFold key={preview.path} preview={preview} />
-          ))}
-        </div>
-      ) : null}
+      <div className="divide-y divide-line">
+        {row.note ? <p className="m-0 px-3.5 py-2.5 text-[11px] leading-snug text-dim">{row.note}</p> : null}
+        {CHANGE_GROUPS.map((group) => (
+          <ChangeGroup key={group.key} label={group.label} tone={group.tone} paths={row[group.key]} />
+        ))}
+        {row.preview.length > 0 ? (
+          <div>
+            <p className="mono m-0 px-3.5 pt-2.5 pb-1 text-[10px] tracking-[0.14em] text-dim uppercase">
+              File heads
+              <span className="ml-2 text-dim normal-case">first lines of each changed file</span>
+            </p>
+            {row.preview.map((preview) => (
+              <PreviewFold key={preview.path} preview={preview} />
+            ))}
+          </div>
+        ) : null}
+      </div>
     </li>
   );
 }

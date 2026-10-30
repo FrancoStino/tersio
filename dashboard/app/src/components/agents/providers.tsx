@@ -25,6 +25,7 @@ import { EmptyState, Picker } from "@/components/common";
 import { TopUsedCards, type TopUsedEntry } from "./top-hero";
 import {
   PALETTE,
+  coverageNote,
   fmt,
   fmtShort,
   hourLabel,
@@ -133,6 +134,8 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
     () => agent.byProvider.reduce<AgentRow | null>((top, p) => (top === null || p.total > top.total ? p : top), null),
     [agent.byProvider],
   );
+  // A range wider than the store names where its records start.
+  const coverage = coverageNote(agent.byProvider, agent.cutoff);
   // The hero ranks by requests; its silhouette is the leader's own brand mark.
   const topEntries = useMemo<TopUsedEntry[]>(
     () =>
@@ -141,8 +144,8 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
         .slice(0, 3)
         .map((p) => ({
           name: p.provider,
-          detail: `${fmtShort(p.total)} tokens`,
           requests: p.requests,
+          tokens: p.total,
           share: p.requests / Math.max(1, totals.requests),
         })),
     [agent.byProvider, totals.requests],
@@ -152,7 +155,8 @@ export function ProvidersPage({ agent, money }: { agent: AgentStats; money: (v: 
     <Page>
       <PageHeader
         title="Providers"
-        description={`Burn, reliability and subscription headroom per provider over ${AGENT_RANGE_LABEL[agent.range]}.`}
+        description={`Burn, reliability and subscription headroom per provider over ${AGENT_RANGE_LABEL[agent.range]}.`
+          + (coverage ? ` · ${coverage}` : "")}
       />
 
       <StatGrid cols={5}>

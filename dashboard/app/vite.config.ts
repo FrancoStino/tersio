@@ -14,6 +14,8 @@ export default defineConfig({
   },
   // src/lib/carbon.ts reuses the CLI's EcoLogits port, so the dev server must read above dashboard/app.
   server: {
+    // Every interface, the same default the served dashboard uses, so a phone on this network can open the dev build.
+    host: true,
     fs: {
       allow: [path.resolve(import.meta.dirname, "../..")],
     },
