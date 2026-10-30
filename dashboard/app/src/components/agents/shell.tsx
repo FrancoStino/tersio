@@ -261,7 +261,7 @@ export function AppSidebar({
       <SidebarContent className="relative">
         <div
           aria-hidden="true"
-          className="dither-surface pointer-events-none absolute inset-0"
+          className="chrome-texture pointer-events-none absolute inset-0"
         />
         {NAV.map((group, groupIndex) => {
           // Every item stays visible: an item whose agent data is still missing renders dimmed and
@@ -381,7 +381,7 @@ export function Topbar({
     >
       <div
         aria-hidden="true"
-        className="dither-surface pointer-events-none absolute inset-0"
+        className="chrome-texture pointer-events-none absolute inset-0"
       />
       {/* The brand section spans the rail's width, so the nav rows below it line up under the wordmark. */}
       <div
@@ -546,7 +546,7 @@ export function Shell({
         {/* The whole content side sits in one huge card below the fixed topbar; the rail merges with that bg. */}
         <div className="shine relative min-h-[calc(100dvh-4rem)] overflow-clip rounded-xl border border-line bg-panel">
           <div
-            className={section === "how-to" ? "pointer-events-none absolute inset-0" : "ascii-grid pointer-events-none absolute inset-0"}
+            className="pointer-events-none absolute inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_80%_at_50%_0%,black_40%,transparent_88%)]"
             aria-hidden="true"
           />
           <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
