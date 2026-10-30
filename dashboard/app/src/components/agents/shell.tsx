@@ -23,6 +23,7 @@ export const DEFAULT_RANGE: AgentRange = "24h";
 /** The rail's drag handle; browser storage bridges a reload, tersio settings bridge a new port. */
 const SIDEBAR_WIDTH_KEY = "tersio-sidebar-width";
 const SIDEBAR_OPEN_KEY = "tersio-sidebar-open";
+/** ASCII plus-grid tile for the content card, and film grain for the bar/rail surface. */
 const clampSidebarWidth = (px: number): number => Math.min(420, Math.max(180, Math.round(px)));
 
 const RANGE_TEXT: Record<AgentRange, string> = {
@@ -257,7 +258,11 @@ export function AppSidebar({
     <Sidebar collapsible="icon" className="z-30 bg-transparent text-ink">
       {/* The brand lives in the topbar, which spans the rail; this spacer keeps nav rows below that bar. */}
       <SidebarHeader className="h-12 shrink-0" />
-      <SidebarContent>
+      <SidebarContent className="relative">
+        <div
+          aria-hidden="true"
+          className="grain-surface pointer-events-none absolute inset-0"
+        />
         {NAV.map((group, groupIndex) => {
           // Every item stays visible: an item whose agent data is still missing renders dimmed and
           // unclickable instead of vanishing, so the rail never degrades to bare labels and lines.
@@ -370,9 +375,14 @@ export function Topbar({
         // rail, so bar and sidebar share one surface and one color.
         "fixed top-0 right-0 left-0 z-40 flex h-12 items-center gap-2 border-b px-3 transition-[border-color] duration-200",
         "bar-veil",
+        "grain",
         scrolled ? "border-line" : "border-transparent",
       )}
     >
+      <div
+        aria-hidden="true"
+        className="grain-surface pointer-events-none absolute inset-0"
+      />
       {/* The brand section spans the rail's width, so the nav rows below it line up under the wordmark. */}
       <div
         className={cn(
@@ -536,7 +546,7 @@ export function Shell({
         {/* The whole content side sits in one huge card below the fixed topbar; the rail merges with that bg. */}
         <div className="shine relative min-h-[calc(100dvh-4rem)] overflow-clip rounded-xl border border-line bg-panel">
           <div
-            className="pointer-events-none absolute inset-0 [background-image:linear-gradient(var(--grid)_1px,transparent_1px),linear-gradient(90deg,var(--grid)_1px,transparent_1px)] [background-size:44px_44px] [mask-image:radial-gradient(ellipse_90%_70%_at_50%_0%,black_30%,transparent_75%)]"
+            className="ascii-grid pointer-events-none absolute inset-0"
             aria-hidden="true"
           />
           <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
