@@ -550,6 +550,7 @@ export function Shell({
             aria-hidden="true"
           />
           <main className="relative w-full max-w-full overflow-x-clip">{children}</main>
+          <div aria-hidden="true" className={cn("noise-veil", section === "how-to" && "hidden")} />
         </div>
       </SidebarInset>
       <Topbar
