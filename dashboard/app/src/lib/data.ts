@@ -673,9 +673,15 @@ export interface HeadroomWrapTarget {
   available: boolean;
 }
 
-export async function fetchWrapTargets(): Promise<Array<HeadroomWrapTarget> | null> {
-  const body = await apiJson<{ targets?: Array<HeadroomWrapTarget> }>("/api/headroom/wrap");
-  return body?.targets ?? null;
+export interface HeadroomWrapState {
+  targets: Array<HeadroomWrapTarget>;
+  proxy: { running: boolean; port: number };
+}
+
+export async function fetchWrapTargets(): Promise<HeadroomWrapState | null> {
+  const body = await apiJson<{ targets?: Array<HeadroomWrapTarget>; proxy?: { running: boolean; port: number } }>("/api/headroom/wrap");
+  if (!body?.targets) return null;
+  return { targets: body.targets, proxy: body.proxy ?? { running: false, port: 8787 } };
 }
 
 /** The canvas mirrors the wrap record in browser storage; the server copy stays the source of truth. */

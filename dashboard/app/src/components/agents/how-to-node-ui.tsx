@@ -587,13 +587,14 @@ function VersionPill({ version }: { version: string | null }) {
 export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "onHostAction">) {
   const [detail, setDetail] = useState<string | null>(null);
   const [wrapTargets, setWrapTargets] = useState<Array<HeadroomWrapTarget> | null>(null);
+  const [proxy, setProxy] = useState<{ running: boolean; port: number } | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
   // Which durable integrations the dashboard has installed; optimistic, kept across drawer opens.
   const [wrapped, setWrapped] = useState<Record<string, true>>(readStoredWraps);
   const [wrapBusy, setWrapBusy] = useState<string | null>(null);
   useEffect(() => {
     if (!open) return;
-    void fetchWrapTargets().then(setWrapTargets);
+    void fetchWrapTargets().then((state) => { setWrapTargets(state?.targets ?? null); setProxy(state?.proxy ?? null); });
     void fetchHealth().then(setHealth);
     void fetchHeadroomWraps().then((server) => {
       if (!server || typeof server !== 'object') return;
@@ -654,6 +655,13 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
               session only, so a shell alias keeps them covered. pi and PiG have no wrap target, so they
               route through headroom's one shared proxy instead — flip once, and the address to set is shown.
             </p>
+            {proxy ? (
+              <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-dim">
+                <span aria-hidden="true" className={cn("size-1.5 rounded-full", proxy.running ? "bg-success" : "bg-line")} />
+                shared proxy: {proxy.running ? `running on port ${proxy.port}` : "not running"}
+                <span className="text-dim/70">— serves pi, pig, and any agent you point at it</span>
+              </p>
+            ) : null}
             {wrapTargets === null ? (
               <Skeleton className="h-8 w-full rounded-md" />
             ) : (
