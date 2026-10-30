@@ -66,11 +66,11 @@ jobs:
       - name: Lint
         if: matrix.os == 'ubuntu-26.04'
         run: bun run lint
-      # Windows skips the dashboard build: the pack test is Linux-only now,
-      # and the single-file vite build is the slowest step on the runner.
+      # Windows builds the dashboard too: the export and drawer tests read the
+      # single-file bundle, so skipping it only moves the failure into the suite.
       - name: Type-check and test
         if: runner.os == 'Windows'
-        run: bunx tsc && bun run test
+        run: bunx tsc && bun run build:dashboard && bun run test
       - name: Build and test
         if: runner.os != 'Windows'
         run: bun run verify
