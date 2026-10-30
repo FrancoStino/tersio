@@ -36,6 +36,21 @@ Reviewed 2026-10-11. Each entry below is resolved in the repo, so its log entry 
 
 The entries below are editing and verification discipline. No test, lint rule, or config can pin them, because each one describes a choice made while writing the change rather than a state the repo ends in. They stay as written.
 
+## 2026-10-30 — A layout instruction was paraphrased, so the default view shipped stacked
+**What happened:** the user described the default node arrangement in words. I read "rtk at the bottom" as a vertical stack and shipped a column of modes. The user rejected it twice before the arrangement matched.
+**Root cause:** the instruction was converted to coordinates from memory instead of from the words, and the result was reported without comparing the rendered positions against the instruction.
+**Prevention rule:** when the user names a layout, write their words as a coordinate table first. Render it, read every node rect, and compare against that table before reporting it done.
+
+## 2026-10-30 — "Installed" in the dashboard meant Tersio's tree, so a real harness read as absent
+**What happened:** the Agents dialog and the Quick start canvas greyed OpenCode as `not installed` while `opencode` 2.2.2 ran on the machine. The dialog and the canvas both read `installed` from `/api/hosts`, which reports whether Tersio's extension tree exists under `~/.config/opencode/plugins`, not whether the host binary exists.
+**Root cause:** one word carried two meanings. The CLI needs the tree state to decide what an install would write; the page needed the harness state to show what the user has. The page reused the CLI field and never separated the two.
+**Prevention rule:** when a surface answers "is this agent installed", read the harness from the health probe's resolved binary path. Read `/api/hosts` only when the question is Tersio's own tree. If a field can answer two different questions, name the field after the one it answers.
+
+## 2026-10-30 — The dashboard host probe read only PATH, so it missed managed install dirs
+**What happened:** `healthJson()` resolved `omp`, `pi`, `pig`, and `opencode` by scanning `process.env.PATH`. `opencode` installs to `~/.opencode/bin`, which a login shell exports but a dashboard started from a service or GUI does not, so the host read as absent in that launch mode.
+**Root cause:** the probe predated `resolveHostBinary`, the helper the doctor already uses to check PATH plus each host's managed directory. The dashboard kept a private copy of the old search.
+**Prevention rule:** resolve a host binary with `resolveHostBinary(name, managedDir)` and pass the directory the installer owns. Never scan `process.env.PATH` alone for a tool Tersio may place somewhere else.
+
 ## 2026-10-23 — An update probe kept reading a path a migration had removed
 **What happened:** every `tersio update` reported "Ponytail: missing → bundled reinstall" and listed it as a change, because the probe still read the standalone package's `package.json` after Ponytail had moved inside the tersio package and the installer had learned to delete that sibling.
 **Root cause:** the migration changed where the files live and who deletes the old copy, but the read-side probe that reported their state was not migrated with it.
