@@ -1139,6 +1139,29 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       json(res, 200, { ok: bin !== null, targets, proxy: { running: state !== null || await proxyAnswers(), port: state?.port ?? HEADROOM_PROXY_PORT } });
       return;
     }
+    // Start or stop the shared proxy on demand; the wrap switches depend on it for the agents headroom cannot wrap.
+    if (req.url === '/api/headroom/proxy' && req.method === 'POST') {
+      const body = await bodyOf(req);
+      const bin = resolveHeadroomBinary();
+      if (!bin) {
+        json(res, 400, { ok: false, error: 'headroom is not installed' });
+        return;
+      }
+      if (body.action === 'stop') {
+        const stopped = stopOwnedProxy();
+        recordActivity('agent', stopped ? 'Headroom proxy stopped from the dashboard' : 'Headroom proxy stop skipped: nothing Tersio owns is running');
+        json(res, 200, { ok: true, running: false, detail: stopped ? 'the shared proxy is stopped' : 'nothing Tersio owns is running' });
+        return;
+      }
+      try {
+        const state = await ensureProxy(bin);
+        recordActivity('agent', 'Headroom proxy started from the dashboard', 'port ' + state.port);
+        json(res, 200, { ok: true, running: true, port: state.port, detail: 'the shared proxy is live on port ' + state.port });
+      } catch (e) {
+        json(res, 200, { ok: false, error: (e as Error).message });
+      }
+      return;
+    }
     // The automated wrap: one documented command per tool, run detached, so nobody copies it by hand.
     if (req.url === '/api/headroom/wrap' && req.method === 'POST') {
       const body = await bodyOf(req);

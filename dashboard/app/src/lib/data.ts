@@ -711,6 +711,11 @@ export async function postHeadroomWraps(wraps: Record<string, unknown>): Promise
   return (await apiJson<{ ok?: boolean }>("/api/headroom/wraps", { wraps }))?.ok === true;
 }
 
+/** Starts or stops the shared headroom proxy; the wrap switches rely on it for proxy-routed agents. */
+export async function postHeadroomProxy(action: "start" | "stop"): Promise<{ ok: boolean; running?: boolean; port?: number; detail?: string; error?: string } | null> {
+  return apiJson("/api/headroom/proxy", { action });
+}
+
 /** Runs headroom's documented wrap command for one tool, detached. */
 export async function postHeadroomWrap(name: string, action: "wrap" | "unwrap" = "wrap"): Promise<{ ok: boolean; detail: string; error?: string } | null> {
   return apiJson("/api/headroom/wrap", { name, action });
