@@ -10,11 +10,12 @@ import type { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { piAgentDir, pigAgentDir } from '../extensions/shared/utils.ts';
 import { routeLocalProvidersThroughProxy } from '../extensions/shared/headroom-proxy.ts';
-import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, proxyAnswers, proxyEnvLines, readProxyState, restoreRoutedProviders, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
+import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, PROXY_HOST_LABELS, proxyAnswers, proxyEnvLines, proxyHostPresent, readProxyState, restoreRoutedProviders, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
 import { setStoredWrap } from '../extensions/shared/headroom-wraps.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pricesCachePath } from '../extensions/shared/pricing.ts';
+import { PONYTAIL_VERSION } from './manifest.ts';
 import { isCurrencyCode } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import {
@@ -35,8 +36,9 @@ import { detectHosts } from './hosts.ts';
 import { findPackageRoot, homeDir, openCommand, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, ruleBodyProblem, tersioHome } from '../extensions/shared/utils.ts';
 import { tersioSettingsFile } from '../extensions/shared/plugin-settings.ts';
 import { BACKUP_KEEP, backupDir, backupDiskBytes, createDataBackup, dataSources, deleteDataBackup, listDataBackups, restoreDataBackup } from '../extensions/shared/snapshots.ts';
-import { resetCounts, resetStatistics } from './reset.ts';
 import { CAVEMAN_PIN, cachedScorecard, refreshScorecard, upstreamHistory } from './upstream.ts';
+import { resetCounts, resetStatistics } from './reset.ts';
+
 import { readBackupSchedule, syncUsageDb } from '../extensions/shared/usage-store.ts';
 import { agentDbPath, emptyRequestEntry, isAgentView, isRangeKey, readAgentRequestEntry, readAgentStats, readSessionTrace, statsDbPath } from '../extensions/shared/agent-stats.ts';
 import type { AgentStats, AgentView, RangeKey } from '../extensions/shared/agent-stats.ts';
@@ -88,6 +90,15 @@ export function lanUrls(port: number, host: string): string[] {
   return urls;
 }
 
+/** The ponytail version this build vendors, read from its package; null when the tree is absent. */
+function ponytailVersion(): string | null {
+  try {
+    const pkg = path.join(findPackageRoot(path.dirname(fileURLToPath(import.meta.url))), 'extensions', 'ponytail', 'package.json');
+    return (JSON.parse(readFileSync(pkg, 'utf8')) as { version?: string }).version ?? null;
+  } catch {
+    return null;
+  }
+}
 export interface DashboardOptions {
   port: number;
   /** Listen address: absent means every interface, `local` means loopback. */
@@ -475,6 +486,8 @@ export function healthJson(): string {
     provider: ompDefaultModel(),
     rtk: { present: rtkPresent, version: rtkPresent ? rtkVersion(rtkBin as string) : null, path: rtkBin || 'not found in PATH' },
     headroom: { present: headroomPresent, version: headroomPresent ? headroomVersion(headroomBin as string) : null, path: headroomBin || 'not found in PATH' },
+    // The shipped-build pins: what this dashboard's own tree carries, not what upstream released.
+    modes: { caveman: CAVEMAN_PIN.replace(/^v/, ''), ponytail: ponytailVersion(), pstack: null },
     home: tersioHomePath(),
   });
 }
@@ -1133,9 +1146,9 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const names = [...new Set([...(discovered?.map((entry) => entry.name) ?? []), ...staticNames, ...PROXY_HOSTS])];
       const targets = await Promise.all(names.map(async (name) => ({
         name,
-        label: discovered?.find((entry) => entry.name === name)?.label ?? name,
+        label: discovered?.find((entry) => entry.name === name)?.label ?? PROXY_HOST_LABELS[name] ?? name,
         kind: PROXY_HOSTS.includes(name) ? 'proxy' : 'wrap',
-        available: bin !== null && (PROXY_HOSTS.includes(name) || await binaryExists(WRAP_BINARY[name] ?? name)),
+        available: bin !== null && (PROXY_HOSTS.includes(name) ? proxyHostPresent(name) : await binaryExists(WRAP_BINARY[name] ?? name)),
       })));
       const state = readProxyState();
       json(res, 200, { ok: bin !== null, targets, proxy: { running: state !== null || await proxyAnswers(), port: state?.port ?? HEADROOM_PROXY_PORT } });
@@ -1178,7 +1191,6 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         if (body.action === 'unwrap') {
           const stopped = stopOwnedProxy();
           // The routed agent's config goes back too: OFF means fully off, not a dead endpoint.
-          const configFile = path.join(name === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json');
           const restored = restoreRoutedProviders(name);
           setStoredWrap(name, false);
           json(res, 200, { ok: true, detail: (stopped ? 'the headroom proxy Tersio started is stopped' : 'nothing Tersio owns is running; headroom' + String.fromCharCode(39) + 's own proxy is left alone') + (restored > 0 ? '; ' + name + ' provider config restored' : '') });
@@ -1186,10 +1198,10 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
         }
         try {
           // Same contract as the installer: route the agent's own loopback providers, keep originals for the unwrap.
-          const configFile = path.join(name === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json');
-          const probe = routeLocalProvidersThroughProxy(name, configFile, HEADROOM_PROXY_PORT);
+          const configFile = ['pi', 'pig'].includes(name) ? path.join(name === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json') : null;
+          const probe = configFile ? routeLocalProvidersThroughProxy(name, configFile, HEADROOM_PROXY_PORT) : null;
           const state = await ensureProxy(bin, probe?.upstream);
-          if (probe && state.port !== HEADROOM_PROXY_PORT) routeLocalProvidersThroughProxy(name, configFile, state.port);
+          if (probe && configFile && state.port !== HEADROOM_PROXY_PORT) routeLocalProvidersThroughProxy(name, configFile, state.port);
           setStoredWrap(name, true);
           const envs = proxyEnvLines(state.port);
           json(res, 200, { ok: true, detail: probe

@@ -5,12 +5,42 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { tersioHome } from './utils.ts';
+import { homeDir, tersioHome } from './utils.ts';
 
 const execFileP = promisify(execFile);
 
-/** The agents Tersio installs that headroom has no wrap target for; they route through the shared proxy. */
-export const PROXY_HOSTS: readonly string[] = ['pi', 'pig'];
+/** The agents headroom has no wrap target for; they route through the shared proxy. */
+export const PROXY_HOSTS: readonly string[] = ['pi', 'pig', 'commandcode', 'dsh'];
+
+/** The proxy-routed agents whose config formats Tersio can rewrite; the rest get the addresses to paste. */
+export const ROUTABLE_HOSTS: readonly string[] = ['pi', 'pig'];
+
+/** Home-relative markers that prove a proxy-routed agent is installed, per OS. */
+const PROXY_HOST_DIRS: Record<string, string> = {
+  pi: '.pi/agent',
+  pig: '.pig/agent',
+  commandcode: '.commandcode',
+  dsh: '.dsh',
+};
+
+/** Human names for the proxy-routed agents headroom's own help does not label. */
+export const PROXY_HOST_LABELS: Record<string, string> = {
+  pi: 'pi',
+  pig: 'PiG',
+  commandcode: 'CommandCode',
+  dsh: 'DSH (DeepSeek Harness)',
+};
+
+/** Whether a proxy-routed agent is installed: its home marker exists on this OS. */
+export function proxyHostPresent(name: string): boolean {
+  const rel = PROXY_HOST_DIRS[name];
+  if (!rel) return false;
+  try {
+    return fs.existsSync(path.join(homeDir(), rel));
+  } catch {
+    return false;
+  }
+}
 
 /** The address the proxy serves; headroom's own default. */
 export const HEADROOM_PROXY_PORT = 8787;
