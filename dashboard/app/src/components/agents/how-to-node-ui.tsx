@@ -24,7 +24,7 @@ import { cn } from "cn";
 import { UPCOMING_AGENTS } from "@/lib/agents";
 import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomProxy, type HeadroomWrapTarget, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
 import {
-  ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
+  ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
 import type { DefaultsPayload, HostAction, HostState, NodeId } from "./pipeline-model";
 import type { ModeState } from "./shell";
@@ -122,16 +122,13 @@ function NotInstalledNote({ tool }: { tool: string }) {
   );
 }
 
-function SurfaceHeader({ node, modes, hostState }: { node: NodeId; modes: ModeState | null; hostState: HostState }) {
+function SurfaceHeader({ node, version }: { node: NodeId; version?: string | null }) {
   const glyph = nodeGlyph(node);
-  const state = nodeState(node, modes, hostState);
   return (
     <span className="flex items-center gap-2">
       {glyph ? <span aria-hidden="true" className="text-[13px] leading-none">{glyph}</span> : null}
       <span className="min-w-0 truncate text-sm font-semibold">{nodeTitle(node)}</span>
-      <span className="mono ml-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-[9px] leading-none text-dim">
-        {state.label}
-      </span>
+      {version ? <span className="mono ml-auto shrink-0 rounded border border-success/40 px-1.5 py-0.5 text-[9px] leading-none text-success">{version}</span> : null}
     </span>
   );
 }
@@ -250,6 +247,10 @@ function AgentModes({ host, onSaved }: { host: HostId; onSaved: () => void }) {
 
 /** Mode nodes open a side drawer: the level list, and the scope the level writes to. */
 export function ModeDrawer({ node, open, onOpenChange, modes, hostState, busy, onSet }: NodeSurfaceProps) {
+  const [health, setHealth] = useState<HealthReport | null>(null);
+  useEffect(() => {
+    if (open) void fetchHealth().then(setHealth);
+  }, [open]);
   const key = (MODES.find((m) => m.key === node)?.key ?? "headroom") as keyof typeof PICKER;
   const picker = PICKER[key];
   const installed = HOSTS.filter((h) => hostState.installed[h.id] !== false).map((h) => h.id as HostId);
@@ -267,7 +268,7 @@ export function ModeDrawer({ node, open, onOpenChange, modes, hostState, busy, o
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
       <DrawerContent>
         <DrawerHeader className="border-b border-line pb-3.5 px-6 pt-4">
-          <DrawerTitle><SurfaceHeader node={node} modes={modes} hostState={hostState} /></DrawerTitle>
+          <DrawerTitle><SurfaceHeader node={node} version={health?.modes?.[node as "caveman"] ?? null} /></DrawerTitle>
           <DrawerDescription className="text-[11px] leading-relaxed">{ABOUT[node] ?? ""}</DrawerDescription>
         </DrawerHeader>
         <div className="grid min-h-0 flex-1 content-start gap-1.5 overflow-y-auto px-6 py-4 pb-5">
@@ -275,7 +276,8 @@ export function ModeDrawer({ node, open, onOpenChange, modes, hostState, busy, o
             <span className="mono text-[10px] tracking-[0.1em] text-dim uppercase">scope</span>
             <Select value={scope} onValueChange={(v) => setScope(v as HostId | "all")}>
               <SelectTrigger size="sm" className="ml-auto w-[170px]" aria-label="Who this level applies to">
-                <SelectValue />
+                {/* SelectValue needs children or it shows the raw value. */}
+                <SelectValue>{scope === "all" ? "All agents (shared)" : `${HOSTS.find((x) => x.id === scope)?.label ?? scope} only`}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -408,6 +410,7 @@ const WRAP_ICONS: Record<string, string> = {
 /** The wrap targets the house mark system has a slug (and brand accent) for. */
 const WRAP_SLUGS: Record<string, string> = {
   claude: "claudecode", copilot: "githubcopilot", cline: "cline",
+  commandcode: "commandcode", dsh: "deepseek",
 };
 
 function BrandMark({ name, className }: { name: string; className: string }) {
@@ -438,6 +441,7 @@ export function VendorFooter({
   const [busyLabel, setBusyLabel] = useState("");
   const [row, setRow] = useState<VendorRow | null>(null);
   const [proxy, setProxy] = useState<HeadroomProxyState | null>(null);
+  const [proxyBusy, setProxyBusy] = useState<"start" | "stop" | null>(null);
   useEffect(() => {
     if (!open) { setPhase("idle"); setRow(null); setProxy(null); }
   }, [open]);
@@ -453,21 +457,18 @@ export function VendorFooter({
   const busy = phase === "busy";
   const updateReady = phase === "update";
   const confirming = phase === "confirm-uninstall";
-  const dots = (
-    <span aria-hidden="true" className="flex items-center gap-0.5">
-      {[0, 1, 2].map((i) => (
-        <span key={i} className="size-1 rounded-full bg-current animate-bounce" style={{ animationDelay: `${i * 130}ms` }} />
-      ))}
-    </span>
-  );
+  const dots = <Spinner aria-hidden="true" className="size-3.5" />;
   const check = async (): Promise<void> => {
     setPhase("checking");
     const found = await checkVendor(source);
     setRow(found);
     setPhase(found?.upstream && found.pin !== found.upstream ? "update" : "idle");
+    // The answer reads as a toast: the footer no longer spends a permanent line on a transient fact.
+    if (found?.pin) toast(`${source} ${found.pin}`, found.upstream && found.upstream !== found.pin ? `latest ${found.upstream}` : "up to date", "check");
+    else toast(`${source} is not installed`, "Install it from the footer below.", "circle-alert");
   };
   const runVendor = async (action: "update" | "uninstall"): Promise<void> => {
-    setBusyLabel(action === "uninstall" ? `uninstalling ${tool}` : installed ? `updating ${tool}` : `installing ${tool}`);
+    setBusyLabel(action === "uninstall" ? `Uninstalling ${tool}` : installed ? `Updating ${tool}` : `Installing ${tool}`);
     setPhase("busy");
     const result = await postVendorAction(tool, action);
     if (!result?.ok) {
@@ -498,6 +499,22 @@ export function VendorFooter({
     else if (result?.ok) toast("Proxy kept running", result.kept ?? "it was not started by Tersio", "circle-alert");
     setProxy(await fetchHeadroomProxy());
   };
+  const toggleProxy = async (): Promise<void> => {
+    const action = proxy?.running ? "stop" : "start";
+    setProxyBusy(action);
+    try {
+      if (action === "stop") {
+        await stopProxy();
+        return;
+      }
+      const res = await postHeadroomProxy("start");
+      if (res?.ok) toast("Headroom proxy started", res.detail ?? "", "check");
+      else toast("Could not start the proxy", res?.error ?? "the dashboard server did not answer", "circle-alert");
+      setProxy(await fetchHeadroomProxy());
+    } finally {
+      setProxyBusy(null);
+    }
+  };
   const openDashboard = (): void => {
     // A plain navigation tab: the route probes (and may start) Headroom's proxy, so nothing is popup-blocked.
     const tab = window.open("/headroom/dashboard", "_blank");
@@ -521,7 +538,7 @@ export function VendorFooter({
             </Button>
           ) : (
             <Button size="sm" variant="outline" disabled={busy || phase === "confirm-uninstall"} onClick={() => void check()} className="w-full gap-1.5">
-              {phase === "checking" ? "checking" : row ? "check again" : "Check for updates"}
+              {phase === "checking" ? "Checking" : row ? "Check again" : "Check for updates"}
               {phase === "checking" ? dots : <Icon name="refresh-cw" className="size-3.5" />}
             </Button>
           )
@@ -550,36 +567,30 @@ export function VendorFooter({
         )}
       </div>
       {tool === "headroom" && installed ? (
-        <div className="flex w-full items-center gap-1.5">
-          <Button size="sm" variant="outline" disabled={busy} onClick={openDashboard} className="min-w-0 flex-1 gap-1.5">
+        <div className="flex w-full items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5">
+          <Button size="sm" variant="ghost" disabled={busy} onClick={openDashboard} className="min-w-0 flex-1 gap-1.5">
             <Icon name="gauge" className="size-3.5" />
-            Headroom dashboard
+            <span className="truncate">Headroom dashboard</span>
           </Button>
           <span
             aria-hidden="true"
-            className={cn("size-1 shrink-0 rounded-full", proxy?.running ? "bg-success" : "bg-line")}
+            className={cn("mr-0.5 size-1 shrink-0 rounded-full", proxy?.running ? "bg-success" : "bg-line")}
           />
           <span className="sr-only">{proxy?.running ? "headroom proxy running" : "headroom proxy not running"}</span>
-          {proxy?.running ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => void stopProxy()}
-              aria-label="Stop the headroom proxy"
-              title="Stop the headroom proxy"
-              className="shrink-0 px-2"
-            >
-              <Icon name="circle-stop" className="size-3.5" />
-            </Button>
-          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy || proxyBusy !== null}
+            onClick={() => void toggleProxy()}
+            aria-label={proxy?.running ? "Stop the headroom proxy" : "Start the headroom proxy"}
+            title={proxy?.running ? "Stop the headroom proxy" : "Start the headroom proxy"}
+            className="shrink-0 gap-1.5"
+          >
+            {proxyBusy === "start" ? "starting\u2026" : proxyBusy === "stop" ? "stopping\u2026" : proxy?.running ? "Stop proxy" : "Start proxy"}
+          </Button>
         </div>
       ) : null}
-      {row && installed ? (
-        <p className="mono m-0 text-center text-[9px] text-dim">
-          {row.pin ?? "not installed"}{row.upstream ? ` · latest ${row.upstream}` : ""}
-        </p>
-      ) : null}
+
     </DrawerFooter>
   );
 }
@@ -605,6 +616,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
         key={target.name}
         className={cn(
           "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors",
+          target.kind === "proxy" && "border-dashed",
           on ? "border-success/30 bg-success/5" : "border-line",
         )}
       >
@@ -697,21 +709,23 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
               Two ways to route a tool: headroom's own durable integration where it exists, and one shared proxy for
               everything else. Every switch below runs the real command — nothing to copy by hand except the proxy addresses.
             </p>
-            <div className="mt-1 border-t border-line pt-3.5">
-              <p className="mono m-0 text-[9px] tracking-[0.14em] text-dim uppercase">Durable integration</p>
-              <p className="m-0 mt-0.5 text-[10px] leading-relaxed text-dim">Headroom edits the tool's own config, so the route survives every restart. Claude, Codex, Copilot, and OpenClaw install this way; the rest wrap the session only.</p>
-              <div className="mt-2 grid gap-1">
-                {wrapTargets === null ? (
-                  <Skeleton className="h-8 w-full rounded-md" />
-                ) : (
-                  wrapTargets.filter((target) => target.available && target.kind !== "proxy").map((target) => renderRow(target))
-                )}
-              </div>
-            </div>
-
-            <div className="mt-1 border-t border-line pt-3.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="mono m-0 text-[9px] tracking-[0.14em] text-dim uppercase">Shared proxy</p>
+            {wrapTargets === null ? (
+              <Skeleton className="h-8 w-full rounded-md" />
+            ) : (
+              <div className="grid gap-1">
+                {wrapTargets.filter((target) => target.available && target.kind !== "proxy").map((target) => renderRow(target))}
+                {wrapTargets.filter((target) => target.available && target.kind === "proxy").length > 0 ? (
+                  <div className="my-1 flex items-center gap-2" aria-hidden="true">
+                    <span className="mono shrink-0 text-[9px] tracking-[0.14em] text-dim uppercase">via shared proxy</span>
+                    <span className="h-px flex-1 border-t border-dashed border-line" />
+                  </div>
+                ) : null}
+            <div className="rounded-xl border border-line bg-track/20 p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+                <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-dim">
+                  <span aria-hidden="true" className={cn("size-1.5 rounded-full", proxy?.running ? "bg-success" : "bg-line")} />
+                  shared proxy: {proxy?.running ? `running on port ${proxy.port}` : "not running"}
+                </p>
                 <Button
                   size="xs"
                   variant="outline"
@@ -721,8 +735,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
                     setProxyBusy(action);
                     void postHeadroomProxy(action)
                       .then(async (res) => {
-                        if (res?.ok) setDetail(res.detail ?? (action === "start" ? "the shared proxy is live" : "the shared proxy is stopped"));
-                        else setDetail(res?.error ?? "the dashboard server did not answer");
+                        setDetail(res?.ok ? res.detail ?? (action === "start" ? "the shared proxy is live" : "the shared proxy is stopped") : res?.error ?? "the dashboard server did not answer");
                         const state = await fetchWrapTargets();
                         setWrapTargets(state?.targets ?? null);
                         setProxy(state?.proxy ?? null);
@@ -730,15 +743,10 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
                       .finally(() => setProxyBusy(null));
                   }}
                 >
-                  {proxyBusy ? (proxyBusy === "start" ? "starting…" : "stopping…") : proxy?.running ? "Stop proxy" : "Start proxy"}
+                  {proxyBusy ? (proxyBusy === "start" ? "starting\u2026" : "stopping\u2026") : proxy?.running ? "Stop proxy" : "Start proxy"}
                 </Button>
               </div>
-              <p className="m-0 mt-0.5 text-[10px] leading-relaxed text-dim">One local proxy serves every agent, including the ones headroom cannot wrap. Copy an address into the agent's provider settings; both point at the same proxy.</p>
               <div className="mt-2 grid gap-1.5">
-                <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-dim">
-                  <span aria-hidden="true" className={cn("size-1.5 rounded-full", proxy?.running ? "bg-success" : "bg-line")} />
-                  {proxy?.running ? `running on port ${proxy.port}` : "not running"}
-                </p>
                 {COPY_URLS.map((entry) => (
                   <button
                     key={entry.label}
@@ -749,7 +757,7 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
                         setTimeout(() => setCopied((held) => (held === entry.label ? null : held)), 1500);
                       });
                     }}
-                    className="mono flex min-w-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-left text-[10px] text-dim transition-colors hover:border-accent/40 hover:text-ink"
+                    className="mono flex min-w-0 items-center gap-1.5 rounded-md border border-line bg-panel px-2 py-1 text-left text-[10px] text-dim transition-colors hover:border-accent/40 hover:text-ink"
                     title={"Copy " + entry.value}
                     aria-label={"Copy " + entry.label}
                   >
@@ -758,14 +766,16 @@ export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved
                     <span className="ml-auto shrink-0 text-[9px] text-dim">{copied === entry.label ? "copied" : entry.label}</span>
                   </button>
                 ))}
-                {wrapTargets === null ? (
-                  <Skeleton className="h-8 w-full rounded-md" />
-                ) : (
-                  wrapTargets.filter((target) => target.available && target.kind === "proxy").map((target) => renderRow(target))
-                )}
               </div>
             </div>
-
+                {wrapTargets.filter((target) => target.available && target.kind === "proxy").map((target) => renderRow(target))}
+                {wrapTargets.filter((target) => target.available).length === 0 ? (
+                  <p className="mono m-0 rounded-md border border-dashed border-line px-2.5 py-2 text-[10px] leading-relaxed text-dim">
+                    headroom is not installed on this machine — install it from the footer below, then its tools join this list
+                  </p>
+                ) : null}
+              </div>
+            )}
             {wrapBusy !== null ? (
               <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-accent">
                 <Spinner className="size-3" /> wrapping {wrapBusy}…
