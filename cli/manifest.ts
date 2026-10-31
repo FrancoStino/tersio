@@ -41,6 +41,7 @@ export const TREE_FILES: readonly string[] = [
   'shared/utils.ts',
   'shared/rtk-eligible.ts',
   'shared/updater.ts',
+  'shared/headroom-proxy.ts',
   'caveman/index.ts',
   'caveman/caveman.ts',
   'caveman/rule.md',

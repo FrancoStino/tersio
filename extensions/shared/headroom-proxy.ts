@@ -24,6 +24,8 @@ export interface HeadroomProxyState {
   pid: number;
   port: number;
   startedAt: number;
+  /** The OpenAI-shaped upstream this proxy forwards to, so a restart keeps the same route. */
+  openaiTarget?: string;
 }
 
 /** The proxy Tersio started, when its process is still alive. */
@@ -57,11 +59,18 @@ export async function proxyAnswers(port: number = HEADROOM_PROXY_PORT, budgetMs 
  * One proxy for every agent: reuse a live one, else start a detached one and record it.
  * Returns the port an agent should point at, and whether Tersio owns the process.
  */
-export async function ensureProxy(bin: string): Promise<{ port: number; owned: boolean; started: boolean }> {
+export async function ensureProxy(bin: string, openaiTarget?: string): Promise<{ port: number; owned: boolean; started: boolean }> {
   const existing = readProxyState();
   if (existing && (await proxyAnswers(existing.port))) return { port: existing.port, owned: true, started: false };
   if (await proxyAnswers(HEADROOM_PROXY_PORT)) return { port: HEADROOM_PROXY_PORT, owned: false, started: false };
-  const child = spawn(bin, ['proxy'], { detached: true, stdio: 'ignore', windowsHide: true });
+  // The recorded upstream wins: a proxy restarted for a routed agent must forward to the same place.
+  const target = openaiTarget ?? existing?.openaiTarget;
+  const child = spawn(bin, ['proxy'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: target ? { ...process.env, OPENAI_TARGET_API_URL: target } : process.env,
+  });
   child.unref();
   // A cold start loads the model set; wait past the first seconds before giving up.
   for (let tick = 0; tick < 60; tick += 1) {
@@ -69,7 +78,7 @@ export async function ensureProxy(bin: string): Promise<{ port: number; owned: b
     if (await proxyAnswers(HEADROOM_PROXY_PORT, 500)) {
       try {
         fs.mkdirSync(path.dirname(proxyStateFile()), { recursive: true });
-        fs.writeFileSync(proxyStateFile(), JSON.stringify({ pid: child.pid ?? 0, port: HEADROOM_PROXY_PORT, startedAt: Date.now() }));
+        fs.writeFileSync(proxyStateFile(), JSON.stringify({ pid: child.pid ?? 0, port: HEADROOM_PROXY_PORT, startedAt: Date.now(), openaiTarget: target }));
       } catch { /* the proxy still runs; only the record is missing */ }
       return { port: HEADROOM_PROXY_PORT, owned: true, started: true };
     }
@@ -122,4 +131,88 @@ export async function discoverWrapTargets(bin: string, timeoutMs = 15_000): Prom
     if (match) targets.push({ name: match[1], label: match[2].trim() });
   }
   return targets.length > 0 ? targets : null;
+}
+
+/** Where a routed agent's original provider addresses are kept, so an unwrap can put them back. */
+function providerRoutesFile(): string {
+  return path.join(tersioHome(), 'headroom-routes.json');
+}
+
+export interface ProviderRoute {
+  /** The agent the config belongs to: the directory name under ~/.<agent>/agent. */
+  agent: string;
+  /** The models.json the provider lives in. */
+  file: string;
+  /** provider name -> the baseUrl it had before the proxy took the route. */
+  original: Record<string, string>;
+}
+
+/** The recorded routes, so an unwrap restores exactly what the install changed. */
+function readProviderRoutes(): ProviderRoute[] {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(providerRoutesFile(), 'utf8'));
+    return Array.isArray(parsed) ? parsed as ProviderRoute[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Point the agent's loopback providers at the proxy and keep their originals for the unwrap.
+ * Only fires when every loopback provider shares one origin, since one proxy forwards to one upstream;
+ * with mixed origins the caller falls back to printing the addresses instead.
+ * Returns the origin the proxy must forward to, or null when the config was left alone.
+ */
+export function routeLocalProvidersThroughProxy(agent: string, file: string, proxyPort: number): { upstream: string; providers: string[] } | null {
+  let doc: { providers?: Record<string, { baseUrl?: string }> } = {};
+  try {
+    doc = JSON.parse(fs.readFileSync(file, 'utf8')) as { providers?: Record<string, { baseUrl?: string }> };
+  } catch {
+    return null;
+  }
+  const providers = doc.providers ?? {};
+  const loopback = Object.entries(providers).filter(([, p]) => (p.baseUrl ?? '').startsWith('http://127.0.0.1') || (p.baseUrl ?? '').startsWith('http://localhost'));
+  if (loopback.length === 0) return null;
+  const origins = new Set(loopback.map(([, p]) => new URL(p.baseUrl ?? '').origin));
+  if (origins.size !== 1) return null;
+  const upstream = loopback[0][1].baseUrl ?? '';
+  const record: ProviderRoute = { agent, file, original: {} };
+  for (const [name, p] of loopback) {
+    record.original[name] = p.baseUrl ?? '';
+    p.baseUrl = `http://127.0.0.1:${proxyPort}/v1`;
+  }
+  try {
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+  } catch {
+    return null;
+  }
+  const routes = readProviderRoutes().filter((r) => r.file !== file);
+  routes.push(record);
+  try {
+    fs.mkdirSync(path.dirname(providerRoutesFile()), { recursive: true });
+    fs.writeFileSync(providerRoutesFile(), JSON.stringify(routes, null, 2), 'utf8');
+  } catch { /* the route is live; only the undo record is missing */ }
+  return { upstream, providers: loopback.map(([name]) => name) };
+}
+
+/** Put every provider address the install changed back the way it was. */
+export function restoreRoutedProviders(agent?: string): number {
+  const routes = readProviderRoutes().filter((r) => agent === undefined || r.agent === agent);
+  let restored = 0;
+  for (const route of routes) {
+    try {
+      const doc = JSON.parse(fs.readFileSync(route.file, 'utf8')) as { providers?: Record<string, { baseUrl?: string }> };
+      for (const [name, baseUrl] of Object.entries(route.original)) {
+        if (doc.providers?.[name]) doc.providers[name].baseUrl = baseUrl;
+      }
+      fs.writeFileSync(route.file, JSON.stringify(doc, null, 2) + '\n', 'utf8');
+      restored += 1;
+    } catch { /* the config is gone; nothing to restore */ }
+  }
+  try {
+    const left = readProviderRoutes().filter((r) => agent === undefined || !routes.some((done) => done.file === r.file));
+    if (left.length === 0) fs.rmSync(providerRoutesFile(), { force: true });
+    else fs.writeFileSync(providerRoutesFile(), JSON.stringify(left, null, 2), 'utf8');
+  } catch { /* best effort */ }
+  return restored;
 }

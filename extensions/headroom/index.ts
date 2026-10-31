@@ -5,6 +5,7 @@ import { hostIdOf, injectPromptText, onHostEvent, sessionChangeEvents, setExtens
 import { announceStatus } from '../shared/status.ts';
 import { readHeadroomDefault } from '../shared/plugin-settings.ts';
 import { resolveHeadroomBinary } from '../shared/utils.ts';
+import { ensureProxy, readProxyState, proxyAnswers } from '../shared/headroom-proxy.ts';
 import type { ExtensionApi, ExtensionCtx, InputEvent, SessionEntry, SystemPromptEvent } from '../shared/types.ts';
 
 const DEFAULT_MODE = 'off';
@@ -89,6 +90,12 @@ export default function headroomSessionExtension(pi: ExtensionApi): void {
   // Start, resume, and branch all land here, so every session type shows it.
   pi.on('session_start', async (_event, ctx) => {
     restoreMode(ctx);
+    // Self-heal the shared proxy: a reboot or crash leaves pi-bolt pointing at a dead port, and the
+    // first session to start is the cheapest place to bring it back. Fire-and-forget; never blocks.
+    if (currentMode !== 'off' && readProxyState() !== null && !await proxyAnswers(readProxyState()!.port, 300)) {
+      const bin = resolveHeadroomBinary();
+      if (bin) void ensureProxy(bin).catch(() => undefined);
+    }
   });
 
   // The host adapter names the switch events it emits, so this stays free of any one host's naming.
