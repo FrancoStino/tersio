@@ -25,7 +25,7 @@ import {
   RTK_RELEASE_API, fetchJson, findFile, httpsGet,
   httpsDownload, parseChecksum, piAgentDir, pigAgentDir, readTextIfExists, resolveHeadroomBinary, resolveHostBinary, resolveRtkBinary, rtkPlatformSpec, sha256File, shimCommand,
 } from '../extensions/shared/utils.ts';
-import { ensureProxy, proxyEnvLines } from '../extensions/shared/headroom-proxy.ts';
+import { ensureProxy, proxyEnvLines, restoreRoutedProviders, routeLocalProvidersThroughProxy } from '../extensions/shared/headroom-proxy.ts';
 import { setStoredWrap } from '../extensions/shared/headroom-wraps.ts';
 import type { RtkRelease, RtkReleaseAsset } from '../extensions/shared/utils.ts';
 import { patchState } from '../extensions/shared/state.ts';
@@ -579,13 +579,26 @@ async function maybeInstallHeadroom(profile: Profile, quiet: boolean, host: Host
       ], 'proxy');
       if (answer.status === 'selected' && answer.value === 'proxy') {
         try {
-          const state = await ensureProxy(bin);
+          // Route the agent's own loopback providers through the proxy: the connection exists before
+          // the first session, not after the user pastes env lines.
+          const configFile = path.join(host === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json');
+          const probe = routeLocalProvidersThroughProxy(host, configFile, 8787);
+          const state = await ensureProxy(bin, probe?.upstream);
           setStoredWrap(host, true);
-          const envs = proxyEnvLines(state.port);
-          console.log(`  Headroom — proxy live on port ${state.port} (shared by every agent); the switch in the dashboard drawer records it`);
-          for (const env of envs) console.log(`    ${env}`);
+          if (probe && state.port !== 8787) {
+            // A non-default port means the provider config must point there too.
+            routeLocalProvidersThroughProxy(host, configFile, state.port);
+          }
+          if (probe) {
+            console.log(`  Headroom — proxy live on port ${state.port}; ${probe.providers.join(', ')} now route through it (originals saved for the unwrap)`);
+          } else {
+            const envs = proxyEnvLines(state.port);
+            console.log(`  Headroom — proxy live on port ${state.port} (shared by every agent)`);
+            for (const env of envs) console.log(`    ${env}`);
+          }
           return true;
         } catch (e) {
+          restoreRoutedProviders(host);
           sayTagged(`  [warn] ${(e as Error).message}`);
           return false;
         }

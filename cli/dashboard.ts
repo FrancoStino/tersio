@@ -8,7 +8,9 @@ import http from 'node:http';
 import os from 'node:os';
 import type { Socket } from 'node:net';
 import { gzipSync } from 'node:zlib';
-import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, proxyAnswers, proxyEnvLines, readProxyState, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
+import { piAgentDir, pigAgentDir } from '../extensions/shared/utils.ts';
+import { routeLocalProvidersThroughProxy } from '../extensions/shared/headroom-proxy.ts';
+import { discoverWrapTargets, ensureProxy, HEADROOM_PROXY_PORT, PROXY_HOSTS, proxyAnswers, proxyEnvLines, readProxyState, restoreRoutedProviders, stopOwnedProxy } from '../extensions/shared/headroom-proxy.ts';
 import { setStoredWrap } from '../extensions/shared/headroom-wraps.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1175,16 +1177,26 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       if (PROXY_HOSTS.includes(name)) {
         if (body.action === 'unwrap') {
           const stopped = stopOwnedProxy();
+          // The routed agent's config goes back too: OFF means fully off, not a dead endpoint.
+          const configFile = path.join(name === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json');
+          const restored = restoreRoutedProviders(name);
           setStoredWrap(name, false);
-          json(res, 200, { ok: true, detail: stopped ? 'the headroom proxy Tersio started is stopped' : 'nothing Tersio owns is running; headroom' + String.fromCharCode(39) + 's own proxy is left alone' });
+          json(res, 200, { ok: true, detail: (stopped ? 'the headroom proxy Tersio started is stopped' : 'nothing Tersio owns is running; headroom' + String.fromCharCode(39) + 's own proxy is left alone') + (restored > 0 ? '; ' + name + ' provider config restored' : '') });
           return;
         }
         try {
-          const state = await ensureProxy(bin);
+          // Same contract as the installer: route the agent's own loopback providers, keep originals for the unwrap.
+          const configFile = path.join(name === 'pig' ? pigAgentDir() : piAgentDir(), 'models.json');
+          const probe = routeLocalProvidersThroughProxy(name, configFile, HEADROOM_PROXY_PORT);
+          const state = await ensureProxy(bin, probe?.upstream);
+          if (probe && state.port !== HEADROOM_PROXY_PORT) routeLocalProvidersThroughProxy(name, configFile, state.port);
           setStoredWrap(name, true);
           const envs = proxyEnvLines(state.port);
-          json(res, 200, { ok: true, detail: name + ' routes through the headroom proxy on port ' + state.port + ' - set ' + envs[0] + ' (or ' + envs[1] + ') in the agent' + String.fromCharCode(39) + 's environment; one proxy serves every agent' });
+          json(res, 200, { ok: true, detail: probe
+            ? name + ' now routes through the headroom proxy on port ' + state.port + ' (' + probe.providers.join(', ') + '); the switch undoes it'
+            : name + ' routes through the headroom proxy on port ' + state.port + ' - set ' + envs[0] + ' (or ' + envs[1] + ') in the agent' + String.fromCharCode(39) + 's environment; one proxy serves every agent' });
         } catch (e) {
+          restoreRoutedProviders(name);
           json(res, 200, { ok: false, error: (e as Error).message });
         }
         return;
