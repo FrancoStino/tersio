@@ -1144,9 +1144,12 @@ async function runDashboard(options: DashboardOptions): Promise<void> {
       const discovered = bin !== null ? await discoverWrapTargets(bin) : null;
       const staticNames = WRAP_TARGETS.filter((name) => !PROXY_HOSTS.includes(name));
       const names = [...new Set([...(discovered?.map((entry) => entry.name) ?? []), ...staticNames, ...PROXY_HOSTS])];
+      // Harness labels read clean: no parenthetical vendors, no CLI suffixes, first letter capped.
+      const cleanLabel = (label: string): string =>
+        label.replace(/\s*\([^)]*\)/g, "").replace(/\s+CLI$/i, "").replace(/^./, (c) => c.toUpperCase()).trim();
       const targets = await Promise.all(names.map(async (name) => ({
         name,
-        label: discovered?.find((entry) => entry.name === name)?.label ?? PROXY_HOST_LABELS[name] ?? name,
+        label: cleanLabel(discovered?.find((entry) => entry.name === name)?.label ?? PROXY_HOST_LABELS[name] ?? name),
         kind: PROXY_HOSTS.includes(name) ? 'proxy' : 'wrap',
         available: bin !== null && (PROXY_HOSTS.includes(name) ? proxyHostPresent(name) : await binaryExists(WRAP_BINARY[name] ?? name)),
       })));

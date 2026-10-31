@@ -28,7 +28,7 @@ export const PROXY_HOST_LABELS: Record<string, string> = {
   pi: 'pi',
   pig: 'PiG',
   commandcode: 'CommandCode',
-  dsh: 'DSH (DeepSeek Harness)',
+  dsh: 'DeepSeek Harness',
 };
 
 /** Whether a proxy-routed agent is installed: its home marker exists on this OS. */
