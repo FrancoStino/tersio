@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "../toaster";
 import { cn } from "cn";
 import { UPCOMING_AGENTS } from "@/lib/agents";
-import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, type HeadroomWrapTarget, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
+import { checkVendor, fetchHeadroomProxy, fetchHeadroomWraps, fetchHealth, fetchWrapTargets, postHeadroomProxy, type HeadroomWrapTarget, postHeadroomWrap, postHeadroomWraps, postVendorAction, readStoredWraps, stopHeadroomProxy, storeWraps, type HeadroomProxyState, type HealthReport, type VendorRow } from "@/lib/data";
 import {
   ABOUT, DEFAULT_ROWS_UI, HOSTS, MODES, OFF_DEFAULTS, PICKER, nodeGlyph, nodeState, nodeTitle, nodeValue, versionOf,
 } from "./pipeline-model";
@@ -42,6 +42,12 @@ export interface NodeSurfaceProps {
   onHostAction: (node: NodeId, action: HostAction) => void;
   onSaved: () => void;
 }
+
+/** The two addresses any agent needs to route through the shared proxy; the drawer copies them. */
+const COPY_URLS: ReadonlyArray<{ label: string; value: string }> = [
+  { label: "Anthropic", value: "ANTHROPIC_BASE_URL=http://127.0.0.1:8787" },
+  { label: "OpenAI", value: "OPENAI_BASE_URL=http://127.0.0.1:8787/v1" },
+];
 
 /** One selectable level card: label, optional hint, and a check that pops in on select. */
 function LevelCard({
@@ -584,10 +590,48 @@ function VersionPill({ version }: { version: string | null }) {
 }
 
 /** The headroom node opens the wrap drawer: one switch per installed tool, run by Tersio itself. */
-export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "onHostAction">) {
+export function HeadroomDrawer({ open, onOpenChange, modes, busy, onSet, onSaved }: Omit<NodeSurfaceProps, "node" | "hostState" | "onHostAction">) {
   const [detail, setDetail] = useState<string | null>(null);
   const [wrapTargets, setWrapTargets] = useState<Array<HeadroomWrapTarget> | null>(null);
   const [proxy, setProxy] = useState<{ running: boolean; port: number } | null>(null);
+  const [proxyBusy, setProxyBusy] = useState<"start" | "stop" | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  /** One tool row, shared by the durable list and the proxy list. */
+  const renderRow = (target: HeadroomWrapTarget) => {
+    const on = wrapped[target.name] === true;
+    return (
+      <div
+        key={target.name}
+        className={cn(
+          "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors",
+          on ? "border-success/30 bg-success/5" : "border-line",
+        )}
+      >
+        {HOSTS.some((h) => h.id === target.name)
+          ? <AgentLogo host={target.name as "omp"} className="size-3.5 shrink-0" />
+          : <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />}
+        <span className={cn("mono min-w-0 flex-1 truncate text-[11px]", on ? "text-ink" : "text-dim")}>{target.label ?? target.name}</span>
+        <span className={cn("mono shrink-0 rounded border px-1 py-0.5 text-[9px]", on ? "border-success/40 text-success" : "border-line text-dim")}>
+          {on ? (target.kind === "proxy" ? "routed" : "wrapped") : target.kind === "proxy" ? "via proxy" : "ready"}
+        </span>
+        <span className="relative inline-flex">
+          <Switch
+            size="sm"
+            checked={on}
+            disabled={!target.available || wrapBusy !== null || !headroomInstalled}
+            onCheckedChange={(next: boolean) => toggleWrap(target.name, next)}
+            aria-label={(target.kind === "proxy" ? "Route " : "Wrap ") + target.name + " through headroom"}
+          />
+          {wrapBusy === target.name ? (
+            <span className="absolute inset-0 grid place-items-center">
+              <Spinner className="size-3 text-accent" />
+            </span>
+          ) : null}
+        </span>
+      </div>
+    );
+  };
   const [health, setHealth] = useState<HealthReport | null>(null);
   // Which durable integrations the dashboard has installed; optimistic, kept across drawer opens.
   const [wrapped, setWrapped] = useState<Record<string, true>>(readStoredWraps);
@@ -650,72 +694,78 @@ export function HeadroomDrawer({ open, onOpenChange, modes, hostState, busy, onS
               <span className="mono ml-auto shrink-0 rounded border border-accent/40 px-1.5 py-0.5 text-[9px] text-accent">recommended</span>
             </p>
             <p className="m-0 text-[10px] leading-relaxed text-dim">
-              Flip the switch and Tersio runs headroom's own integration — no terminal, nothing to copy.
-              claude, codex, copilot, and openclaw install durably (`headroom init -g`); the rest wrap that
-              session only, so a shell alias keeps them covered. pi and PiG have no wrap target, so they
-              route through headroom's one shared proxy instead — flip once, and the address to set is shown.
+              Two ways to route a tool: headroom's own durable integration where it exists, and one shared proxy for
+              everything else. Every switch below runs the real command — nothing to copy by hand except the proxy addresses.
             </p>
-            {proxy ? (
-              <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-dim">
-                <span aria-hidden="true" className={cn("size-1.5 rounded-full", proxy.running ? "bg-success" : "bg-line")} />
-                shared proxy: {proxy.running ? `running on port ${proxy.port}` : "not running"}
-                <span className="text-dim/70">— serves pi, pig, and any agent you point at it</span>
-              </p>
-            ) : null}
-            {wrapTargets === null ? (
-              <Skeleton className="h-8 w-full rounded-md" />
-            ) : (
-              <div className="grid gap-1">
-                {wrapTargets.filter((target) => target.available).map((target) => {
-                  const on = wrapped[target.name] === true;
-                  return (
-                    <div
-                      key={target.name}
-                      className={cn(
-                        "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors",
-                        on ? "border-success/30 bg-success/5" : "border-line",
-                      )}
-                    >
-                      {HOSTS.some((h) => h.id === target.name)
-                        ? <AgentLogo host={target.name as "omp"} className="size-3.5 shrink-0" />
-                        : <BrandMark name={target.name} className={cn("size-3.5", on ? "" : "text-dim")} />}
-                      <span className={cn("mono min-w-0 flex-1 truncate text-[11px]", on ? "text-ink" : "text-dim")}>{target.name}</span>
-                      <span className={cn("mono shrink-0 rounded border px-1 py-0.5 text-[9px]", on ? "border-success/40 text-success" : "border-line text-dim")}>
-                        {on ? (target.kind === "proxy" ? "routed" : "wrapped") : target.kind === "proxy" ? "via proxy" : "ready"}
-                      </span>
-                      <span className="relative inline-flex">
-                        <Switch
-                          size="sm"
-                          checked={on}
-                          disabled={!target.available || wrapBusy !== null || !headroomInstalled}
-                          onCheckedChange={(next: boolean) => toggleWrap(target.name, next)}
-                          aria-label={`Wrap ${target.name} through headroom`}
-                        />
-                        {wrapBusy === target.name ? (
-                          <span className="absolute inset-0 grid place-items-center">
-                            <Spinner className="size-3 text-accent" />
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  );
-                })}
-                {wrapTargets.filter((target) => target.available).length === 0 ? (
-                  <p className="mono m-0 rounded-md border border-dashed border-line px-2.5 py-2 text-[10px] leading-relaxed text-dim">
-                    headroom is not installed on this machine — install it from the footer below, then its tools join this list
-                  </p>
-                ) : null}
-                {HOSTS.filter((h) => hostState.installed[h.id] !== false && !wrapTargets.some((t) => t.available && t.name === h.id)).map((h) => (
-                  <div key={h.id} className="flex items-center gap-2.5 rounded-md border border-line px-2.5 py-1.5">
-                    <AgentLogo host={h.id} className="size-3.5 shrink-0" />
-                    <span className="mono min-w-0 flex-1 truncate text-[11px] text-ink">{h.label}</span>
-                    <span className="mono shrink-0 rounded border border-line px-1 py-0.5 text-[9px] text-dim">
-                      {h.id === "omp" || h.id === "opencode" ? "not detected" : "unsupported"}
-                    </span>
-                  </div>
-                ))}
+            <div className="mt-1 border-t border-line pt-3.5">
+              <p className="mono m-0 text-[9px] tracking-[0.14em] text-dim uppercase">Durable integration</p>
+              <p className="m-0 mt-0.5 text-[10px] leading-relaxed text-dim">Headroom edits the tool's own config, so the route survives every restart. Claude, Codex, Copilot, and OpenClaw install this way; the rest wrap the session only.</p>
+              <div className="mt-2 grid gap-1">
+                {wrapTargets === null ? (
+                  <Skeleton className="h-8 w-full rounded-md" />
+                ) : (
+                  wrapTargets.filter((target) => target.available && target.kind !== "proxy").map((target) => renderRow(target))
+                )}
               </div>
-            )}
+            </div>
+
+            <div className="mt-1 border-t border-line pt-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="mono m-0 text-[9px] tracking-[0.14em] text-dim uppercase">Shared proxy</p>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={proxyBusy !== null || !headroomInstalled}
+                  onClick={() => {
+                    const action = proxy?.running ? "stop" : "start";
+                    setProxyBusy(action);
+                    void postHeadroomProxy(action)
+                      .then(async (res) => {
+                        if (res?.ok) setDetail(res.detail ?? (action === "start" ? "the shared proxy is live" : "the shared proxy is stopped"));
+                        else setDetail(res?.error ?? "the dashboard server did not answer");
+                        const state = await fetchWrapTargets();
+                        setWrapTargets(state?.targets ?? null);
+                        setProxy(state?.proxy ?? null);
+                      })
+                      .finally(() => setProxyBusy(null));
+                  }}
+                >
+                  {proxyBusy ? (proxyBusy === "start" ? "starting…" : "stopping…") : proxy?.running ? "Stop proxy" : "Start proxy"}
+                </Button>
+              </div>
+              <p className="m-0 mt-0.5 text-[10px] leading-relaxed text-dim">One local proxy serves every agent, including the ones headroom cannot wrap. Copy an address into the agent's provider settings; both point at the same proxy.</p>
+              <div className="mt-2 grid gap-1.5">
+                <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-dim">
+                  <span aria-hidden="true" className={cn("size-1.5 rounded-full", proxy?.running ? "bg-success" : "bg-line")} />
+                  {proxy?.running ? `running on port ${proxy.port}` : "not running"}
+                </p>
+                {COPY_URLS.map((entry) => (
+                  <button
+                    key={entry.label}
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(entry.value).then(() => {
+                        setCopied(entry.label);
+                        setTimeout(() => setCopied((held) => (held === entry.label ? null : held)), 1500);
+                      });
+                    }}
+                    className="mono flex min-w-0 items-center gap-1.5 rounded-md border border-line px-2 py-1 text-left text-[10px] text-dim transition-colors hover:border-accent/40 hover:text-ink"
+                    title={"Copy " + entry.value}
+                    aria-label={"Copy " + entry.label}
+                  >
+                    <Icon name={copied === entry.label ? "check" : "copy"} className={cn("size-3 shrink-0", copied === entry.label ? "text-success" : "")} />
+                    <span className="truncate">{entry.value}</span>
+                    <span className="ml-auto shrink-0 text-[9px] text-dim">{copied === entry.label ? "copied" : entry.label}</span>
+                  </button>
+                ))}
+                {wrapTargets === null ? (
+                  <Skeleton className="h-8 w-full rounded-md" />
+                ) : (
+                  wrapTargets.filter((target) => target.available && target.kind === "proxy").map((target) => renderRow(target))
+                )}
+              </div>
+            </div>
+
             {wrapBusy !== null ? (
               <p className="mono m-0 flex items-center gap-1.5 text-[10px] text-accent">
                 <Spinner className="size-3" /> wrapping {wrapBusy}…

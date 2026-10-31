@@ -724,7 +724,6 @@ export function PipelineCanvas({
           open
           onOpenChange={(open) => { if (!open) setSelected(null); }}
           modes={modes}
-          hostState={hostState}
           busy={busy}
           onSet={onSet}
           onSaved={onSaved}
